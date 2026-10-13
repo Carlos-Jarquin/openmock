@@ -63,7 +63,7 @@ function Rig({ zoom }: { zoom: number }) {
 
 export default function App() {
   const [device, setDevice] = useState<DeviceId>('duo')
-  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'night', logo: null, logoSize: 0.16, logoTint: '#8a8f99' })
+  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'night', logo: null, logoSize: 0.15, logoTint: '#8a8f99' })
   const [media, setMedia] = useState<Media | null>(null)
   const [pose, setPose] = useState(POSE)
   const [light, setLight] = useState(LIGHT)
