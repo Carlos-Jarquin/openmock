@@ -16,7 +16,7 @@ type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const wrap = (v: number) => ((v + 540) % 360) - 180
 const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0 }
-const LIGHT = { intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
+const LIGHT = { preset: 'soft' as 'soft' | 'apple', intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
 const FX = { dof: false, focus: 0, blur: 2, bloom: false, grain: false }
 
 type Grab = { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera; setDpr: (n: number) => void; dpr: number }
@@ -203,6 +203,7 @@ export default function App() {
     setStatus(`Exported ${w} × ${h} PNG.`)
   }
 
+  const apple = light.preset === 'apple'
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -268,6 +269,9 @@ export default function App() {
           </>}
         </section>
         <section><h2>Lighting</h2>
+          <div className="seg">{([['soft', 'Soft studio'], ['apple', 'Apple studio']] as const).map(([k, l]) =>
+            <button key={k} className={light.preset === k ? 'on' : ''} onClick={() => setLight({ ...light, preset: k })}>{l}</button>)}</div>
+          {apple && <p className="hint">Dark room with a few strip lights, like Apple's product shots. Looks best on a dark background.</p>}
           {slider('Intensity', light.intensity, 0, 4, 0.05, n => setLight({ ...light, intensity: n }))}
           {slider('Direction', light.azimuth, -180, 180, 1, n => setLight({ ...light, azimuth: n }), '°')}
           {slider('Height', light.elevation, 5, 90, 1, n => setLight({ ...light, elevation: n }), '°')}
@@ -316,14 +320,23 @@ export default function App() {
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
           <Rig zoom={pose.zoom} />
-          <Env intensity={light.env} />
-          <ambientLight intensity={0.35 + light.intensity * 0.15} />
-          <directionalLight position={[lx, ly, lz]} intensity={light.intensity * 0.6} castShadow />
+          <Env intensity={apple ? 0.75 : light.env} mode={light.preset} />
+          {apple ? <>
+            {/* Apple studio: almost no fill, two tall rim strips behind and a narrow key, so edges carry the highlights. */}
+            <ambientLight intensity={0.04} />
+            <directionalLight position={[lx, ly, lz]} intensity={light.intensity * 0.2} castShadow />
+            <rectAreaLight args={['#ffffff', 1.6 * light.intensity, 0.25, 4]} position={[-2.6, 0.4, -1.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#ffffff', 1.6 * light.intensity, 0.25, 4]} position={[2.6, 0.4, -1.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#ffffff', 0.8 * light.intensity, 0.4, 3]} position={[-2.2, 1.8, 2.4]} onUpdate={l => l.lookAt(0, 0, 0)} />
+          </> : <>
+            <ambientLight intensity={0.35 + light.intensity * 0.15} />
+            <directionalLight position={[lx, ly, lz]} intensity={light.intensity * 0.6} castShadow />
           {/* Softboxes: a large key above left, a tall strip on each side for the rolling edge highlights, a top fill. */}
-          <rectAreaLight args={['#ffffff', 1.3 * light.intensity, 3, 2.2]} position={[-2.4, 2.2, 2.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
-          <rectAreaLight args={['#ffffff', 1.0 * light.intensity, 0.6, 3.5]} position={[2.8, 0.3, 0.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
-          <rectAreaLight args={['#ffffff', 0.9 * light.intensity, 0.6, 3.5]} position={[-2.8, 0.3, -0.8]} onUpdate={l => l.lookAt(0, 0, 0)} />
-          <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#ffffff', 1.3 * light.intensity, 3, 2.2]} position={[-2.4, 2.2, 2.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#ffffff', 1.0 * light.intensity, 0.6, 3.5]} position={[2.8, 0.3, 0.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#ffffff', 0.9 * light.intensity, 0.6, 3.5]} position={[-2.8, 0.3, -0.8]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
+          </>}
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
             <Centred deps={[device, opts.fold, opts.screen, media?.texture]}>
               <D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} />
