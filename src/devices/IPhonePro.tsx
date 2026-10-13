@@ -254,6 +254,11 @@ function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }
         <meshPhysicalMaterial color="#1a1c24" metalness={0.9} roughness={0.25} side={THREE.DoubleSide} /></mesh>
       {[0.55, 0.7, 0.86].map((k, i) => <mesh key={k} position={[0, floor + h * (0.18 + i * 0.16), 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[ri * k - mm(0.06), ri * k, 96]} /><meshPhysicalMaterial color={i === 1 ? '#363048' : '#262b3c'} metalness={1} roughness={0.15} side={THREE.DoubleSide} /></mesh>)}
+      {/* small bright front element inside a dark iris, as in Apple's photos */}
+      <mesh position={[0, floor + h * 0.4, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[ri * 0.2, ri * 0.34, 64]} />
+        <meshPhysicalMaterial color="#050508" metalness={0.5} roughness={0.4} side={THREE.DoubleSide} /></mesh>
+      <mesh position={[0, floor + h * 0.4 - ri * 0.17, 0]} scale={[1, 0.6, 1]}><sphereGeometry args={[ri * 0.2, 48, 16, 0, Math.PI * 2, 0, 0.55]} />
+        <meshPhysicalMaterial color="#3c3a5e" metalness={0.4} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} iridescence={0.8} iridescenceIOR={1.4} envMapIntensity={2.6} /></mesh>
       {disc(ri * 0.85, floor + h * 0.55, 'e1', ar('#1c1d2c', [220, 380]))}
       <mesh geometry={dome} renderOrder={6}><meshPhysicalMaterial color="#000" roughness={0.015} specularIntensity={0.45} envMapIntensity={0.8}
         transparent blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
@@ -281,7 +286,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const sh = mm(P.shoulder), grow = mm(0.01), baseH = plH + sh, plDepth = T - mm(0.3) + rise
     const flatR = mm(P.topR), baseShape = rrect(W + grow * 2, baseH + grow, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)], 0, grow / 2)
     const plateau = smoothNormals(new THREE.ExtrudeGeometry(baseShape, { depth: plDepth - rise * 2, bevelEnabled: true, bevelThickness: rise,
-      bevelSize: sh, bevelOffset: -sh, bevelSegments: 16, curveSegments: 64 }), 40)
+      bevelSize: sh, bevelOffset: -sh, bevelSegments: 24, curveSegments: 64 }), 60)
     // Concave fillet where the shoulder meets the flat back below the plateau.
     const fillet = plateauFillet(rrect(W, baseH, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)]), baseH, W / 2 - EDGE, mm(0.8))
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
@@ -293,9 +298,13 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   })
   useMemo(() => fitTexture(texture, mediaAspect, aspect), [texture, mediaAspect, aspect])
   // Brushed aluminium frame: anisotropic highlight along the band, streaky roughness and faint grooves.
+  const darkF = new THREE.Color(f.frame).getHSL({ h: 0, s: 0, l: 0 }).l < 0.35
   const bR = brushedRoughness(), bN = brushedNormal(), fR = frostRoughness(), sR = smudgeRoughness()
   const metal = <meshPhysicalMaterial color={f.frame} metalness={0.3} roughness={0.5} roughnessMap={bR} normalMap={bN} normalScale={NORMAL_SCALE}
-    anisotropy={0.55} clearcoat={0.08} clearcoatRoughness={0.3} envMapIntensity={1.15} />
+    anisotropy={0.3} clearcoat={0.04} clearcoatRoughness={0.4} envMapIntensity={darkF ? 0.45 : 0.75} specularIntensity={darkF ? 0.5 : 0.8} />
+  // Plateau: same bead-blasted aluminium but matte, so the wide shoulder rolls off softly with no hot streak.
+  const plateauMetal = <meshPhysicalMaterial color={f.frame} metalness={0.25} roughness={0.66}
+    envMapIntensity={darkF ? 0.45 : 0.7} specularIntensity={darkF ? 0.5 : 0.75} />
   // Frosted back glass: textured roughness under a thin, slightly glossy coat so highlights spread but stay soft.
   const matte = <meshPhysicalMaterial color={f.back} metalness={0} roughness={0.8} roughnessMap={fR} clearcoat={0.35} clearcoatRoughness={0.38}
     specularIntensity={0.6} envMapIntensity={0.9} />
@@ -341,7 +350,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       sh.uniforms.uBand = { value: yb }; sh.uniforms.uOff = { value: 0 }
       sh.vertexShader = 'uniform float uOff;\nvarying float vDevY;\nvarying float vNz;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvDevY = position.y + uOff; vNz = objectNormal.z;')
       sh.fragmentShader = 'uniform vec4 uBand;\nvarying float vDevY;\nvarying float vNz;\n' + sh.fragmentShader.replace('void main() {',
-        'void main() {\n  if (!((vDevY > uBand.x && vDevY < uBand.y) || (vDevY > uBand.z && vDevY < uBand.w)) || abs(vNz) > 0.97) discard;')
+        'void main() {\n  if (!((vDevY > uBand.x && vDevY < uBand.y) || (vDevY > uBand.z && vDevY < uBand.w)) || abs(vNz) > 0.9) discard;')
       m.userData.sh = sh
     }
     m.customProgramCacheKey = () => 'om-band'
@@ -377,9 +386,11 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* back: aluminium between the plateau and the glass, then the matte glass window */}
       <mesh geometry={g.backGlass} position={[0, ty(s.backGlass.top) - (H - mm(s.backGlass.top) - EDGE * 0.8) / 2, zb - E]} rotation={[0, Math.PI, 0]}>{matte}</mesh>
       {/* camera plateau: a full-width raised bar of the same aluminium unibody, lenses, flash and sensor sit directly on it */}
-      <mesh geometry={g.plateau} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{metal}</mesh>
-      <mesh geometry={g.fillet} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{metal}</mesh>
-      {/* Antenna bands stop at the plateau: none on its fillet, shoulder or top, as in Apple's photos. */}
+      <mesh geometry={g.plateau} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{plateauMetal}</mesh>
+      <mesh geometry={g.fillet} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{plateauMetal}</mesh>
+      {/* Antenna bands run over the plateau's outer shoulder and stop at the inner edge of the flat top (normal-based cut). */}
+      {bandOn(g.plateau, plY, zb)}
+      {bandOn(g.fillet, plY, zb)}
       {s.lens.at.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}><RearLens d={lensD} rise={lensRise} frame={f.frame} /></group>))}
       <mesh position={[bx(s.flash.bx), ty(s.flash.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.flash.d / 2), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>
