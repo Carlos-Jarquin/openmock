@@ -363,8 +363,12 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     // starts (EDGE below the back) and rolls in over rise + EDGE to the flat top, so the frame side flows into the shoulder as
     // one surface, replacing the frame's back roundover under the plateau. The straight wall and lower bevel hide in the body.
     const sh = mm(P.shoulder), flatR = mm(P.topR), topIn = Math.max(mm(P.cornerR) - sh, mm(0.5))
-    const plateau = plateauSurface({ W, H, CR, edge: EDGE, rise, D: sh, edgeK: mm(0.06),
-      flat: { top: H / 2 - sh, bottom: H / 2 - plH, hw: W / 2 - sh, rb: flatR, rt: topIn } })
+    // Shoulder width from the side view overlay (sheet 1 at matched scale): the plateau climbs its 2.78 mm over about
+    // 2.6 mm at the top and bottom ends, not the 5 mm inset between Detail D's outlines (that inset also includes the
+    // frame's edge roundover). A wider shoulder made the plateau read far more extruded than Apple's.
+    const shD = mm(2.6)
+    const plateau = plateauSurface({ W, H, CR, edge: EDGE, rise, D: shD, edgeK: mm(0.06),
+      flat: { top: H / 2 - shD - mm(0.8), bottom: H / 2 - plH, hw: W / 2 - shD - mm(0.3), rb: flatR, rt: topIn } })
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
