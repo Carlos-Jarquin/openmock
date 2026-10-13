@@ -283,16 +283,19 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     // Camera plateau, one piece with the body. Detail D of the drawing shows two outlines: the flat top (inset about 5 mm,
     // ending at P.bottom) and the base, a soft shoulder P.shoulder wide that rolls down into the back and the frame.
     // The base runs full width; its straight part reaches deep into the body (hidden) and is grown 0.01 mm so it never z-fights the frame.
-    const sh = mm(P.shoulder), grow = mm(0.01), baseH = plH + sh, plDepth = T - mm(0.3) + rise
-    const flatR = mm(P.topR), baseShape = rrect(W + grow * 2, baseH + grow, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)], 0, grow / 2)
-    const plateau = smoothNormals(new THREE.ExtrudeGeometry(baseShape, { depth: plDepth - rise * 2, bevelEnabled: true, bevelThickness: rise,
+    // The base outline is exactly the body outline at the sides and top. The shoulder bevel starts where the frame's flat side
+    // starts (EDGE below the back) and rolls in over rise + EDGE to the flat top, so the frame side flows into the shoulder as
+    // one surface, replacing the frame's back roundover under the plateau. The straight wall and lower bevel hide in the body.
+    const sh = mm(P.shoulder), grow = 0, baseH = plH + sh
+    const flatR = mm(P.topR), baseShape = rrect(W + grow * 2, baseH + grow, [flatR + sh, flatR + sh, CR + grow, CR + grow], 0, grow / 2)
+    const plateau = smoothNormals(new THREE.ExtrudeGeometry(baseShape, { depth: mm(0.01), bevelEnabled: true, bevelThickness: rise + EDGE,
       bevelSize: sh, bevelOffset: -sh, bevelSegments: 24, curveSegments: 64 }), 60)
     // Inner edge: the flat top stands a crisp 0.15 mm step proud of the shoulder, giving Apple's visible inner edge line.
     const stepH = mm(0.15), topIn = Math.max(mm(P.cornerR) - sh, mm(0.5))
     const step = new THREE.ExtrudeGeometry(rrect(W + grow * 2 - sh * 2, baseH + grow - sh * 2, [flatR, flatR, topIn, topIn], 0, grow / 2),
       { depth: stepH - mm(0.04), bevelEnabled: true, bevelThickness: mm(0.02), bevelSize: mm(0.03), bevelOffset: -mm(0.03), bevelSegments: 2, curveSegments: 64 })
     // Concave fillet where the shoulder meets the flat back below the plateau.
-    const fillet = plateauFillet(rrect(W, baseH, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)]), baseH, W / 2 - EDGE, mm(0.8))
+    const fillet = plateauFillet(rrect(W, baseH, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)]), baseH, W / 2 - EDGE, mm(1.6))
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
@@ -308,7 +311,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   // Fine satin grain: the brushed roughness map tiled much smaller (shares the uploaded source, so no re-upload).
   const grain = useMemo(() => { if (!bR) return null; const t = bR.clone(); t.repeat.set(bR.repeat.x * 8, bR.repeat.y * 8); return t }, [bR])
   const metal = <meshPhysicalMaterial color={f.frame} metalness={0.3} roughness={0.5} roughnessMap={grain}
-    anisotropy={0.3} clearcoat={0.04} clearcoatRoughness={0.4} envMapIntensity={darkF ? 0.45 : 0.32} specularIntensity={darkF ? 0.5 : 0.45} />
+    clearcoat={0.04} clearcoatRoughness={0.4} envMapIntensity={darkF ? 0.45 : 0.32} specularIntensity={darkF ? 0.5 : 0.45} />
   // Plateau: same bead-blasted aluminium but matte, so the wide shoulder rolls off softly with no hot streak.
   const plateauMetal = <meshPhysicalMaterial color={f.frame} metalness={0.25} roughness={0.66}
     envMapIntensity={darkF ? 0.45 : 0.7} specularIntensity={darkF ? 0.5 : 0.75} />
@@ -394,10 +397,10 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* back: aluminium between the plateau and the glass, then the matte glass window */}
       <mesh geometry={g.backGlass} position={[0, ty(s.backGlass.top) - (H - mm(s.backGlass.top) - EDGE * 0.8) / 2, zb - E]} rotation={[0, Math.PI, 0]}>{matte}</mesh>
       {/* camera plateau: a full-width raised bar of the same aluminium unibody, lenses, flash and sensor sit directly on it */}
-      <mesh geometry={g.plateau} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{plateauMetal}</mesh>
-      <mesh geometry={g.fillet} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{plateauMetal}</mesh>
+      <mesh geometry={g.plateau} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb + EDGE]}>{metal}</mesh>
+      <mesh geometry={g.fillet} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{metal}</mesh>
       {/* Antenna bands run over the plateau's outer shoulder and stop at the inner edge of the flat top (normal-based cut). */}
-      {bandOn(g.plateau, plY, zb)}
+      {bandOn(g.plateau, plY, zb + EDGE)}
       {bandOn(g.fillet, plY, zb)}
       <mesh geometry={g.step} position={[0, plY, zb - rise - mm(0.15) + mm(0.02)]}>
         <meshPhysicalMaterial color={f.frame} metalness={0.25} roughness={0.75} envMapIntensity={darkF ? 0.2 : 0.55} specularIntensity={darkF ? 0.25 : 0.6} /></mesh>
