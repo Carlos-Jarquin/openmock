@@ -154,9 +154,11 @@ function makeMats(o: SketchOptions) {
   const thick = new THREE.ShaderMaterial({ uniforms: { uColor: { value: col(o.line) }, uWidth: { value: o.outer }, uRes: { value: res } },
     vertexShader: hullVert, fragmentShader: hullFrag, side: THREE.BackSide, toneMapped: false })
   const thin = new LineMaterial({ color: o.line, linewidth: o.inner, worldUnits: false, toneMapped: false })
-  // Dark parts (island, lens internals, ports) become a soft warm grey; the black bezel a deeper grey.
+  // Dark parts (island, lens internals, ports) become a soft warm grey. The black bezel ring is a light grey just
+  // darker than the idle screen: a near line-coloured tone read as a second thick outline inside the frame, since
+  // at an angle the 1 to 2 mm ring shrinks to a few pixels. Its thin crease lines still mark the screen edge.
   const dark = toonMaterial(col('#bdb5a6'), col('#b0a898'), col('#a39b8b'))
-  const bezel = toonMaterial(col('#6f6a62'), col('#67625a'), col('#5f5a53'))
+  const bezel = toonMaterial(col('#d4cdbf'), col('#ccc5b7'), col('#c4bdaf'))
   const idle = new THREE.MeshBasicMaterial({ color: '#e7e1d5', toneMapped: false })
   const logo = new THREE.MeshBasicMaterial({ color: o.line, transparent: true, opacity: 0.55, depthWrite: false, toneMapped: false })
   const cache = new Map<string, THREE.Material>()

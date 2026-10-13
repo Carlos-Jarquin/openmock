@@ -240,11 +240,23 @@ function Pressable({ depth, children, ...rest }: { depth: number; children: Reac
 const NANO = { l: mm(12.3), w: mm(8.8), t: mm(0.67) }
 const EJECT = mm(15), EJECT_MS = 420
 const ease = (t: number) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+/** Extrude a shape along +z by depth with a small round bevel; normals smoothed so the rounded walls shade evenly. */
+const trayGeo = (k: string, shape: THREE.Shape, depth: number) => geoOnce(`tray|${k}|${depth}`, () => {
+  const b = Math.min(depth * 0.3, mm(0.2))
+  const g = new THREE.ExtrudeGeometry(shape, { depth: depth - b * 2, bevelEnabled: true, bevelThickness: b, bevelSize: b * 0.6, bevelSegments: 3, curveSegments: 32 })
+  g.translate(0, 0, b); smoothNormals(g, 40); return g
+})
 function SimTray({ frame, x, y, len, w }: { frame: string; x: number; y: number; len: number; w: number }) {
   const slide = useRef<THREE.Group>(null), st = useRef({ out: false, from: 0, t0: -1e9 })
   const cur = () => { const s = st.current, k = Math.min(1, (performance.now() - s.t0) / EJECT_MS); return s.from + ((s.out ? 1 : 0) - s.from) * ease(k) }
   const h = useClickable(() => { const v = cur(); st.current = { out: !st.current.out, from: v, t0: performance.now() } })
   useFrame(() => { if (slide.current) slide.current.position.x = -EJECT * cur() })
+  useEffect(() => { // dev hook for scripted renders: window.__omSim(true|false)
+    if (!import.meta.env.DEV) return
+    const w = window as unknown as { __omSim?: (o: boolean) => void }
+    w.__omSim = o => { st.current = { out: o, from: o ? 1 : 0, t0: -1e9 } }
+    return () => { delete w.__omSim }
+  }, [])
   const carrier = { x: mm(10.6), y: mm(14.2), t: mm(0.8) }, pin = { y: len / 2 - mm(2.4), d: mm(0.9) }
   return (
     <group position={[x, y, 0]}>
@@ -257,10 +269,13 @@ function SimTray({ frame, x, y, len, w }: { frame: string; x: number; y: number;
           <meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.3} polygonOffset polygonOffsetFactor={-3} /></mesh>
         <mesh rotation={[0, -Math.PI / 2, 0]} position={[-E * 1.2, pin.y, 0]}><circleGeometry args={[pin.d / 2, 20]} />
           <meshBasicMaterial color="#060606" polygonOffset polygonOffsetFactor={-5} /></mesh>
-        {/* face plate thickness and carrier that live inside the frame */}
-        <mesh position={[mm(0.5), 0, 0]}><boxGeometry args={[mm(1), len - mm(0.2), w - mm(0.2)]} />
+        {/* face plate thickness and carrier that live inside the frame: a stadium-ended plate behind the cap and a
+            round-cornered carrier, extruded so no square box corners show past the rounded cap */}
+        <mesh geometry={trayGeo(`plate${w}|${len}`, rrC(w - mm(0.2), len - mm(0.2), all((w - mm(0.2)) / 2)), mm(1))}
+          rotation={[0, Math.PI / 2, 0]} userData={{ sketchHull: true }}>
           <meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.35} /></mesh>
-        <mesh position={[mm(1) + carrier.x / 2, 0, 0]}><boxGeometry args={[carrier.x, carrier.y, carrier.t]} />
+        <mesh geometry={trayGeo(`carrier`, rrC(carrier.x, carrier.y, all(mm(1.6)), carrier.x / 2 + mm(1)), carrier.t)}
+          position={[0, 0, -carrier.t / 2]} userData={{ sketchHull: true }}>
           <meshPhysicalMaterial color={frame} metalness={0.8} roughness={0.4} /></mesh>
         {/* nano-SIM, 12.3 x 8.8 x 0.67 mm, gold contacts facing the display */}
         <mesh position={[mm(1.3) + NANO.w / 2, 0, carrier.t / 2 + NANO.t / 2]}><boxGeometry args={[NANO.w, NANO.l, NANO.t]} />
