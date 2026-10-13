@@ -110,7 +110,7 @@ export type SpectralMats = ReturnType<typeof spectralMaterials>
 // ---------- authored inner lines on the skinned surface ----------
 type Seg = [number, number, number, number, number, number] // two endpoints, each an edge (i, j, t)
 type Bary = [number, number, number, number, number] // triangle a, b, c and weights for b and c
-interface Prepared { segs: Seg[]; starV: number[]; bary: Bary[] }
+interface Prepared { segs: Seg[]; starV: number[]; bary: Bary[]; rings: Bary[][] }
 function rayTri(o: THREE.Vector3, d: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3): [number, number, number] | null {
   const e1 = b.clone().sub(a), e2 = c.clone().sub(a), p = d.clone().cross(e2), det = e1.dot(p); if (Math.abs(det) < 1e-12) return null
   const s = o.clone().sub(a), u = s.dot(p) / det; if (u < 0 || u > 1) return null
@@ -212,16 +212,28 @@ function prepare(mesh: THREE.SkinnedMesh, owner: string[]): Prepared {
   for (const fg of FINGERS) finger(fg, `${fg}-phalanx-distal`, `${fg}-tip`, [`${fg}-phalanx-intermediate`, `${fg}-phalanx-distal`],
     [`${fg}-phalanx-proximal`, `${fg}-phalanx-intermediate`, `${fg}-phalanx-distal`])
   finger('thumb', 'thumb-phalanx-distal', 'thumb-tip', ['thumb-phalanx-distal'], ['thumb-phalanx-proximal', 'thumb-phalanx-distal'])
-  // Thumb base: the boundary between the thumb's own segments and the hand (by skin ownership). On these meshes the thumb
-  // is fused into the palm, so from the back-left there is no occluding step or facing switch where it lies over the
-  // hand, and without this it read as part of the palm.
-  { const th = new Set(['thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-distal'])
-    const g = new Float32Array(N); for (let v = 0; v < N; v++) g[v] = th.has(owner[v]) ? 1 : 0
-    const near = new Set([...th, 'index-finger-metacarpal', 'index-finger-phalanx-proximal']) // the web side only, not the wrist
-    contour(geo, g, v => near.has(owner[v]), 0.5, segs) }
   // two more stars by the knuckles of the index and ring fingers
   for (const b of ['index-finger-phalanx-proximal', 'ring-finger-phalanx-intermediate', 'wrist']) { const v = owner.indexOf(b); if (v >= 0) starV.push(v) }
-  const p = { segs, starV, bary }; cache.set(geo, p); return p
+  // Thumb outline: on these meshes the thumb is fused into the palm, so there is no depth step or facing switch where it
+  // lies over the hand and the geometric silhouette finds nothing (checked with the phone hidden). Instead the thumb is
+  // treated as a bent tube: rings of skin points round its metacarpal (from where it leaves the palm), proximal and distal
+  // segments, each point cast from the bone axis and stored on the skin. Per frame, each ring's two contour points (where
+  // the skin turns away from the camera) are joined ring to ring into the thumb's two side edges.
+  const rings: Bary[][] = []
+  { const chain = ['thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-distal', 'thumb-tip'], spans = [[0.45, 1], [0, 1], [0, 0.8]]
+    const thumbish = new Set([...chain, 'wrist', 'index-finger-metacarpal']), idx = geo.index!, tt: number[] = []
+    for (let t = 0; t < idx.count; t += 3) { const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2); if (thumbish.has(owner[a]) || thumbish.has(owner[b]) || thumbish.has(owner[c])) tt.push(a, b, c) }
+    for (let k = 0; k < 3; k++) { const A = J(chain[k]), Bj = J(chain[k + 1]), ax2 = Bj.clone().sub(A), L = ax2.length(); ax2.normalize()
+      const u = new THREE.Vector3(1, 0, 0); if (Math.abs(u.dot(ax2)) > 0.9) u.set(0, 1, 0); u.addScaledVector(ax2, -u.dot(ax2)).normalize()
+      const w = new THREE.Vector3().crossVectors(ax2, u), steps = k === 0 ? 3 : 4
+      for (let i = 0; i < steps; i++) { if (k > 0 && i === 0) continue
+        const f = spans[k][0] + (spans[k][1] - spans[k][0]) * i / (steps - 1), O = A.clone().addScaledVector(ax2, f * L), ring: Bary[] = []
+        for (let j = 0; j < 24; j++) { const an = j / 24 * Math.PI * 2, dir = u.clone().multiplyScalar(Math.cos(an)).addScaledVector(w, Math.sin(an))
+          let best: Bary | null = null, bt = Infinity
+          for (let t = 0; t < tt.length; t += 3) { const h = rayTri(O, dir, B[tt[t]], B[tt[t + 1]], B[tt[t + 2]]); if (h && h[0] < bt && h[0] < 0.03) { bt = h[0]; best = [tt[t], tt[t + 1], tt[t + 2], h[1], h[2]] } }
+          if (best) ring.push(best) }
+        if (ring.length >= 16) rings.push(ring) } } }
+  const p = { segs, starV, bary, rings }; cache.set(geo, p); return p
 }
 
 // ---------- per-frame inner silhouettes ----------
@@ -248,7 +260,7 @@ function edgesOf(geo: THREE.BufferGeometry): Edges {
   const r = { tris, edges: new Uint32Array(out) }; edgeCache.set(geo, r); return r
 }
 
-interface LineState { skinned: Float32Array; creases: Float32Array; lines: LineSegments2; ghosts: LineSegments2[]; camKey: string }
+interface LineState { skinned: Float32Array; creases: Float32Array; rings: Float32Array[]; lines: LineSegments2; ghosts: LineSegments2[]; camKey: string }
 /** Rebuilds the skinned positions and the crease and fingertip lines for the current pose (on each re-solve). */
 export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: SpectralMats) {
   for (const c of [...mesh.children]) if (c.userData.spectral && !c.userData.spectralHull) { mesh.remove(c); (c as THREE.Mesh).geometry?.dispose() }
@@ -266,7 +278,8 @@ export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: Spect
     g.userData = { spectral: true, noBounds: true, ghost: true }; g.layers.set(LINE_LAYER); g.frustumCulled = false; mesh.add(g); return g })
   for (const g of ghosts) g.renderOrder = 8 // before the hand's depth prepass (9): they test only against the phone's depth,
   // so nothing behind the phone ever shows; the clear skin (10) then lies over them and the crisp lines (12) win where visible
-  mesh.userData.spectralLines = { skinned: sk, creases: new Float32Array(cr), lines, ghosts, camKey: '' } as LineState
+  const rings = prep.rings.map(r => { const a = new Float32Array(r.length * 3); r.forEach(([x, y, z, u, w], i) => { for (let k = 0; k < 3; k++) a[i * 3 + k] = sk[x * 3 + k] * (1 - u - w) + sk[y * 3 + k] * u + sk[z * 3 + k] * w }); return a })
+  mesh.userData.spectralLines = { skinned: sk, creases: new Float32Array(cr), rings, lines, ghosts, camKey: '' } as LineState
 }
 
 const _cam = new THREE.Vector3(), _inv = new THREE.Matrix4()
@@ -299,6 +312,28 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
     const a = edges[e] * 3, b = edges[e + 1] * 3
     nudge(sk[a], sk[a + 1], sk[a + 2]); nudge(sk[b], sk[b + 1], sk[b + 2])
   }
+  // thumb side edges: per ring, the two points where the skin turns from facing the camera to facing away
+  let thumbHits = 0
+  { let prev: number[][] | null = null
+    for (const r of st.rings) { const n = r.length / 3; let cx = 0, cy = 0, cz = 0; for (let i = 0; i < n; i++) { cx += r[i * 3]; cy += r[i * 3 + 1]; cz += r[i * 3 + 2] } cx /= n; cy /= n; cz /= n
+      const f = (i: number) => { const x = r[i * 3], y = r[i * 3 + 1], z = r[i * 3 + 2]; return (x - cx) * (_cam.x - x) + (y - cy) * (_cam.y - y) + (z - cz) * (_cam.z - z) }
+      const hits: number[][] = []
+      for (let i = 0; i < n; i++) { const j = (i + 1) % n, a = f(i), b = f(j); if ((a > 0) !== (b > 0)) { const t = a / (a - b); hits.push([0, 1, 2].map(k => r[i * 3 + k] + (r[j * 3 + k] - r[i * 3 + k]) * t)) } }
+      // a ring with a gap or a bump can report more than two crossings: keep the two furthest apart
+      if (hits.length > 2) { let bi = 0, bj = 1, bd = -1
+        for (let i = 0; i < hits.length; i++) for (let j = i + 1; j < hits.length; j++) { const dd = Math.hypot(hits[i][0] - hits[j][0], hits[i][1] - hits[j][1], hits[i][2] - hits[j][2]); if (dd > bd) { bd = dd; bi = i; bj = j } }
+        hits.splice(0, hits.length, hits[bi], hits[bj]) }
+      thumbHits += hits.length
+      if (hits.length === 2 && prev) {
+        // pair each edge with the nearer point of the previous ring so the two sides don't cross
+        const d = (p: number[], q: number[]) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
+        const sw: boolean = d(prev[0], hits[0]) + d(prev[1], hits[1]) > d(prev[0], hits[1]) + d(prev[1], hits[0])
+        const h: number[][] = sw ? [hits[1], hits[0]] : hits
+        for (let s2 = 0; s2 < 2; s2++) { nudge(prev[s2][0], prev[s2][1], prev[s2][2]); nudge(h[s2][0], h[s2][1], h[s2][2]) }
+        prev = h
+      } else prev = hits.length === 2 ? hits : null }
+  }
+  if (import.meta.env.DEV) (globalThis as { __thumbHits?: number }).__thumbHits = thumbHits
   pull = 0.0012
   const cr = st.creases; for (let i = 0; i < cr.length; i += 3) nudge(cr[i], cr[i + 1], cr[i + 2])
   st.lines.geometry.dispose(); const g = new LineSegmentsGeometry(); g.setPositions(out); st.lines.geometry = g; for (const gh of st.ghosts) gh.geometry = g
@@ -337,54 +372,3 @@ export function addHull(mesh: THREE.Mesh, m: SpectralMats) {
   mesh.add(d)
 }
 export function removeHull(mesh: THREE.Mesh) { for (const c of [...mesh.children]) if (c.userData.spectral) mesh.remove(c) }
-
-// ---------- screen-space occluding contours ----------
-// Where a nearer part of the hand covers a farther part (the thumb over the palm, a finger over another) the mesh does
-// not always have a front/back switch on a usable edge, so the geometric silhouette test misses it. Instead the hands
-// alone are drawn into a depth target each frame, and a full-screen pass draws a thin line on the near side of every
-// depth step inside the hand. A step is a jump much larger than the local slope, so steep but continuous skin is not
-// mistaken for an edge. The line takes the near surface's depth, so the phone still hides it.
-const edgeVert = `void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }`
-const edgeFrag = /* glsl */`
-uniform sampler2D tDepth; uniform vec2 uRes; uniform float uNear, uFar, uR, uRel, uVal; uniform vec3 uColor;
-float lin(float d) { float z = d * 2.0 - 1.0; return 2.0 * uNear * uFar / (uFar + uNear - z * (uFar - uNear)); }
-float at(vec2 px) { return texture2D(tDepth, px / uRes).r; }
-void main() {
-  vec2 p = gl_FragCoord.xy; float dc = at(p); if (dc >= 1.0) discard;
-  float c = lin(dc), hit = 0.0;
-  for (int i = 0; i < 8; i++) {
-    float a = float(i) * 0.785398; vec2 o = vec2(cos(a), sin(a)) * uR;
-    float dn = at(p + o), dq = at(p - o); if (dn >= 1.0) continue; // the outer outline is the hull's job
-    float n = lin(dn), q = dq >= 1.0 ? c : lin(dq);
-    if (n - c > uRel * c && n - c > 4.0 * abs(c - q)) hit += 1.0; // occluding step: this pixel is the near side
-    else if (i < 4 && dq < 1.0 && c - 0.5 * (n + q) > uVal * c) hit += 1.0; // deep fold (thumb into palm): a valley
-  }
-  if (hit < 1.0) discard;
-  gl_FragColor = vec4(uColor, min(1.0, hit / 2.0));
-  gl_FragDepth = dc - 2e-5;
-  #include <colorspace_fragment>
-}`
-export function makeEdgePass(m: SpectralMats) {
-  const depthTexture = new THREE.DepthTexture(1, 1); depthTexture.type = THREE.UnsignedIntType
-  const rt = new THREE.WebGLRenderTarget(1, 1, { depthTexture, depthBuffer: true })
-  const mat = new THREE.ShaderMaterial({ vertexShader: edgeVert, fragmentShader: edgeFrag, transparent: true, depthWrite: false, depthTest: true,
-    uniforms: { tDepth: { value: depthTexture }, uRes: { value: new THREE.Vector2() }, uNear: { value: 0.1 }, uFar: { value: 100 }, uR: { value: 1 }, uRel: { value: 0.004 }, uVal: { value: 0.0015 }, uColor: { value: m.lineCol } } })
-  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat)
-  if (import.meta.env.DEV) (globalThis as { __omEdge?: unknown }).__omEdge = mat
-  quad.frustumCulled = false; quad.renderOrder = 12; quad.userData = { spectral: true, noBounds: true }; quad.layers.set(LINE_LAYER)
-  const depthMat = new THREE.MeshBasicMaterial({ colorWrite: false }), size = new THREE.Vector2()
-  return { quad,
-    render(gl: THREE.WebGLRenderer, camera: THREE.Camera, group: THREE.Object3D, meshes: THREE.Mesh[]) {
-      gl.getDrawingBufferSize(size); if (rt.width !== size.x || rt.height !== size.y) rt.setSize(size.x, size.y)
-      const cam = camera as THREE.PerspectiveCamera
-      mat.uniforms.uRes.value.copy(size); mat.uniforms.uNear.value = cam.near; mat.uniforms.uFar.value = cam.far
-      mat.uniforms.uR.value = Math.max(1, gl.getPixelRatio() * 0.9)
-      const hidden: THREE.Object3D[] = []; group.traverse(o => { if (o.userData.spectral && o.visible) { o.visible = false; hidden.push(o) } })
-      const mats = meshes.map(x => x.material); for (const x of meshes) x.material = depthMat
-      const prev = gl.getRenderTarget(), auto = gl.autoClear
-      gl.setRenderTarget(rt); gl.autoClear = true; gl.render(group, camera)
-      gl.setRenderTarget(prev); gl.autoClear = auto
-      meshes.forEach((x, i) => { x.material = mats[i] }); for (const o of hidden) o.visible = true
-    },
-    dispose() { rt.dispose(); depthTexture.dispose(); mat.dispose(); depthMat.dispose(); quad.geometry.dispose() } }
-}

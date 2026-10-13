@@ -7,7 +7,7 @@
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { useGLTF } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
-import { spectralMaterials, buildSpectral, updateSpectral, addHull, removeHull, makeEdgePass, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
+import { spectralMaterials, buildSpectral, updateSpectral, addHull, removeHull, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
 import { LINE_LAYER } from '../sketch/Sketch'
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
@@ -439,11 +439,8 @@ function Hands({ pose, tone, fit, gesture, sp }: { pose: HandPose; tone: string;
     const u = spm.body.uniforms; u.uAlpha.value = 1 - sp.transparency; u.uGlimmer.value = sp.glimmer ? 1 : 0; u.uShimmer.value = sp.shimmer ? 1 : 0; u.uStars.value = sp.stars ? 1 : 0
   }, [spm, sp.tint, sp.line, sp.seeBlur, sp.transparency, sp.glimmer, sp.shimmer, sp.stars])
   const { size, gl } = useThree()
-  const edge = useMemo(() => spm ? makeEdgePass(spm) : null, [spm])
-  useEffect(() => { const g = group.current; if (!edge || !g) return; g.add(edge.quad); return () => { g.remove(edge.quad); edge.dispose() } }, [edge])
   useFrame(({ clock, camera }) => { if (!spm) return
     spm.frame(size.width, size.height, gl.getPixelRatio(), clock.elapsedTime)
-    if (edge && group.current) edge.render(gl, camera, group.current, [rigs.right.mesh, rigs.left.mesh, arms.right, arms.left])
     for (const side of ['right', 'left'] as const) if (rigs[side].root.parent) updateSpectral(rigs[side].mesh, camera) })
   useEffect(() => { rigs.right.mesh.material = mat; rigs.left.mesh.material = mat }, [rigs, mat])
   // Only the gesture fields the pose uses, so moving a marker re-solves just the touching hand.
