@@ -449,15 +449,37 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   const side = (x: number, b: { cy: number; len: number }, key: string) => (
     <Pressable key={key} depth={mm(0.3)} position={[x, ty(b.cy), 0]} rotation={[0, x < 0 ? Math.PI : 0, 0]}>
       <mesh geometry={btnGeo(mm(b.len), mm(s.btn.w), mm(s.btn.protrude))} castShadow userData={{ sketchHull: true, sketchLines: btnLines(mm(b.len), mm(s.btn.w), mm(s.btn.protrude)) }}>{metal}</mesh></Pressable>)
-  // Camera Control: flush (0.00 on the drawing). Thin metal surround sized to the 3.40 x 17.50 keepout,
-  // and a sapphire inset at the drawn 3.03 x 17.10.
+  // Camera Control: flush (0.00 on the drawing). A sapphire crystal cover at the drawn 3.03 x 17.10 inside a thin
+  // (~0.3 mm) polished conductive ring in the frame's colour and finish, over the 3.40 x 17.50 keepout in satin frame metal.
+  // Apple shows it colour-matched: a glossy, slightly deeper tint of the frame, not a separate colour.
   const cc = s.cameraControl
+  const ccMats = useMemo(() => {
+    const fc = new THREE.Color(f.frame)
+    // Deeper tint of the frame: light finishes darken a little, dark finishes stay near the frame colour.
+    const glass = fc.clone().multiplyScalar(darkF ? 0.85 : 0.8)
+    const well = fc.clone().multiplyScalar(darkF ? 0.6 : 0.7) // the sensor seen through the crystal, at the rim
+    return {
+      ring: new THREE.MeshPhysicalMaterial({ color: fc, metalness: 0.35, roughness: 0.32, envMapIntensity: darkF ? 0.6 : 0.4, specularIntensity: 0.6, polygonOffset: true, polygonOffsetFactor: -2 }),
+      well: new THREE.MeshPhysicalMaterial({ color: well, metalness: 0.2, roughness: 0.5, polygonOffset: true, polygonOffsetFactor: -3 }),
+      glass: new THREE.MeshPhysicalMaterial({ color: glass, metalness: 0.15, roughness: 0.06, clearcoat: 1, clearcoatRoughness: 0.03, ior: 1.77,
+        specularIntensity: 1, envMapIntensity: darkF ? 1.1 : 0.8, polygonOffset: true, polygonOffsetFactor: -4 }),
+    }
+  }, [f.frame, darkF])
+  useEffect(() => () => { ccMats.ring.dispose(); ccMats.well.dispose(); ccMats.glass.dispose() }, [ccMats])
+  const ccLines = useMemo(() => {
+    const out: number[] = []
+    const loop = (w: number, h: number) => { const p = rrect(w, h, all(w / 2)).getSpacedPoints(96)
+      for (let i = 0; i < p.length - 1; i++) out.push(p[i].x, p[i].y, mm(0.005), p[i + 1].x, p[i + 1].y, mm(0.005)) }
+    loop(mm(cc.w + 0.6), mm(cc.len + 0.6)); loop(mm(cc.w), mm(cc.len))
+    return new Float32Array(out)
+  }, [cc.w, cc.len])
+  const ccShape = (w: number, l: number) => <shapeGeometry args={[rrC(mm(w), mm(l), all(mm(w / 2))), 32]} />
   const cameraControl = (
     <Pressable depth={mm(0.1)} position={[W / 2, ty(cc.cy), 0]}>
-      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.01), 0, 0]}><shapeGeometry args={[rrC(mm(cc.keepW), mm(cc.keepLen), all(mm(cc.keepW / 2))), 32]} />
-        {metal}</mesh>
-      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.03), 0, 0]}><shapeGeometry args={[rrC(mm(cc.w), mm(cc.len), all(mm(cc.w / 2))), 32]} />
-        <meshPhysicalMaterial color="#5e6672" metalness={0.1} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} ior={1.77} polygonOffset polygonOffsetFactor={-4} /></mesh>
+      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.01), 0, 0]} userData={{ sketchTone: 'fill' }}>{ccShape(cc.keepW + 0.4, cc.keepLen + 0.4)}{metal}</mesh>
+      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.015), 0, 0]} material={ccMats.ring} userData={{ sketchTone: 'fill', sketchLines: ccLines }}>{ccShape(cc.w + 0.6, cc.len + 0.6)}</mesh>
+      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.02), 0, 0]} material={ccMats.well} userData={{ sketchTone: 'fill' }}>{ccShape(cc.w, cc.len)}</mesh>
+      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.03), 0, 0]} material={ccMats.glass} userData={{ sketchTone: 'fill' }}>{ccShape(cc.w - 0.08, cc.len - 0.08)}</mesh>
     </Pressable>)
   // Parts on the plateau sit on the flat top, which stands 0.13 mm proud of the shoulder (the inner edge step).
   const zPlat = zb - rise
