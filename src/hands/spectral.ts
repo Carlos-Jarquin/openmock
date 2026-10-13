@@ -8,8 +8,8 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LINE_LAYER } from '../sketch/Sketch'
 
-export interface SpectralOptions { tint: string; transparency: number; glimmer: boolean; stars: boolean; shimmer: boolean }
-export const SPECTRAL_DEFAULTS: SpectralOptions = { tint: '#206DD0', transparency: 0.98, glimmer: false, stars: false, shimmer: false }
+export interface SpectralOptions { tint: string; line: string; transparency: number; glimmer: boolean; stars: boolean; shimmer: boolean; seeBlur: number }
+export const SPECTRAL_DEFAULTS: SpectralOptions = { tint: '#206DD0', line: '#206DD0', transparency: 0.98, seeBlur: 0.6, glimmer: false, stars: false, shimmer: false }
 export const SPECTRAL_OUTER = 2.4, SPECTRAL_INNER = 0.75 // CSS px, like Sketch's outer and inner lines
 
 const SKIN_PARS = /* glsl */`
@@ -83,25 +83,39 @@ const hullFrag = /* glsl */`uniform vec3 uTint; void main() { gl_FragColor = vec
   #include <colorspace_fragment>
 }`
 export function spectralMaterials(o: SpectralOptions) {
-  const tint = new THREE.Color(o.tint), res = new THREE.Vector2(1, 1)
+  const tint = new THREE.Color(o.tint), lineCol = new THREE.Color(o.line ?? o.tint), res = new THREE.Vector2(1, 1)
   const body = new THREE.ShaderMaterial({ vertexShader: bodyVert, fragmentShader: bodyFrag, transparent: true, depthWrite: true,
     uniforms: { uTint: { value: tint }, uAlpha: { value: 1 - o.transparency }, uGlimmer: { value: o.glimmer ? 1 : 0 }, uShimmer: { value: o.shimmer ? 1 : 0 }, uStars: { value: o.stars ? 1 : 0 }, uTime: { value: 0 }, uPx: { value: 0.0005 } } })
   const hull = new THREE.ShaderMaterial({ vertexShader: hullVert, fragmentShader: hullFrag, side: THREE.BackSide, transparent: true, depthWrite: false,
-    uniforms: { uTint: { value: tint }, uWidth: { value: SPECTRAL_OUTER }, uRes: { value: res } } })
-  const line = new LineMaterial({ color: o.tint, linewidth: SPECTRAL_INNER, worldUnits: false, transparent: true, opacity: 0.85, depthWrite: false })
-  return { body, hull, line, res, tint,
+    uniforms: { uTint: { value: lineCol }, uWidth: { value: SPECTRAL_OUTER }, uRes: { value: res } } })
+  const line = new LineMaterial({ color: o.line ?? o.tint, linewidth: SPECTRAL_INNER, worldUnits: false, transparent: true, opacity: 0.85, depthWrite: false })
+  // See-through layers: the same lines where they sit behind the nearest skin (depth test inverted against the body's depth
+  // prepass), drawn as three stacked strokes, wider and fainter as the blur rises, which reads as a soft, out-of-focus line.
+  const ghosts = [0, 1, 2].map(() => new LineMaterial({ color: o.line ?? o.tint, linewidth: SPECTRAL_INNER, worldUnits: false, transparent: true, opacity: 0, depthWrite: false, depthFunc: THREE.GreaterDepth }))
+  let blur = o.seeBlur ?? 0.6
+  return { body, hull, line, ghosts, res, tint, lineCol,
+    setLine(c: string) { lineCol.set(c); line.color.set(c); for (const g of ghosts) g.color.set(c) },
+    setBlur(b: number) { blur = b },
     /** per frame: pixel ratio and canvas size for the screen-space widths, and the shimmer clock (frozen when still) */
     frame(w: number, h: number, dpr: number, t: number) {
       res.set(w * dpr, h * dpr); line.resolution.set(w * dpr, h * dpr); line.linewidth = SPECTRAL_INNER * dpr
+      const spread = [1, 3.5, 7], op = [0.8 * (1 - blur) + 0.09 * blur, 0.06 * blur, 0.035 * blur]
+      ghosts.forEach((g, i) => { g.resolution.set(w * dpr, h * dpr); g.linewidth = SPECTRAL_INNER * dpr * (1 + blur * spread[i]); g.opacity = op[i]; g.visible = op[i] > 0.003 })
       hull.uniforms.uWidth.value = SPECTRAL_OUTER * dpr; body.uniforms.uTime.value = t
     },
-    dispose() { body.dispose(); hull.dispose(); line.dispose() } }
+    dispose() { body.dispose(); hull.dispose(); line.dispose(); for (const g of ghosts) g.dispose() } }
 }
 export type SpectralMats = ReturnType<typeof spectralMaterials>
 
 // ---------- authored inner lines on the skinned surface ----------
 type Seg = [number, number, number, number, number, number] // two endpoints, each an edge (i, j, t)
-interface Prepared { segs: Seg[]; starV: number[] }
+type Bary = [number, number, number, number, number] // triangle a, b, c and weights for b and c
+interface Prepared { segs: Seg[]; starV: number[]; bary: Bary[] }
+function rayTri(o: THREE.Vector3, d: THREE.Vector3, a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3): [number, number, number] | null {
+  const e1 = b.clone().sub(a), e2 = c.clone().sub(a), p = d.clone().cross(e2), det = e1.dot(p); if (Math.abs(det) < 1e-12) return null
+  const s = o.clone().sub(a), u = s.dot(p) / det; if (u < 0 || u > 1) return null
+  const q = s.clone().cross(e1), v = d.dot(q) / det; if (v < 0 || u + v > 1) return null
+  const t = e2.dot(q) / det; return t > 0 ? [t, u, v] : null }
 const cache = new WeakMap<THREE.BufferGeometry, Prepared>()
 const FINGERS = ['index-finger', 'middle-finger', 'ring-finger', 'pinky-finger']
 
@@ -134,7 +148,7 @@ function prepare(mesh: THREE.SkinnedMesh, owner: string[]): Prepared {
   // the thumb, which sits on the palm side of the index-pinky plane.
   if (J('thumb-tip').sub(W).dot(pn) < 0) pn.negate()
   void M
-  const segs: Seg[] = [], starV: number[] = [], f = new Float32Array(N)
+  const segs: Seg[] = [], starV: number[] = [], bary: Bary[] = [], f = new Float32Array(N)
   const finger = (base: string, distal: string, tip: string, creaseJoints: string[], owned: string[]) => {
     const D = J(distal), T = J(tip), ax = T.clone().sub(D), len = ax.length(); ax.normalize()
     const side = new THREE.Vector3().crossVectors(ax, pn).normalize(), nrm = new THREE.Vector3().crossVectors(side, ax).normalize()
@@ -146,10 +160,30 @@ function prepare(mesh: THREE.SkinnedMesh, owner: string[]): Prepared {
     for (let v = 0; v < N; v++) { const d = B[v].clone().sub(D); f[v] = Math.hypot((d.dot(ax) / len - s0) / 0.42, d.dot(side) / (hw * 0.85)) }
     const pad = (v: number) => { if (!ownD(v)) return false; const d = B[v].clone().sub(D); return d.dot(nrm) > hw * 0.35 && d.dot(ax) / len < s0 + 0.12 }
     for (const L of [0.3, 0.55, 0.8]) contour(geo, f, pad, L, segs)
-    // Nail bed: a rounded outline on the back of the distal segment, from about 40% of its length to just short of the tip.
-    for (let v = 0; v < N; v++) { const d = B[v].clone().sub(D); f[v] = Math.hypot((d.dot(ax) / len - 0.66) / 0.3, d.dot(side) / (hw * 0.68)) }
-    const back = (v: number) => ownD(v) && B[v].clone().sub(D).dot(nrm) < -hw * 0.25
-    contour(geo, f, back, 1, segs)
+    // Nails are authored curves, not level sets: the distal segment has too few triangles for a clean contour. Each curve
+    // point is cast from the bone axis out through the back of the finger onto the bind-pose surface and stored as a
+    // barycentric point on the hit triangle, so it follows the skin as the hand poses.
+    // Nail plate: squoval covering the last ~45% of the distal segment (s 0.5 to 0.95 of D to tip) and ~75% of the finger
+    // width (a chord at +-48.6 deg round it); squarer at the free edge (superellipse power 4), rounder at the cuticle (2.6).
+    const n0 = 0.5, n1 = 0.95, nc = (n0 + n1) / 2, nh = (n1 - n0) / 2, A = Math.asin(0.75)
+    const tris: number[] = []; { const idx = geo.index!; for (let t = 0; t < idx.count; t += 3) { const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2); if (ownD(a) || ownD(b) || ownD(c)) tris.push(a, b, c) } }
+    const cast = (u: number, w: number): Bary | null => {
+      const O = D.clone().addScaledVector(ax, (nc + u * nh) * len), ang = w * A
+      const dir = nrm.clone().multiplyScalar(-Math.cos(ang)).addScaledVector(side, Math.sin(ang))
+      let best: Bary | null = null, bt = Infinity
+      for (let t = 0; t < tris.length; t += 3) { const h = rayTri(O, dir, B[tris[t]], B[tris[t + 1]], B[tris[t + 2]]); if (h && h[0] < bt) { bt = h[0]; best = [tris[t], tris[t + 1], tris[t + 2], h[1], h[2]] } }
+      return best }
+    const curve = (pts: [number, number][], closed: boolean) => { const c = pts.map(([u, w]) => cast(u, w))
+      for (let i = 0; i < c.length - (closed ? 0 : 1); i++) { const a = c[i], b = c[(i + 1) % c.length]; if (a && b) bary.push(a, b) } }
+    const sq = (th: number, k: number) => { const c = Math.cos(th), s2 = Math.sin(th); return [Math.sign(c) * Math.pow(Math.abs(c), 2 / k), Math.sign(s2) * Math.pow(Math.abs(s2), 2 / k)] as [number, number] }
+    const plate: [number, number][] = []; for (let i = 0; i < 40; i++) { const th = (i / 40) * Math.PI * 2; plate.push(sq(th, Math.cos(th) > 0 ? 4 : 2.6)) }
+    curve(plate, true)
+    // Eponychium (cuticle fold): the rounded base curve again, a little behind the plate, on the cuticle side only.
+    const epo: [number, number][] = []; for (let i = 0; i <= 16; i++) { const th = Math.PI * (0.62 + 0.76 * i / 16), [u, w] = sq(th, 2.6); epo.push([u - 0.14, w * 1.03]) }
+    curve(epo, false)
+    // Lunula: the pale half-moon at the nail base, an arc bulging toward the free edge about a fifth of the way in.
+    const lun: [number, number][] = []; for (let i = 0; i <= 14; i++) { const th = -Math.PI / 2 + Math.PI * i / 14; lun.push([-0.96 + 0.4 * Math.cos(th), 0.55 * Math.sin(th)]) }
+    curve(lun, false)
     // Knuckle creases: a short line across each joint, on both the palm and the back, kept to the middle of the finger.
     for (const jn of creaseJoints) {
       const C = J(jn), nxt = J(jn.replace(/phalanx-(proximal|intermediate|distal)$/, (m) => ({ 'phalanx-proximal': 'phalanx-intermediate', 'phalanx-intermediate': 'phalanx-distal', 'phalanx-distal': 'tip' } as Record<string, string>)[m]))
@@ -168,7 +202,7 @@ function prepare(mesh: THREE.SkinnedMesh, owner: string[]): Prepared {
   finger('thumb', 'thumb-phalanx-distal', 'thumb-tip', ['thumb-phalanx-distal'], ['thumb-phalanx-proximal', 'thumb-phalanx-distal'])
   // two more stars by the knuckles of the index and ring fingers
   for (const b of ['index-finger-phalanx-proximal', 'ring-finger-phalanx-intermediate', 'wrist']) { const v = owner.indexOf(b); if (v >= 0) starV.push(v) }
-  const p = { segs, starV }; cache.set(geo, p); return p
+  const p = { segs, starV, bary }; cache.set(geo, p); return p
 }
 
 // ---------- per-frame inner silhouettes ----------
@@ -195,7 +229,7 @@ function edgesOf(geo: THREE.BufferGeometry): Edges {
   const r = { tris, edges: new Uint32Array(out) }; edgeCache.set(geo, r); return r
 }
 
-interface LineState { skinned: Float32Array; creases: Float32Array; lines: LineSegments2; camKey: string }
+interface LineState { skinned: Float32Array; creases: Float32Array; lines: LineSegments2; ghosts: LineSegments2[]; camKey: string }
 /** Rebuilds the skinned positions and the crease and fingertip lines for the current pose (on each re-solve). */
 export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: SpectralMats) {
   for (const c of [...mesh.children]) if (c.userData.spectral && !c.userData.spectralHull) { mesh.remove(c); (c as THREE.Mesh).geometry?.dispose() }
@@ -206,9 +240,13 @@ export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: Spect
   for (let i = 0; i < N; i++) { mesh.getVertexPosition(i, v); sk[i * 3] = v.x; sk[i * 3 + 1] = v.y; sk[i * 3 + 2] = v.z }
   const P = (i: number, j: number, t: number, o: number[]) => { for (let k = 0; k < 3; k++) o.push(sk[i * 3 + k] + (sk[j * 3 + k] - sk[i * 3 + k]) * t) }
   const cr: number[] = []; for (const s of prep.segs) { P(s[0], s[1], s[2], cr); P(s[3], s[4], s[5], cr) }
+  for (const [a, b, c, u, w] of prep.bary) for (let k = 0; k < 3; k++) cr.push(sk[a * 3 + k] * (1 - u - w) + sk[b * 3 + k] * u + sk[c * 3 + k] * w)
   const lines = new LineSegments2(new LineSegmentsGeometry(), m.line); lines.renderOrder = 12
   lines.userData = { spectral: true, noBounds: true }; lines.layers.set(LINE_LAYER); lines.frustumCulled = false; mesh.add(lines)
-  mesh.userData.spectralLines = { skinned: sk, creases: new Float32Array(cr), lines, camKey: '' } as LineState
+  const ghosts = m.ghosts.map((gm, i) => { const g = new LineSegments2(lines.geometry, gm);
+    g.userData = { spectral: true, noBounds: true, ghost: true }; g.layers.set(LINE_LAYER); g.frustumCulled = false; mesh.add(g); return g })
+  for (const g of ghosts) g.renderOrder = 13 // after the prepass (9), body (10) and crisp lines (12), so the inverted test sees the skin's depth
+  mesh.userData.spectralLines = { skinned: sk, creases: new Float32Array(cr), lines, ghosts, camKey: '' } as LineState
 }
 
 const _cam = new THREE.Vector3(), _inv = new THREE.Matrix4()
@@ -237,7 +275,7 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
     nudge(sk[a], sk[a + 1], sk[a + 2]); nudge(sk[b], sk[b + 1], sk[b + 2])
   }
   const cr = st.creases; for (let i = 0; i < cr.length; i += 3) nudge(cr[i], cr[i + 1], cr[i + 2])
-  st.lines.geometry.dispose(); const g = new LineSegmentsGeometry(); g.setPositions(out); st.lines.geometry = g
+  st.lines.geometry.dispose(); const g = new LineSegmentsGeometry(); g.setPositions(out); st.lines.geometry = g; for (const gh of st.ghosts) gh.geometry = g
 }
 
 /** The opaque outer outline: an inverted hull sharing the hand's geometry and skeleton (or a plain mesh for the forearm). */

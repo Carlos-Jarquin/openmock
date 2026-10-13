@@ -28,6 +28,17 @@ const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const wrap = (v: number) => ((v + 540) % 360) - 180
 const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
 /** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
+type Pose = typeof POSE
+/** One-click camera presets (beside Reset camera). Zoom and pan stay at the framed defaults; Flat lay uses a long lens. */
+const VIEW_PRESETS: [string, Pose][] = [
+  ['Front', { tiltX: 0, tiltY: 0, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }],
+  ['45° left', { tiltX: -6, tiltY: -45, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }],
+  ['45° right', { tiltX: -6, tiltY: 45, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }],
+  ['Side', { tiltX: 0, tiltY: 90, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }],
+  ['Back', { tiltX: 0, tiltY: 180, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }],
+  ['Flat lay', { tiltX: 0, tiltY: 0, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 12 }],
+  ['Hero 3/4', { tiltX: -14, tiltY: -32, rotZ: -9, zoom: 1.08, panX: 0, panY: 0, fov: 24 }],
+]
 const APPLE_HERO = { tiltX: -18.438, tiltY: 230.375, rotZ: -3.125, zoom: 1.937, panX: 0.347, panY: -0.307, fov: 21.375 }
 type LightPreset = 'soft' | 'apple' | 'violet'
 type BgMode = 'solid' | 'gradient' | 'streaks'
@@ -146,6 +157,20 @@ export default function App() {
   const [sb, setSb] = useState<SbCfg>(SB_DEFAULT)
   const [sbReset, setSbReset] = useState(0)
   const [pose, setPose] = useState(POSE)
+  const poseRef = useRef(pose); poseRef.current = pose
+  const viewAnim = useRef(0)
+  /** Ease to a preset over 0.6 s (shortest way round for the spin); jumps straight there when reduced motion is on. */
+  const goView = useCallback((to: Pose) => {
+    cancelAnimationFrame(viewAnim.current)
+    const from = { ...poseRef.current }, dy = ((to.tiltY - from.tiltY) % 360 + 540) % 360 - 180
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { setPose(to); return }
+    const t0 = performance.now(), D = 600
+    const step = (t: number) => { const k = Math.min(1, (t - t0) / D), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2
+      const p = {} as Pose; for (const key of Object.keys(to) as (keyof Pose)[]) p[key] = from[key] + (to[key] - from[key]) * e
+      p.tiltY = k < 1 ? from.tiltY + dy * e : to.tiltY
+      setPose(p); if (k < 1) viewAnim.current = requestAnimationFrame(step) }
+    viewAnim.current = requestAnimationFrame(step)
+  }, [])
   const [light, setLight] = useState(LIGHT)
   const [fx, setFx] = useState(FX)
   const [style, setStyle] = useState<'photo' | 'sketch'>('photo')
@@ -424,6 +449,10 @@ export default function App() {
                 <label className="row"><span>Tint</span>
                   <input type="color" value={spectral.tint.toLowerCase()} onChange={e => setSpectral({ ...spectral, tint: e.target.value })} />
                   <input type="text" key={spectral.tint} defaultValue={spectral.tint} maxLength={7} style={{ width: 70 }} onChange={e => { const v = e.target.value.trim(); if (/^#[0-9a-fA-F]{6}$/.test(v)) setSpectral({ ...spectral, tint: v.toUpperCase() }) }} /></label>
+                <label className="row"><span>Line colour</span>
+                  <input type="color" value={(spectral.line ?? spectral.tint).toLowerCase()} onChange={e => setSpectral({ ...spectral, line: e.target.value.toUpperCase() })} />
+                  <input type="text" key={'l' + spectral.line} defaultValue={spectral.line} maxLength={7} style={{ width: 70 }} onChange={e => { const v = e.target.value.trim(); if (/^#[0-9a-fA-F]{6}$/.test(v)) setSpectral({ ...spectral, line: v.toUpperCase() }) }} /></label>
+                {slider('See-through blur', Math.round((spectral.seeBlur ?? 0.6) * 100), 0, 100, 1, n => setSpectral({ ...spectral, seeBlur: n / 100 }), '%')}
                 {slider('Transparency', Math.round(spectral.transparency * 100), 0, 100, 1, n => setSpectral({ ...spectral, transparency: n / 100 }), '%')}
                 <label className="check"><input type="checkbox" checked={spectral.glimmer} onChange={e => setSpectral({ ...spectral, glimmer: e.target.checked })} /> Glimmer</label>
                 <label className="check"><input type="checkbox" checked={spectral.stars} onChange={e => setSpectral({ ...spectral, stars: e.target.checked })} /> Stars</label>
@@ -458,6 +487,7 @@ export default function App() {
           {slider('Pan X', pose.panX, -1.5, 1.5, 0.01, n => setPose({ ...pose, panX: n }))}
           {slider('Pan Y', pose.panY, -1.5, 1.5, 0.01, n => setPose({ ...pose, panY: n }))}
           <button className="ghost" onClick={() => setPose(POSE)}>Reset camera</button>
+          <div className="seg wrap" aria-label="View presets">{VIEW_PRESETS.map(([n, p]) => <button key={n} onClick={() => goView(p)}>{n}</button>)}</div>
           <button className="ghost" onClick={() => setPose(APPLE_HERO)}>Apple hero angle</button>
         </section>
         <section><h2>Background</h2>

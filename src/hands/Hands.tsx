@@ -435,9 +435,9 @@ function Hands({ pose, tone, fit, gesture, sp }: { pose: HandPose; tone: string;
   useEffect(() => () => { if (!spm) mat.dispose() }, [mat, spm])
   // live uniforms: tint, transparency and the three effects
   useEffect(() => { if (!spm) return
-    spm.tint.set(sp.tint); spm.line.color.set(sp.tint)
+    spm.tint.set(sp.tint); spm.setLine(sp.line ?? sp.tint); spm.setBlur(sp.seeBlur ?? 0.6)
     const u = spm.body.uniforms; u.uAlpha.value = 1 - sp.transparency; u.uGlimmer.value = sp.glimmer ? 1 : 0; u.uShimmer.value = sp.shimmer ? 1 : 0; u.uStars.value = sp.stars ? 1 : 0
-  }, [spm, sp.tint, sp.transparency, sp.glimmer, sp.shimmer, sp.stars])
+  }, [spm, sp.tint, sp.line, sp.seeBlur, sp.transparency, sp.glimmer, sp.shimmer, sp.stars])
   const { size, gl } = useThree()
   useFrame(({ clock, camera }) => { if (!spm) return
     spm.frame(size.width, size.height, gl.getPixelRatio(), clock.elapsedTime)
