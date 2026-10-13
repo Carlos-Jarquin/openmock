@@ -9,9 +9,10 @@ export default defineConfig({
   server: {
     proxy: {
       '/comfyui-api': {
-        target: COMFY, changeOrigin: true, ws: false, rewrite: p => p.replace(/^\/comfyui-api/, ''),
+        target: COMFY, changeOrigin: true, ws: true, rewrite: p => p.replace(/^\/comfyui-api/, ''),
         configure: (proxy: unknown) => {
-          (proxy as { on: (e: string, f: (req: { removeHeader: (h: string) => void }) => void) => void }).on('proxyReq', req => req.removeHeader('origin'))
+          const p = proxy as { on: (e: string, f: (req: { removeHeader: (h: string) => void }) => void) => void }
+          p.on('proxyReq', req => req.removeHeader('origin')); p.on('proxyReqWs', req => req.removeHeader('origin')) // ws: step progress
         },
       },
     },

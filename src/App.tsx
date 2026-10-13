@@ -169,6 +169,9 @@ export default function App() {
   const [scale, setScale] = useState(2)
   const [dragging, setDragging] = useState(false)
   const [status, setStatus] = useState('Drop, paste or choose an image or video to start.')
+  // Photoreal status sits right under its button (the main status line is at the bottom of the panel, often out of view)
+  const [aiMsg, setAiMsg] = useState<{ text: string; kind: 'busy' | 'done' | 'error' } | null>(null)
+  const say = (text: string, kind: 'busy' | 'done' | 'error') => { setAiMsg({ text, kind }); setStatus(text) }
   const three = useRef<Grab | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const drag = useRef<{ x: number; y: number; pan: boolean } | null>(null)
@@ -223,8 +226,11 @@ export default function App() {
   useEffect(() => { setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return a.url ? { ...a, url: null } : a }) },
     [device, opts, media, pose, light, fx, hands, gesture, bgMode, bg1, bg2, angle, transparent, style, sk])
   const makePhotoreal = async () => {
-    const t = three.current; if (!t || ai.busy) return
-    if (!(await comfyReachable())) { setStatus('ComfyUI is not running. Start it on port 8188, then try again.'); return }
+    const t = three.current
+    if (ai.busy) return
+    if (!t) { say('The 3D view isn\'t ready yet. Wait a moment, then try again.', 'error'); return }
+    say('Checking ComfyUI…', 'busy')
+    if (!(await comfyReachable())) { say('ComfyUI isn\'t running. Start it (port 8188), then try again.', 'error'); return }
     const ctl = new AbortController(); aiAbort.current = ctl
     const runSeed = seedLock ? seed : Math.floor(Math.random() * 1e9)
     setSeed(runSeed)
@@ -232,13 +238,15 @@ export default function App() {
     try {
       await new Promise(r => requestAnimationFrame(r))
       const passes = await renderPasses(t, hands.tone)
-      const res = await runComfy(passes, { guide: ai.guide, seed: runSeed, onStatus: setStatus, signal: ctl.signal })
+      const res = await runComfy(passes, { guide: ai.guide, seed: runSeed, onStatus: s => say(s, 'busy'), signal: ctl.signal })
       const out = composite(passes, res, { shadows: ai.shadows, silhouette: hands.tone === 'silhouette' })
       const url = URL.createObjectURL(await new Promise<Blob>(r => out.toBlob(b => r(b!), 'image/png')))
       setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return { ...a, busy: false, url } })
-      setStatus(`Photoreal hands ready at ${passes.w} × ${passes.h}. Export PNG saves this picture. Change anything to go back to 3D.`)
+      say(`Done: photoreal hands at ${passes.w} × ${passes.h}, shown in the view. Download saves this picture; ComfyUI also kept its raw image in ComfyUI-Shared/output/${res.saved ?? 'openmock/'}. Change anything to go back to 3D.`, 'done')
     } catch (e) {
-      setAi(a => ({ ...a, busy: false })); setStatus(e instanceof Error ? e.message : 'Something went wrong with ComfyUI.')
+      setAi(a => ({ ...a, busy: false }))
+      const m = e instanceof Error ? e.message : String(e)
+      say(/Failed to fetch|NetworkError|Load failed/i.test(m) ? 'ComfyUI isn\'t running or stopped responding. Start it (port 8188), then try again.' : m || 'Something went wrong with ComfyUI.', 'error')
     }
   }
   const exportAiPasses = async () => {
@@ -374,7 +382,10 @@ export default function App() {
               <div className="row"><label>Seed <input type="number" min={0} value={seed} onChange={e => setSeed(Math.max(0, Math.floor(Number(e.target.value) || 0)))} style={{ width: 110 }} /></label>
                 <button className="ghost" title="Pick a new random seed" onClick={() => setSeed(Math.floor(Math.random() * 1e9))}>Randomise</button></div>
               <label className="check"><input type="checkbox" checked={seedLock} onChange={e => setSeedLock(e.target.checked)} /> Lock seed (repeat the same result)</label>
+              {hands.tone === 'spectral' && <p className="hint">Spectral hands are painted as Fair skin for the photoreal pass.</p>}
               {ai.busy ? <button onClick={() => aiAbort.current?.abort()}>Cancel</button> : <button onClick={makePhotoreal}>Make hands photoreal</button>}
+              {aiMsg && <p className={`ai-msg ${aiMsg.kind}`} role="status" style={{ margin: '4px 0', fontSize: 12, color: aiMsg.kind === 'error' ? '#c0392b' : aiMsg.kind === 'done' ? '#1e7d32' : '#555' }}>{aiMsg.kind === 'busy' ? '⏳ ' : ''}{aiMsg.text}</p>}
+              {ai.url && <button onClick={() => { const a = document.createElement('a'); a.download = 'openmock-ai-hands.png'; a.href = ai.url!; a.click() }}>Download</button>}
               {ai.url && <button className="ghost" onClick={() => setAi(a => { URL.revokeObjectURL(a.url!); return { ...a, url: null } })}>Back to 3D hands</button>}
               <button className="ghost" onClick={exportAiPasses}>Export for AI hands</button>
               <p className="hint">Uses ComfyUI on this Mac to repaint only the hands. The phone stays exactly as rendered.</p>

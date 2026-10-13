@@ -28,7 +28,7 @@ export function handPrompt(tone: string) {
   if (tone === 'silhouette') return 'Photorealistic low-key studio photograph of an adult hand holding a smartphone upright, strongly backlit, ' +
     'soft rim light along the fingers and the edge of the hand, the front of the hand in shadow, natural skin texture, knuckles and creases, ' +
     'relaxed natural grip, sharp focus. No rings, no jewellery, no watch, no sleeve, no text.'
-  const t = TONE_WORDS[tone] ?? SKIN_TONES[tone]?.label.toLowerCase() ?? 'natural'
+  const t = TONE_WORDS[tone === 'spectral' ? 'fair' : tone] ?? SKIN_TONES[tone]?.label.toLowerCase() ?? 'natural' // Spectral: painted as Fair skin
   return `Photorealistic studio product photograph of an adult's hand with ${t} skin holding a smartphone, like Apple's iPhone product shots. ` +
     'Natural skin with fine texture and pores, realistic knuckles, creases and clean short fingernails, relaxed natural grip, ' +
     'soft diffused studio softbox lighting, gentle shadows, sharp focus, high detail. No rings, no jewellery, no watch, no text.'
@@ -50,7 +50,7 @@ const frames = (n: number) => new Promise<void>(r => { const f = () => (--n <= 0
 export async function renderPasses(g: Grab, tone: string): Promise<Passes> {
   // Gesture markers are for placing the touch point only, so leave them out of every pass.
   const gizmos: THREE.Object3D[] = []
-  g.scene.traverse(o => { if (o.userData.gizmo && o.visible) gizmos.push(o) })
+  g.scene.traverse(o => { if ((o.userData.gizmo || o.userData.spectral) && o.visible) gizmos.push(o) }) // Spectral outlines and lines too
   for (const o of gizmos) o.visible = false
   try { return await passes(g, tone) } finally { for (const o of gizmos) o.visible = true }
 }
@@ -173,7 +173,7 @@ export async function comfyReachable() {
 }
 
 export type Guide = 'depth' | 'pose'
-export interface AiResult { layer: HTMLImageElement; full: HTMLImageElement }
+export interface AiResult { layer: HTMLImageElement; full: HTMLImageElement; saved?: string }
 /** Sends the passes through comfy/hands.json and returns the hand layer and the full generation. */
 export async function runComfy(p: Passes, opts: { guide: Guide; seed: number; onStatus: (s: string) => void; signal?: AbortSignal }): Promise<AiResult> {
   const { gw, gh } = genSize(p.w, p.h), id = Date.now().toString(36)
@@ -190,24 +190,59 @@ export async function runComfy(p: Passes, opts: { guide: Guide; seed: number; on
   wf['11'].inputs.text = p.prompt; wf['13'].inputs.width = gw; wf['13'].inputs.height = gh; wf['14'].inputs.seed = opts.seed
   const r = await fetch(`${API}/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: wf, client_id: `openmock-${id}` }) })
   const body = await r.json().catch(() => ({}))
-  if (!r.ok) throw new Error(`ComfyUI rejected the workflow: ${body?.error?.message ?? r.status}${body?.node_errors ? ' (check the models named in comfy/hands.json)' : ''}`)
+  if (!r.ok) {
+    const missing: string[] = []
+    for (const ne of Object.values((body?.node_errors ?? {}) as Record<string, { errors?: { type?: string; details?: string; extra_info?: { input_name?: string; received_value?: unknown } }[] }>))
+      for (const e of ne.errors ?? []) if (e.type === 'value_not_in_list' && /name$/.test(e.extra_info?.input_name ?? '')) missing.push(String(e.extra_info?.received_value))
+    if (missing.length) throw new Error(`Missing model${missing.length > 1 ? 's' : ''} in ComfyUI: ${missing.join(', ')}. Add ${missing.length > 1 ? 'them' : 'it'} to ComfyUI's models folder, then try again.`)
+    throw new Error(`ComfyUI rejected the workflow: ${body?.error?.message ?? r.status}`)
+  }
   const pid = body.prompt_id as string
   const t0 = Date.now()
+  // Step progress from ComfyUI's websocket (through the dev proxy); the history poll below still decides when it's done.
+  const prog = { value: 0, max: 0, node: '' }
+  let ws: WebSocket | null = null
+  try {
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${API}/ws?clientId=openmock-${id}`)
+    ws.onmessage = e => { if (typeof e.data !== 'string') return; try { const m = JSON.parse(e.data)
+      if (m.type === 'progress' && m.data?.prompt_id === pid) { prog.value = m.data.value; prog.max = m.data.max }
+      if (m.type === 'executing' && m.data?.prompt_id === pid) prog.node = m.data.node ?? '' } catch { /* not JSON */ } }
+  } catch { ws = null }
+  const NODE_WORDS: Record<string, string> = { '1': 'loading the image model', '2': 'loading the text model', '3': 'loading the VAE', '4': 'loading the ControlNet', '11': 'reading the prompt', '14': 'painting', '15': 'decoding', '19': 'saving', '20': 'saving' }
+  try {
   for (;;) {
     if (opts.signal?.aborted) throw new Error('Cancelled.')
     await new Promise(res => setTimeout(res, 1000))
-    opts.onStatus(`Painting the hands in ComfyUI… ${Math.round((Date.now() - t0) / 1000)} s`)
+    const secs = Math.round((Date.now() - t0) / 1000)
+    let ahead = 0
+    try { const q = await (await fetch(`${API}/queue`, { cache: 'no-store' })).json(); const all = [...(q.queue_running ?? []), ...(q.queue_pending ?? [])]
+      const i = all.findIndex((x: unknown[]) => x[1] === pid); ahead = i > 0 ? i : 0 } catch { /* keep going */ }
+    opts.onStatus(ahead ? `Waiting in the ComfyUI queue (${ahead} ahead)… ${secs} s`
+      : prog.max && prog.node === '14' ? `Painting the hands: step ${prog.value} of ${prog.max} (${Math.round(prog.value / prog.max * 100)}%)… ${secs} s`
+      : `Working in ComfyUI${NODE_WORDS[prog.node] ? `: ${NODE_WORDS[prog.node]}` : ''}… ${secs} s`)
     const hr = await fetch(`${API}/history/${pid}`, { cache: 'no-store' }); if (!hr.ok) continue
     const hist = (await hr.json())[pid]; if (!hist) continue
-    if (hist.status?.status_str === 'error') throw new Error('ComfyUI hit an error while running the workflow. See the ComfyUI log.')
+    if (hist.status?.status_str === 'error') throw new Error(explainError(hist.status?.messages))
     const out = hist.outputs ?? {}
     if (!out['19']?.images?.length || !out['20']?.images?.length) { if (hist.status?.completed) throw new Error('ComfyUI finished without images.'); continue }
     const load = (im: { filename: string; subfolder: string; type: string }) => new Promise<HTMLImageElement>((res, rej) => {
       const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Could not load the result from ComfyUI.'))
       i.src = `${API}/view?${new URLSearchParams({ filename: im.filename, subfolder: im.subfolder, type: im.type })}`
     })
-    return { layer: await load(out['19'].images[0]), full: await load(out['20'].images[0]) }
+    const saved = out['20'].images[0] as { filename: string; subfolder: string }
+    return { layer: await load(out['19'].images[0]), full: await load(out['20'].images[0]), saved: `${saved.subfolder ? saved.subfolder + '/' : ''}${saved.filename}` }
   }
+  } finally { ws?.close() }
+}
+
+/** Plain-English reading of ComfyUI's execution_error. */
+function explainError(messages: unknown): string {
+  const err = (Array.isArray(messages) ? messages : []).find((m: unknown[]) => m[0] === 'execution_error')?.[1] as { node_type?: string; exception_message?: string; exception_type?: string } | undefined
+  const msg = (err?.exception_message ?? '').trim(), where = err?.node_type ? ` in ${err.node_type}` : ''
+  if (/Broken pipe|Errno 32/i.test(msg)) return 'ComfyUI stopped while painting: its console output is closed (Broken pipe). Quit and reopen ComfyUI, then try again.'
+  if (/out of memory|MPS backend out of memory|CUDA out of memory/i.test(msg)) return `ComfyUI ran out of memory${where}. Close other apps or lower the size, then try again.`
+  if (/No such file|not found/i.test(msg)) return `ComfyUI couldn't find a file${where}: ${msg.slice(0, 160)}`
+  return msg ? `ComfyUI hit an error${where}: ${msg.slice(0, 200)}` : 'ComfyUI hit an error while running the workflow. See the ComfyUI log.'
 }
 
 /** The final picture: the live render, then the AI hands cut by Openmock's own full-resolution soft mask, minus anywhere
