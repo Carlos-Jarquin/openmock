@@ -11,10 +11,10 @@ import type { IPhoneSpec } from './iphoneSpecs'
 const mm = (v: number) => v / 100
 
 export const IP18_FINISHES: Record<string, { label: string; frame: string; back: string }> = {
-  black: { label: 'Black', frame: '#2c2d31', back: '#36373c' },
-  silver: { label: 'Silver', frame: '#d6d7d9', back: '#e4e4e2' },
-  glacier: { label: 'Glacier', frame: '#bccbd4', back: '#cdd9df' },
-  burgundy: { label: 'Burgundy', frame: '#5b2230', back: '#6a2a38' },
+  black: { label: 'Black', frame: '#26272a', back: '#2b2c2f' },
+  silver: { label: 'Silver', frame: '#e2e3e4', back: '#e6e6e4' },
+  glacier: { label: 'Glacier', frame: '#aebfd2', back: '#b8c7d9' },
+  burgundy: { label: 'Burgundy', frame: '#4e1c27', back: '#57202c' },
 }
 
 const NORMAL_SCALE = new THREE.Vector2(0.02, 0.02)
@@ -147,15 +147,15 @@ function LensStack({ r, order = 0 }: { r: number; order?: number }) {
       <mesh renderOrder={order}><ringGeometry args={[r * 0.74, r, 64]} />
         <meshPhysicalMaterial color="#0c0d11" metalness={0.85} roughness={0.32} {...off(0)} /></mesh>
       <mesh renderOrder={order}><circleGeometry args={[r * 0.74, 64]} />
-        <meshPhysicalMaterial color="#040509" roughness={0.12} clearcoat={1} {...off(0)} /></mesh>
+        <meshPhysicalMaterial color="#0b0d14" roughness={0.1} clearcoat={1} envMapIntensity={1.6} {...off(0)} /></mesh>
       <mesh renderOrder={order + 1}><circleGeometry args={[r * 0.6, 64]} />
-        <meshPhysicalMaterial color="#0a0c1c" metalness={0.25} roughness={0.06} iridescence={1} iridescenceIOR={1.45}
-          iridescenceThicknessRange={[260, 420]} clearcoat={1} clearcoatRoughness={0.03} envMapIntensity={1.4} {...off(1)} /></mesh>
+        <meshPhysicalMaterial color="#141a33" metalness={0.35} roughness={0.05} iridescence={1} iridescenceIOR={1.45}
+          iridescenceThicknessRange={[260, 420]} clearcoat={1} clearcoatRoughness={0.03} envMapIntensity={2.2} {...off(1)} /></mesh>
       {[0.5, 0.36].map((k, i) => <mesh key={k} renderOrder={order + 2}><ringGeometry args={[r * k - r * 0.025, r * k, 64]} />
         <meshPhysicalMaterial color={i ? '#2a2546' : '#1b2442'} metalness={0.9} roughness={0.18} {...off(2)} /></mesh>)}
       <mesh renderOrder={order + 3}><circleGeometry args={[r * 0.2, 40]} /><meshBasicMaterial color="#000" {...off(3)} /></mesh>
       <mesh geometry={capGeo} renderOrder={order + 4}>
-        <meshPhysicalMaterial color="#000" roughness={0.03} specularIntensity={0.35}
+        <meshPhysicalMaterial color="#000" roughness={0.02} specularIntensity={1} envMapIntensity={1.5}
           transparent blending={THREE.AdditiveBlending} depthWrite={false} {...off(4)} /></mesh>
     </group>)
 }
@@ -175,7 +175,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const screen = flatUV(rrect(mm(s.active.w), mm(s.active.h), all(actR)), mm(s.active.w), mm(s.active.h))
     const island = new THREE.ShapeGeometry(rrect(mm(s.island.w), mm(s.island.h), all(mm(s.island.r))), 24)
     // Camera plateau: full width from the top edge, 2.78 mm proud of the back. Its bottom edge is scaled off the side view.
-    const plateau = slab(rrect(W, plH, [mm(P.bottomR), mm(P.bottomR), mm(P.cornerR), mm(P.cornerR)]), rise * 2, rise * 0.9, 6)
+    const plateau = slab(rrect(W, plH, [mm(P.bottomR), mm(P.bottomR), mm(P.cornerR), mm(P.cornerR)]), rise * 2, rise * 0.35, 6)
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
@@ -186,7 +186,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   useMemo(() => fitTexture(texture, mediaAspect, aspect), [texture, mediaAspect, aspect])
   // Brushed aluminium frame: anisotropic highlight along the band, streaky roughness and faint grooves.
   const bR = brushedRoughness(), bN = brushedNormal(), fR = frostRoughness(), sR = smudgeRoughness()
-  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.6} roughness={0.36} roughnessMap={bR} normalMap={bN} normalScale={NORMAL_SCALE}
+  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.3} roughness={0.5} roughnessMap={bR} normalMap={bN} normalScale={NORMAL_SCALE}
     anisotropy={0.55} clearcoat={0.08} clearcoatRoughness={0.3} envMapIntensity={1.15} />
   // Frosted back glass: textured roughness under a thin, slightly glossy coat so highlights spread but stay soft.
   const matte = <meshPhysicalMaterial color={f.back} metalness={0} roughness={0.8} roughnessMap={fR} clearcoat={0.35} clearcoatRoughness={0.38}
@@ -250,7 +250,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       <mesh geometry={g.plateau} position={[0, H / 2 - plH / 2, zb]}>{metal}</mesh>
       {s.lens.at.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}>
-          <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -lensRise / 2]}><cylinderGeometry args={[lensD / 2, lensD / 2 + mm(0.4), lensRise, 64]} />{metal}</mesh>
+          <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -lensRise / 2]}><cylinderGeometry args={[lensD / 2, lensD / 2, lensRise, 64]} /><meshPhysicalMaterial color={f.frame} metalness={1} roughness={0.14} envMapIntensity={1.4} /></mesh>
           <group position={[0, 0, -lensRise - E]} rotation={[0, Math.PI, 0]}><LensStack r={lensD / 2 - mm(1.1)} /></group>
         </group>))}
       <mesh position={[bx(s.flash.bx), ty(s.flash.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.flash.d / 2), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>
