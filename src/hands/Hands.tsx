@@ -11,11 +11,11 @@ import { spectralMaterials, buildSpectral, updateSpectral, addHull, removeHull, 
 import { LINE_LAYER } from '../sketch/Sketch'
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
-import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, type Gesture } from './gestures'
+import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, HAND_ROT0, REACH_EVENT, type Gesture, type HandRot } from './gestures'
 
-export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'holdtap'
+export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap' | 'flat'
 export const HAND_POSES: [HandPose, string][] = [['off', 'Off'], ['right', 'Right hand'], ['left', 'Left hand'], ['landscape', 'Two hands'], ['pinch', 'Present'], ['hold', 'Hold up'],
-  ['tap', 'Tap'], ['swipe', 'Swipe'], ['zoom', 'Pinch to zoom'], ['thumb', 'Thumb scroll'], ['holdtap', 'Hold and tap']]
+  ['tap', 'Tap'], ['swipe', 'Swipe'], ['zoom', 'Pinch to zoom'], ['thumb', 'Thumb tap'], ['thumbswipe', 'Thumb scroll'], ['type', 'Two-thumb typing'], ['hover', 'Point / hover'], ['holdtap', 'Hold and tap'], ['flat', 'Flat in palm']]
 export const SKIN_TONES: Record<string, { label: string; color: string; sheen: string }> = {
   light: { label: 'Light', color: '#f0c8ae', sheen: '#ffd9cf' },
   fair: { label: 'Fair', color: '#dfa98a', sheen: '#ffcbb8' },
@@ -53,7 +53,7 @@ interface FingerPlan { curl: [number, number, number, number]; close?: boolean; 
 interface ThumbPlan { oppose: number; abduct: number; curl: [number, number, number]; close?: boolean; max?: [number, number]; tip?: THREE.Vector3; touch?: boolean }
 /** follow: the whole hand (wrist and arm) moves so its touching digits reach their points without strain. */
 /** knuckle: where the middle finger's knuckle (MCP joint) goes. F: palm direction, wrist to knuckles. N: out of the palm. */
-interface HandPlan { side: 'right' | 'left'; knuckle: THREE.Vector3; F: THREE.Vector3; N: THREE.Vector3; roll?: number; seat?: number; follow?: boolean; fingers: FingerPlan[]; thumb: ThumbPlan }
+interface HandPlan { side: 'right' | 'left'; knuckle: THREE.Vector3; F: THREE.Vector3; N: THREE.Vector3; roll?: number; seat?: number; follow?: boolean | 'y'; fingers: FingerPlan[]; thumb: ThumbPlan }
 
 const mx = (v: THREE.Vector3) => v3(-v.x, v.y, v.z)
 const mt = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && mx(o.tip) })
@@ -103,9 +103,24 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT): Hand
         fingers: [{ curl: [0, 20, 20, 10], spread: 4, tip: ti, touch: true }, ...fist],
         thumb: { oppose: 20, abduct: 40, curl: [0, 10, 10], tip: tt, touch: true } }]
     }
-    // Thumb scroll: the one-handed grip slides up or down the frame to follow the point, and the thumb reaches across.
-    const t = P(ges.x, ges.y), dy = Math.min(hh * 0.5, Math.max(-hh * 0.5, t.y + hh * 0.05 + 0.35 * (hw - t.x))) - (-hh * 0.05), sh = (v?: THREE.Vector3) => v && v.clone().setY(v.y + dy)
-    return [{ ...grip, knuckle: sh(grip.knuckle)!, fingers: grip.fingers.map(fp => ({ ...fp, tip: sh(fp.tip) })),
+    if (pose === 'hover') {
+      // Point / hover: the tap hand, with the index pad about 8 mm above the glass and nothing touching.
+      const t = P(ges.x, ges.y), pl = pointer(t)
+      return [{ ...pl, follow: false, knuckle: pl.knuckle.clone().add(v3(0, 0, 0.08)), fingers: [{ curl: [0, 18, 22, 12], spread: 0, tip: t.clone().add(v3(0, 0, 0.08)) }, ...fist] }]
+    }
+    if (pose === 'type') {
+      // Two-thumb typing: each hand cradles its lower corner, fingers on its own half of the back, little finger under
+      // the bottom edge, and the thumb reaches its key. The left hand is the mirror of the right.
+      const side = (t: THREE.Vector3): HandPlan => ({ side: 'right', knuckle: v3(hw + 0.12, -hh * 0.3, -ht - 0.1), F: v3(-0.2, 0.9, -0.4), N: v3(-0.85, 0.05, 0.5), seat: 0.006, follow: 'y',
+        fingers: [back(hw * 0.25, hh * 0.15, 2), back(hw * 0.2, -hh * 0.02, 0), back(hw * 0.25, -hh * 0.2, -3), back(hw * 0.35, -hh * 0.38, -6)],
+        thumb: { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: t, touch: true } })
+      return [side(P(ges.kx, ges.ky)), mirror(side(mx(P(ges.kx2, ges.ky2))))]
+    }
+    // Thumb tap and thumb scroll: the one-handed grip slides up or down the frame to follow the point, and the thumb
+    // reaches across. Beyond the thumb's reach it rests as close as it can and the panel says how far short it is.
+    const a = pose === 'thumbswipe' ? swipeAt(ges) : ges
+    const t = P(a.x, a.y), dy = Math.min(hh * 0.5, Math.max(-hh * 0.5, t.y + hh * 0.05 + 0.35 * (hw - t.x))) - (-hh * 0.05), sh = (v?: THREE.Vector3) => v && v.clone().setY(v.y + dy)
+    return [{ ...grip, knuckle: sh(grip.knuckle)!, follow: 'y', fingers: grip.fingers.map(fp => ({ ...fp, tip: sh(fp.tip) })),
       thumb: { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: t, touch: true } }]
     }
   }
@@ -119,6 +134,14 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT): Hand
       thumb: { oppose: 0, abduct: 0, curl: [0, 0, 0], tip: v3(hw + 0.05, hh * 0.18, ht * 0.25) }, ...(import.meta.env.DEV ? g : {}) }]
   }
   if (pose === 'left') return [mirror(grip)]
+  if (pose === 'flat') {
+    // Flat in the palm: the phone lies face up on an open right hand, palm under the lower back, fingers relaxed
+    // along the back and the thumb curled in against the right frame. Best seen from above.
+    const under = (x: number, y: number, spread: number): FingerPlan => ({ curl: [0, 8, 6, 4], spread, tip: v3(x, y, -ht - 0.04) })
+    return [{ side: 'right', knuckle: v3(-hw * 0.1, -hh * 0.05, -ht - 0.1), F: v3(0.05, 1, 0), N: v3(0.3, 0, 1), seat: 0.004,
+      fingers: [under(hw * 0.32, hh * 0.3, 2), under(hw * 0.02, hh * 0.38, 0), under(-hw * 0.28, hh * 0.32, -2), under(-hw * 0.55, hh * 0.18, -5)],
+      thumb: { oppose: 10, abduct: -5, curl: [0, 15, 15] } }]
+  }
   if (pose === 'landscape') {
     // The rig turns the device 90 degrees, so its bottom end is on the right. Each hand cups one end from below:
     // thumb on the end frame, fingers spread across its own half of the back, little finger under the long edge.
@@ -141,6 +164,20 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT): Hand
     thumb: { oppose: 0, abduct: 20, curl: [0, 0, 0], tip: v3(hw + 0.06, -hh * 0.5, -ht * 0.2) },
   }]
   return []
+}
+
+/** Turns a plan by the user's hand rotation about its pivot: the touching point (or hovering tip), else the grip
+ * (the middle knuckle). Contact targets stay put, so the palm re-seats and the digits re-reach them. */
+function rotatePlan(pl: HandPlan, r: HandRot): HandPlan {
+  if (!r.tilt && !r.spin && !r.roll) return pl
+  const F = pl.F.clone().normalize()
+  const q = new THREE.Quaternion().setFromAxisAngle(v3(0, 0, 1), deg(r.spin))
+    .multiply(new THREE.Quaternion().setFromAxisAngle(v3(1, 0, 0), deg(r.tilt)))
+    .multiply(new THREE.Quaternion().setFromAxisAngle(F, deg(r.roll)))
+  const touch = pl.thumb.touch ? pl.thumb.tip : pl.fingers.find(f => f.touch)?.tip ?? (pl.fingers[0].tip && !pl.seat ? pl.fingers[0].tip : undefined)
+  const pivot = touch ?? pl.knuckle
+  const knuckle = pl.knuckle.clone().sub(pivot).applyQuaternion(q).add(pivot)
+  return { ...pl, knuckle, F: pl.F.clone().applyQuaternion(q), N: pl.N.clone().applyQuaternion(q) }
 }
 
 // ---------- skin material, shared and cached ----------
@@ -367,7 +404,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
     const mean = errs.reduce((a, e) => a.add(e), v3(0, 0, 0)).multiplyScalar(1 / errs.length)
     // Damped, and kept within 15 mm of the point, so a digit that cannot reach does not wander off.
     touches.forEach((t, k) => { t.aim.addScaledVector(errs[k], 0.7); const off = t.aim.clone().sub(t.surf); if (off.length() > 0.15) t.aim.copy(t.surf).add(off.setLength(0.15)) })
-    if (plan.follow) {
+    if (plan.follow === true) {
       // Lift the hand if any skin other than the touching pads dips below the glass, else just slide it across.
       const pads = new Set(touches.flatMap(t => [...t.owners])), hw = fit.W / 2, hh = fit.H / 2
       let low = Infinity
@@ -378,7 +415,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
       }
       const lift = Math.max(0, fit.T / 2 + 0.03 - low)
       rig.root.position.add(v3(mean.x, mean.y, lift).clampLength(0, 0.3)); update()
-    }
+    } else if (plan.follow === 'y') { rig.root.position.y += Math.max(-0.05, Math.min(0.05, mean.y)); update() }
   }
   rig.root.userData.touchError = worst   // model units; 0.001 is 0.1 mm
   armFrame(rig, F1, N1)
@@ -414,17 +451,17 @@ function placeArm(mesh: THREE.Mesh, rig: Rig) {
 }
 
 /** Wraps the device: turns it for landscape and adds the posed hands, which Centred leaves out of its bounds. */
-export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTRAL_DEFAULTS, children }: { pose: HandPose; tone: string; fit: HandFit | null; spectral?: SpectralOptions; gesture?: Gesture; onGesture?: (g: Gesture) => void; children: React.ReactNode }) {
+export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTRAL_DEFAULTS, rot = HAND_ROT0, children }: { pose: HandPose; tone: string; rot?: HandRot; fit: HandFit | null; spectral?: SpectralOptions; gesture?: Gesture; onGesture?: (g: Gesture) => void; children: React.ReactNode }) {
   const on = pose !== 'off' && !!fit
   return (
     <group rotation={[0, 0, on && pose === 'landscape' ? Math.PI / 2 : 0]} userData={{ handRig: true }}>
       {children}
-      {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} gesture={gesture} sp={spectral} /></Suspense>}
+      {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} gesture={gesture} sp={spectral} rot={rot} /></Suspense>}
       {on && isGesture(pose) && gesture && onGesture && <ScreenTarget pose={pose} fit={fit!} g={gesture} onChange={onGesture} />}
     </group>)
 }
 
-function Hands({ pose, tone, fit, gesture, sp }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture; sp: SpectralOptions }) {
+function Hands({ pose, tone, fit, gesture, sp, rot }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture; sp: SpectralOptions; rot: HandRot }) {
   const right = useGLTF(URL_R), left = useGLTF(URL_L)
   const group = useRef<THREE.Group>(null)
   const rigs = useMemo(() => ({ right: makeRig(right.scene), left: makeRig(left.scene) }), [right.scene, left.scene])
@@ -450,7 +487,7 @@ function Hands({ pose, tone, fit, gesture, sp }: { pose: HandPose; tone: string;
   useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = m.receiveShadow = true; m.userData.hand = true } }, [arms, mat])
   useEffect(() => {
     const g = group.current; if (!g) return
-    const list = plans(pose, fit, ges)
+    const list = plans(pose, fit, ges).map(pl => rotatePlan(pl, rot))
     const used = new Set<THREE.Object3D>()
     for (const pl of list) {
       const r = rigs[pl.side], key = JSON.stringify([pl, fit])
@@ -458,8 +495,12 @@ function Hands({ pose, tone, fit, gesture, sp }: { pose: HandPose; tone: string;
       used.add(r.root)
       if (import.meta.env.DEV) (globalThis as { __touchErr?: Record<string, number> }).__touchErr = { ...(globalThis as { __touchErr?: Record<string, number> }).__touchErr, [pl.side]: r.root.userData.touchError ?? 0 }
     }
+    // Reach report for the panel, in mm (model unit is 100 mm), only for digits that touch.
+    const rep: Record<string, number> = { right: 0, left: 0 }
+    for (const pl of list) if (rigs[pl.side].root.userData.touchError !== undefined && isFinite(rigs[pl.side].root.userData.touchError)) rep[pl.side] = rigs[pl.side].root.userData.touchError * 100
+    window.dispatchEvent(new CustomEvent(REACH_EVENT, { detail: rep }))
     for (const side of ['right', 'left'] as const) if (!used.has(rigs[side].root)) { g.remove(rigs[side].root, arms[side]); delete solved.current[side] }
-  }, [pose, fit, rigs, ges, arms])
+  }, [pose, fit, rigs, ges, arms, rot])
   // Spectral: outlines, inner lines and stars follow each re-solve; the hands leave the shadow pass (line layer) and cast none.
   useEffect(() => {
     for (const side of ['right', 'left'] as const) {
@@ -472,7 +513,7 @@ function Hands({ pose, tone, fit, gesture, sp }: { pose: HandPose; tone: string;
       if (r.root.parent) buildSpectral(r.mesh, r.owner, spm)
     }
     if (import.meta.env.DEV) (globalThis as { __omHands?: unknown }).__omHands = { rigs, arms }
-  }, [spm, rigs, arms, pose, fit, ges])
+  }, [spm, rigs, arms, pose, fit, ges, rot])
   useEffect(() => () => { const g = group.current; for (const side of ['right', 'left'] as const) g?.remove(rigs[side].root, arms[side]); solved.current = {} }, [rigs, arms])
   return <group ref={group} userData={{ noBounds: true }} />
 }

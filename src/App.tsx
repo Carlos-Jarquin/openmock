@@ -15,7 +15,7 @@ import { Env, retryEnvironment } from './Env'
 import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type Guide } from './hands/aiHands'
 import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
 import { SPECTRAL_DEFAULTS, type SpectralOptions } from './hands/spectral'
-import { GestureControls, GESTURE_DEFAULT, isGesture, rescale, screenOf, type Gesture } from './hands/gestures'
+import { GestureControls, GESTURE_DEFAULT, HAND_ROT0, type HandRot, isGesture, rescale, screenOf, type Gesture } from './hands/gestures'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER, SKETCH_SHADOW } from './sketch/Sketch'
 import { SB_DEFAULT, type SbCfg } from './statusbar/config'
@@ -179,6 +179,7 @@ export default function App() {
   const [hands, setHands] = useState<{ pose: HandPose; tone: string }>({ pose: 'off', tone: 'fair' })
   const [spectral, setSpectral] = useState<SpectralOptions>(SPECTRAL_DEFAULTS)
   const [gesture, setGesture] = useState<Gesture>(GESTURE_DEFAULT)
+  const [handRot, setHandRot] = useState<HandRot>(HAND_ROT0)
   const gestureFit = useRef(HAND_FITS.ip18!)
   useEffect(() => { const f = HAND_FITS[device]; if (f && f !== gestureFit.current) { setGesture(g => rescale(g, screenOf(gestureFit.current), screenOf(f))); gestureFit.current = f } }, [device])
   // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
@@ -287,7 +288,7 @@ export default function App() {
 
   // Any change to the scene makes the AI picture stale, so drop it.
   useEffect(() => { setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return a.url ? { ...a, url: null } : a }) },
-    [device, opts, media, pose, light, fx, hands, gesture, bgMode, bg1, bg2, angle, transparent, style, sk])
+    [device, opts, media, pose, light, fx, hands, gesture, handRot, bgMode, bg1, bg2, angle, transparent, style, sk])
   const makePhotoreal = async () => {
     const t = three.current
     if (ai.busy) return
@@ -368,7 +369,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setSbOn, setSb, setSpectral }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, setSbOn, setSb, setSpectral }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -460,6 +461,12 @@ export default function App() {
                 <button className="ghost" onClick={() => setSpectral(SPECTRAL_DEFAULTS)}>Reset spectral</button>
               </>}
               <p className="hint">The hands move with the phone, so set any camera angle. Two hands turns the phone sideways.</p>
+              <h3>Hand rotation</h3>
+              {slider('Tilt', handRot.tilt, -45, 45, 1, n => setHandRot({ ...handRot, tilt: n }), '°')}
+              {slider('Spin', handRot.spin, -60, 60, 1, n => setHandRot({ ...handRot, spin: n }), '°')}
+              {slider('Roll', handRot.roll, -45, 45, 1, n => setHandRot({ ...handRot, roll: n }), '°')}
+              <button className="ghost" onClick={() => setHandRot(HAND_ROT0)}>Reset hand</button>
+              <p className="hint">Turns the hand about the touching fingertip or the grip, so contacts and targets stay put.</p>
               {isGesture(hands.pose) && <GestureControls pose={hands.pose} fit={HAND_FITS[device]!} g={gesture} set={setGesture} />}
               <h3>Photoreal hands</h3>
               <div className="seg"><button className={ai.guide === 'depth' ? 'on' : ''} onClick={() => setAi({ ...ai, guide: 'depth' })}>Guide by depth</button>
@@ -586,7 +593,7 @@ export default function App() {
           </>}
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
             <Centred deps={[device, opts.fold, opts.screen, screenTex.texture, hands.pose]}>
-              <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture}>
+              <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture} rot={handRot}>
                 <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts} /></SketchStyle>
               </HandRig>
             </Centred>
