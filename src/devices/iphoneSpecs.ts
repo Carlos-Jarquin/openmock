@@ -18,7 +18,7 @@ export interface IPhoneSpec {
   receiver: { w: number; h: number; cy: number }
   /** antenna split bands on both long sides, [from, to] from the top. Measured off the side view. */
   antennaBands: [number, number][]
-  plateau: { bottom: number; rise: number; cornerR: number; bottomR: number; topInset: number; topBottom: number; topR: number }
+  plateau: { bottom: number; rise: number; shoulder: number; cornerR: number; bottomR: number; topInset: number; topBottom: number; topR: number }
   backGlass: { top: number; topR: number }
   lens: { d: number; rise: number; at: [number, number][] }
   flash: { bx: number; y: number; d: number }
@@ -49,7 +49,7 @@ export const IPHONE_18_PRO: IPhoneSpec = {
   frontCam: { r: 1.45 },
   receiver: { w: 28.85, h: 0.45, cy: 1.37 },
   antennaBands: [[15.47, 16.94], [133.14, 134.61]],
-  plateau: { bottom: 43.0, rise: 2.78, cornerR: 11.81, bottomR: 8.0, topInset: 4.8, topBottom: 42.0, topR: 9.5 },
+  plateau: { bottom: 43.0, rise: 2.78, shoulder: 5.05, cornerR: 11.81, bottomR: 8.0, topInset: 4.8, topBottom: 42.0, topR: 9.5 },
   backGlass: { top: 58.01, topR: 12.0 },
   lens: { d: 16.58, rise: 2.11, at: [[14.37, 14.37], [14.37, 33.61], [32.49, 23.99]] },
   flash: { bx: 58.03, y: 13.82, d: 6.90 },
@@ -78,7 +78,7 @@ export const IPHONE_18_PRO_MAX: IPhoneSpec = {
   frontCam: { r: 1.45 },
   receiver: { w: 26.58, h: 0.46, cy: 1.37 },
   antennaBands: [[15.47, 16.94], [146.49, 147.96]],
-  plateau: { bottom: 43.0, rise: 2.78, cornerR: 11.70, bottomR: 8.0, topInset: 4.8, topBottom: 42.0, topR: 9.5 },
+  plateau: { bottom: 43.0, rise: 2.78, shoulder: 5.4, cornerR: 11.70, bottomR: 8.0, topInset: 4.8, topBottom: 42.0, topR: 9.5 },
   backGlass: { top: 58.01, topR: 14.0 },
   lens: { d: 16.58, rise: 2.11, at: [[14.37, 14.37], [14.37, 33.61], [32.49, 23.99]] },
   flash: { bx: 64.16, y: 13.82, d: 6.90 },

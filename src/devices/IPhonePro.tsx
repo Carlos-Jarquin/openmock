@@ -263,12 +263,15 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const screen = flatUV(rrect(mm(s.active.w), mm(s.active.h), all(actR)), mm(s.active.w), mm(s.active.h))
     const island = new THREE.ShapeGeometry(rrect(mm(s.island.w), mm(s.island.h), all(mm(s.island.r))), 24)
     // Camera plateau: full width from the top edge, 2.78 mm proud of the back. Its bottom edge is scaled off the side view.
-    // One piece with the body: the plateau reaches deep into the body (inner end at mid-thickness, so its inner rounding
-    // is hidden inside the flat frame) and is grown 0.01 mm so its sides sit just over the frame instead of z-fighting with it.
-    const grow = mm(0.01), plDepth = rise + T / 2
-    const plateau = slab(rrect(W + grow * 2, plH + grow, [mm(P.bottomR), mm(P.bottomR), mm(P.cornerR), mm(P.cornerR)], 0, grow / 2), plDepth, rise * 0.35, 12)
-    // Concave fillet where the plateau's lower edge meets the flat back, so it reads machined from one block.
-    const fillet = plateauFillet(rrect(W, plH, [mm(P.bottomR), mm(P.bottomR), mm(P.cornerR), mm(P.cornerR)]), plH, W / 2 - EDGE, mm(0.8))
+    // Camera plateau, one piece with the body. Detail D of the drawing shows two outlines: the flat top (inset about 5 mm,
+    // ending at P.bottom) and the base, a soft shoulder P.shoulder wide that rolls down into the back and the frame.
+    // The base runs full width; its straight part reaches deep into the body (hidden) and is grown 0.01 mm so it never z-fights the frame.
+    const sh = mm(P.shoulder), grow = mm(0.01), baseH = plH + sh, plDepth = T - mm(0.3) + rise
+    const flatR = mm(P.topR), baseShape = rrect(W + grow * 2, baseH + grow, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)], 0, grow / 2)
+    const plateau = smoothNormals(new THREE.ExtrudeGeometry(baseShape, { depth: plDepth - rise * 2, bevelEnabled: true, bevelThickness: rise,
+      bevelSize: sh, bevelOffset: -sh, bevelSegments: 16, curveSegments: 64 }), 40)
+    // Concave fillet where the shoulder meets the flat back below the plateau.
+    const fillet = plateauFillet(rrect(W, baseH, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)]), baseH, W / 2 - EDGE, mm(0.8))
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
@@ -340,8 +343,8 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* back: aluminium between the plateau and the glass, then the matte glass window */}
       <mesh geometry={g.backGlass} position={[0, ty(s.backGlass.top) - (H - mm(s.backGlass.top) - EDGE * 0.8) / 2, zb - E]} rotation={[0, Math.PI, 0]}>{matte}</mesh>
       {/* camera plateau: a full-width raised bar of the same aluminium unibody, lenses, flash and sensor sit directly on it */}
-      <mesh geometry={g.plateau} position={[0, H / 2 - plH / 2, zb + (T / 2 - rise) / 2]}>{metal}</mesh>
-      <mesh geometry={g.fillet} position={[0, H / 2 - plH / 2, zb]}>{metal}</mesh>
+      <mesh geometry={g.plateau} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{metal}</mesh>
+      <mesh geometry={g.fillet} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{metal}</mesh>
       {s.lens.at.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}><RearLens d={lensD} rise={lensRise} frame={f.frame} /></group>))}
       <mesh position={[bx(s.flash.bx), ty(s.flash.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.flash.d / 2), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>
