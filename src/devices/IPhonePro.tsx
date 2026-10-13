@@ -286,6 +286,8 @@ function SimTray({ frame, x, y, len, w }: { frame: string; x: number; y: number;
     </group>)
 }
 
+// Sketch: the front camera takes the island's exact tone (same dark toon fill, no inner lines) so the island reads as one pill.
+const ISLAND_TONE = { sketchTone: 'dark' } as const
 /** Camera lens as seen through cover glass, facing +z. r is the visible outer radius.
  * Layers: dark barrel ring, lens body, AR-coated element (thin-film iridescence for the blue/purple sheen),
  * two concentric element edges, a small iris, and a curved additive glass cap that only adds reflections. */
@@ -295,16 +297,16 @@ function LensStack({ r, order = 0 }: { r: number; order?: number }) {
   const capGeo = geoOnce(`capflat${r}`, () => new THREE.CircleGeometry(r, 64))
   return (
     <group userData={{ sketchNoEdges: true }}>
-      <mesh renderOrder={order}><ringGeometry args={[r * 0.74, r, 64]} />
+      <mesh renderOrder={order} userData={ISLAND_TONE}><ringGeometry args={[r * 0.74, r, 64]} />
         <meshPhysicalMaterial color="#0c0d11" metalness={0.85} roughness={0.32} {...off(0)} /></mesh>
-      <mesh renderOrder={order}><circleGeometry args={[r * 0.74, 64]} />
+      <mesh renderOrder={order} userData={ISLAND_TONE}><circleGeometry args={[r * 0.74, 64]} />
         <meshPhysicalMaterial color="#0b0d14" roughness={0.1} clearcoat={1} envMapIntensity={1.6} {...off(0)} /></mesh>
-      <mesh renderOrder={order + 1}><circleGeometry args={[r * 0.6, 64]} />
+      <mesh renderOrder={order + 1} userData={ISLAND_TONE}><circleGeometry args={[r * 0.6, 64]} />
         <meshPhysicalMaterial color="#141a33" metalness={0.35} roughness={0.05} iridescence={1} iridescenceIOR={1.45}
           iridescenceThicknessRange={[260, 420]} clearcoat={1} clearcoatRoughness={0.03} envMapIntensity={2.2} {...off(1)} /></mesh>
-      {[0.5, 0.36].map((k, i) => <mesh key={k} renderOrder={order + 2}><ringGeometry args={[r * k - r * 0.025, r * k, 64]} />
+      {[0.5, 0.36].map((k, i) => <mesh key={k} renderOrder={order + 2} userData={ISLAND_TONE}><ringGeometry args={[r * k - r * 0.025, r * k, 64]} />
         <meshPhysicalMaterial color={i ? '#2a2546' : '#1b2442'} metalness={0.9} roughness={0.18} {...off(2)} /></mesh>)}
-      <mesh renderOrder={order + 3}><circleGeometry args={[r * 0.2, 40]} /><meshBasicMaterial color="#000" {...off(3)} /></mesh>
+      <mesh renderOrder={order + 3} userData={ISLAND_TONE}><circleGeometry args={[r * 0.2, 40]} /><meshBasicMaterial color="#000" {...off(3)} /></mesh>
       <mesh geometry={capGeo} renderOrder={order + 4}>
         <meshPhysicalMaterial color="#000" roughness={0.02} specularIntensity={1} envMapIntensity={1.5}
           transparent blending={THREE.AdditiveBlending} depthWrite={false} {...off(4)} /></mesh>
@@ -529,7 +531,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       <mesh geometry={g.screen} position={[0, 0, zf + E * 2]} name="screen">
         {texture ? <meshBasicMaterial key="tex" map={texture} toneMapped={false} /> : <meshBasicMaterial key="idle" color="#07080b" />}
       </mesh>
-      <mesh geometry={g.island} position={[0, isl, zf + E * 4]} renderOrder={3}>
+      <mesh geometry={g.island} position={[0, isl, zf + E * 4]} renderOrder={3} userData={ISLAND_TONE}>
         <meshBasicMaterial color="#010101" polygonOffset polygonOffsetFactor={-3} polygonOffsetUnits={-3} /></mesh>
       <group position={[fcamX, isl, zf + E * 5]}><LensStack r={mm(s.frontCam.r)} order={4} /></group>
       {/* receiver slot along the top glass edge */}
