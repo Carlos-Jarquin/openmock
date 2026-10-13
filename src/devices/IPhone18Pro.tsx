@@ -3,6 +3,7 @@ import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { DeviceProps } from '../types'
 import { fitTexture, DEFAULT_LOGO_TINT, sceneHit } from './shared'
+import { brushedNormal, brushedRoughness, frostRoughness, smudgeRoughness } from './materials'
 // iPhone 18 Pro: unofficial procedural model, not affiliated with Apple.
 // Measurements from Apple's "iPhone 18 Pro Dimensional Drawings" (2026-09-09,
 // developer.apple.com/accessories/dimensional-drawings). Finishes and pixel size from apple.com/iphone-18-pro/specs.
@@ -16,6 +17,11 @@ const GLASS = { w: mm(69.45), h: mm(147.61) }
 const ACT = { w: mm(66.57), h: mm(144.73) } // display active area, 2.64 mm all round from the housing
 const ACT_R = CR - mm(2.64)
 const ISL = { w: mm(15.66), h: mm(6.07), cy: H / 2 - mm(7.99) } // Dynamic Island, centred on the 35.92 mm centre line
+// Sheet 3, detail M: front camera keepout is the island itself (15.68 x 6.07, 2X R2.93, centre 7.99 from the top).
+// The drawing does not place the lens inside it; Apple puts it in the right-hand cap, so we centre it on that cap.
+const FCAM = { x: ISL.w / 2 - ISL.h / 2, r: mm(1.45) }
+// Receiver keepout: 28.85 mm slot centred on 35.92, along the top glass edge (0.45 band). Depth into the glass is assumed.
+const RECEIVER = { w: mm(28.85), h: mm(0.45), cy: H / 2 - mm(1.45) }
 export const IP18_PX = { w: 1206, h: 2622 }
 export const IP18_ASPECT = IP18_PX.w / IP18_PX.h
 export const IP18_FINISHES: Record<string, { label: string; frame: string; back: string }> = {
@@ -115,6 +121,33 @@ function SimTray({ frame }: { frame: string }) {
     </group>)
 }
 
+/** Camera lens as seen through cover glass, facing +z. r is the visible outer radius.
+ * Layers: dark barrel ring, lens body, AR-coated element (thin-film iridescence for the blue/purple sheen),
+ * two concentric element edges, a small iris, and a curved additive glass cap that only adds reflections. */
+function LensStack({ r, order = 0 }: { r: number; order?: number }) {
+  const off = (k: number) => ({ polygonOffset: true, polygonOffsetFactor: -6 - k, polygonOffsetUnits: -6 - k })
+  const capGeo = useMemo(() => {
+    const g = new THREE.SphereGeometry(r * 3, 48, 8, 0, Math.PI * 2, 0, Math.asin(1 / 3))
+    g.rotateX(Math.PI / 2); g.translate(0, 0, -r * 3 * Math.cos(Math.asin(1 / 3))); g.scale(1, 1, 0.35); return g
+  }, [r])
+  return (
+    <group>
+      <mesh renderOrder={order}><ringGeometry args={[r * 0.74, r, 64]} />
+        <meshPhysicalMaterial color="#0c0d11" metalness={0.85} roughness={0.32} {...off(0)} /></mesh>
+      <mesh renderOrder={order}><circleGeometry args={[r * 0.74, 64]} />
+        <meshPhysicalMaterial color="#040509" roughness={0.12} clearcoat={1} {...off(0)} /></mesh>
+      <mesh renderOrder={order + 1}><circleGeometry args={[r * 0.6, 64]} />
+        <meshPhysicalMaterial color="#0a0c1c" metalness={0.25} roughness={0.06} iridescence={1} iridescenceIOR={1.45}
+          iridescenceThicknessRange={[260, 420]} clearcoat={1} clearcoatRoughness={0.03} envMapIntensity={1.4} {...off(1)} /></mesh>
+      {[0.5, 0.36].map((k, i) => <mesh key={k} renderOrder={order + 2}><ringGeometry args={[r * k - r * 0.025, r * k, 64]} />
+        <meshPhysicalMaterial color={i ? '#2a2546' : '#1b2442'} metalness={0.9} roughness={0.18} {...off(2)} /></mesh>)}
+      <mesh renderOrder={order + 3}><circleGeometry args={[r * 0.2, 40]} /><meshBasicMaterial color="#000" {...off(3)} /></mesh>
+      <mesh geometry={capGeo} renderOrder={order + 4}>
+        <meshPhysicalMaterial color="#000" roughness={0.03} specularIntensity={0.35}
+          transparent blending={THREE.AdditiveBlending} depthWrite={false} {...off(4)} /></mesh>
+    </group>)
+}
+
 export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps) {
   const f = IP18_FINISHES[opts.finish] ?? IP18_FINISHES.silver
   const g = useMemo(() => {
@@ -131,9 +164,14 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
     return { body, glass, screen, island, plateau, backGlass, window }
   }, [])
   useMemo(() => fitTexture(texture, mediaAspect, IP18_ASPECT), [texture, mediaAspect])
-  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.85} roughness={0.32} clearcoat={0.15} />
-  const matte = <meshPhysicalMaterial color={f.back} metalness={0.15} roughness={0.6} clearcoat={0.5} clearcoatRoughness={0.45} />
-  const black = <meshPhysicalMaterial color="#040405" roughness={0.08} clearcoat={1} />
+  // Brushed aluminium frame: anisotropic highlight along the band, streaky roughness and faint grooves.
+  const bR = brushedRoughness(), bN = brushedNormal(), fR = frostRoughness(), sR = smudgeRoughness()
+  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.9} roughness={0.55} roughnessMap={bR} normalMap={bN} normalScale={new THREE.Vector2(0.06, 0.06)}
+    anisotropy={0.55} clearcoat={0.08} clearcoatRoughness={0.3} envMapIntensity={1.15} />
+  // Frosted back glass: textured roughness under a thin, slightly glossy coat so highlights spread but stay soft.
+  const matte = <meshPhysicalMaterial color={f.back} metalness={0} roughness={0.8} roughnessMap={fR} clearcoat={0.35} clearcoatRoughness={0.38}
+    specularIntensity={0.6} envMapIntensity={0.9} />
+  const black = <meshPhysicalMaterial color="#020203" roughness={1} roughnessMap={sR} clearcoat={1} clearcoatRoughness={0.04} />
   const zf = T / 2
   const zb = -T / 2
   // Buttons: pill (fully rounded ends) in side view, 2.66 wide, extruded 0.45 out of the flat side band
@@ -167,18 +205,26 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
         {texture ? <meshBasicMaterial key="tex" map={texture} toneMapped={false} /> : <meshBasicMaterial key="idle" color="#07080b" />}
       </mesh>
       <mesh geometry={g.island} position={[0, ISL.cy, zf + E * 4]} renderOrder={3}>
-        <meshBasicMaterial color="#000" polygonOffset polygonOffsetFactor={-3} polygonOffsetUnits={-3} /></mesh>
+        <meshBasicMaterial color="#010101" polygonOffset polygonOffsetFactor={-3} polygonOffsetUnits={-3} /></mesh>
+      {/* front camera in the island's right-hand cap */}
+      <group position={[FCAM.x, ISL.cy, zf + E * 5]}><LensStack r={FCAM.r} order={4} /></group>
+      {/* receiver slot along the top glass edge */}
+      <mesh position={[0, RECEIVER.cy, zf + E * 3]}><shapeGeometry args={[rrect(RECEIVER.w, RECEIVER.h, all(RECEIVER.h / 2)), 16]} />
+        <meshBasicMaterial color="#0b0b0d" polygonOffset polygonOffsetFactor={-3} /></mesh>
+      {/* cover glass reflection over the display: black base, additive, so only the fresnel reflection and faint smudges show */}
+      <mesh geometry={g.screen} position={[0, 0, zf + E * 4.5]} renderOrder={10}>
+        <meshPhysicalMaterial color="#000" roughness={1} roughnessMap={sR} specularIntensity={0.14}
+          transparent blending={THREE.AdditiveBlending} depthWrite={false} polygonOffset polygonOffsetFactor={-8} /></mesh>
       {/* back: matte glass below the plateau */}
       <mesh geometry={g.backGlass} position={[0, -PLATEAU.h / 2 + mm(0.8), zb - E]} rotation={[0, Math.PI, 0]}>{matte}</mesh>
       {/* camera plateau, part of the aluminium unibody */}
       <mesh geometry={g.plateau} position={[0, ty(PLATEAU.h / 2 * 100), zb]}>{metal}</mesh>
       <mesh geometry={g.window} position={[bx(35.5), ty(23.99), zPlat - E]} rotation={[0, Math.PI, 0]}>
-        <meshPhysicalMaterial color={f.back} roughness={0.5} clearcoat={0.6} metalness={0.1} /></mesh>
+        <meshPhysicalMaterial color={f.back} roughness={0.75} roughnessMap={fR} clearcoat={0.4} clearcoatRoughness={0.3} metalness={0.05} /></mesh>
       {LENSES.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[lensX(x), lensY(y), zPlat]}>
           <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -LENS_RISE / 2]}><cylinderGeometry args={[LENS_D / 2, LENS_D / 2 + mm(0.4), LENS_RISE, 64]} />{metal}</mesh>
-          <mesh position={[0, 0, -LENS_RISE - E]} rotation={[0, Math.PI, 0]}><circleGeometry args={[LENS_D / 2 - mm(1.1), 64]} />{black}</mesh>
-          <mesh position={[0, 0, -LENS_RISE - E * 2]} rotation={[0, Math.PI, 0]}><ringGeometry args={[mm(2.6), mm(4.0), 48]} /><meshPhysicalMaterial color="#1c2440" metalness={0.6} roughness={0.1} /></mesh>
+          <group position={[0, 0, -LENS_RISE - E]} rotation={[0, Math.PI, 0]}><LensStack r={LENS_D / 2 - mm(1.1)} /></group>
         </group>))}
       <mesh position={[bx(FLASH[0]), ty(FLASH[1]), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(3.45), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>
       <mesh position={[bx(SENSOR[0]), ty(SENSOR[1]), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(3.45), 40]} />{black}</mesh>
