@@ -7,6 +7,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
 import { INNER_PX, OUTER_PX } from './devices/Duo'
+import { sceneHit } from './devices/shared'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -106,7 +107,7 @@ function Rig({ zoom }: { zoom: number }) {
 
 export default function App() {
   const [device, setDevice] = useState<DeviceId>('ip18')
-  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'silver', logo: null, logoSize: 0.15, logoTint: '#8a8f99' })
+  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'silver', logo: null, logoSize: 0.15, logoTint: '#8a8f99', simTray: true })
   const [media, setMedia] = useState<Media | null>(null)
   const [pose, setPose] = useState(POSE)
   const [light, setLight] = useState(LIGHT)
@@ -234,6 +235,10 @@ export default function App() {
             <label className="row"><span>Logo tint</span><input type="color" value={opts.logoTint} onChange={e => setOpts({ ...opts, logoTint: e.target.value })} /><button className="ghost" onClick={() => setOpts({ ...opts, logo: null })}>Clear</button></label>
           </>}
           <p className="hint">The logo sits centred on the back. Use your own SVG or PNG.</p>
+          {device === 'ip18' && <>
+            <label className="check"><input type="checkbox" checked={opts.simTray} onChange={e => setOpts({ ...opts, simTray: e.target.checked })} /> SIM tray</label>
+            <p className="hint">Click a button to press it. Click the SIM tray or its pinhole to eject it, and again to put it back.</p>
+          </>}
           {def.nativePx && <p className="hint">Native size: {def.nativePx.w} × {def.nativePx.h} px. Screenshots at this size fit exactly.</p>}
         </section>}
         {def.foldable && <section><h2>iPhone Duo</h2>
@@ -292,6 +297,7 @@ export default function App() {
         onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) loadFile(f) }}
         onContextMenu={e => e.preventDefault()}
         onPointerDown={e => {
+          if (sceneHit.current) { sceneHit.current = false; return }
           if (e.button !== 0 && e.button !== 2) return
           ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
           drag.current = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }

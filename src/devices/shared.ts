@@ -24,3 +24,6 @@ export function fitTexture(tex: THREE.Texture | null, mediaAspect: number, scree
 
 /** Logo tint meaning "use the finish colour": the logo renders as a flush polished mark in the back-glass colour. */
 export const DEFAULT_LOGO_TINT = '#8a8f99'
+
+/** Set by a clickable part of a device on pointer down so the stage does not start an orbit drag. */
+export const sceneHit = { current: false }

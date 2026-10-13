@@ -1,7 +1,8 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, type ReactNode } from 'react'
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { DeviceProps } from '../types'
-import { fitTexture, DEFAULT_LOGO_TINT } from './shared'
+import { fitTexture, DEFAULT_LOGO_TINT, sceneHit } from './shared'
 // iPhone 18 Pro: unofficial procedural model, not affiliated with Apple.
 // Measurements from Apple's "iPhone 18 Pro Dimensional Drawings" (2026-09-09,
 // developer.apple.com/accessories/dimensional-drawings). Finishes and pixel size from apple.com/iphone-18-pro/specs.
@@ -52,6 +53,68 @@ function flatUV(shape: THREE.Shape, w: number, h: number) {
 }
 const E = 0.0003
 
+// Interaction. A press runs 120 ms in (ease out) and 180 ms back out with a small spring overshoot.
+const PRESS_IN = 120, PRESS_OUT = 180
+function pressCurve(ms: number) {
+  if (ms < 0) return 0
+  if (ms < PRESS_IN) { const t = ms / PRESS_IN; return 1 - (1 - t) * (1 - t) }
+  const t = (ms - PRESS_IN) / PRESS_OUT
+  if (t >= 1) return 0
+  return (1 - t) * Math.cos(t * Math.PI * 0.62) - Math.sin(t * Math.PI) * 0.06 * (1 - t) // returns past zero briefly
+}
+function useClickable(onPress: () => void) {
+  const gl = useThree(s => s.gl)
+  return {
+    onPointerDown: (e: ThreeEvent<PointerEvent>) => { if (e.button !== 0) return; e.stopPropagation(); sceneHit.current = true; onPress() },
+    onPointerOver: (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); gl.domElement.style.cursor = 'pointer' },
+    onPointerOut: () => { gl.domElement.style.cursor = '' },
+  }
+}
+/** Child geometry extrudes along local +x (outward). Pressing moves it inward by `depth`. */
+function Pressable({ depth, children, ...rest }: { depth: number; children: ReactNode; position: [number, number, number]; rotation?: [number, number, number] }) {
+  const inner = useRef<THREE.Group>(null), t0 = useRef(-1e9)
+  const h = useClickable(() => { t0.current = performance.now() })
+  useFrame(() => { if (inner.current) inner.current.position.x = -depth * pressCurve(performance.now() - t0.current) })
+  return <group {...rest}><group ref={inner} {...h}>{children}</group></group>
+}
+
+// SIM tray, from the left side view of the dimensional drawing: centre 111.97 mm from the top,
+// 19.44 mm long (2X 9.72), 2.56 mm wide, centred in the 8.75 mm thickness (4X 4.375). Ejector hole drawn near the top end.
+const SIM = { cy: 111.97, len: mm(19.44), w: mm(2.56), pinFromCentre: mm(7.3), pinD: mm(0.9) }
+const NANO = { l: mm(12.3), w: mm(8.8), t: mm(0.67) }
+const EJECT = mm(15), EJECT_MS = 420
+const ease = (t: number) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+function SimTray({ frame }: { frame: string }) {
+  const slide = useRef<THREE.Group>(null), st = useRef({ out: false, from: 0, t0: -1e9 })
+  const cur = () => { const s = st.current, k = Math.min(1, (performance.now() - s.t0) / EJECT_MS); return s.from + ((s.out ? 1 : 0) - s.from) * ease(k) }
+  const h = useClickable(() => { const v = cur(); st.current = { out: !st.current.out, from: v, t0: performance.now() } })
+  useFrame(() => { if (slide.current) slide.current.position.x = -EJECT * cur() })
+  const carrier = { x: mm(10.6), y: mm(14.2), t: mm(0.8) }
+  return (
+    <group position={[-W / 2, ty(SIM.cy), 0]}>
+      {/* the slot opening, only seen once the tray is out */}
+      <mesh rotation={[0, -Math.PI / 2, 0]} position={[-E / 3, 0, 0]}><shapeGeometry args={[rrect(SIM.w, SIM.len, all(SIM.w / 2)), 24]} />
+        <meshBasicMaterial color="#030303" polygonOffset polygonOffsetFactor={-1} /></mesh>
+      <group ref={slide} {...h}>
+        {/* flush face plate with a hairline seam */}
+        <mesh rotation={[0, -Math.PI / 2, 0]} position={[-E * 0.8, 0, 0]}><shapeGeometry args={[rrect(SIM.w - mm(0.12), SIM.len - mm(0.12), all(SIM.w / 2 - mm(0.06))), 24]} />
+          <meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.3} polygonOffset polygonOffsetFactor={-3} /></mesh>
+        <mesh rotation={[0, -Math.PI / 2, 0]} position={[-E * 1.2, SIM.pinFromCentre, 0]}><circleGeometry args={[SIM.pinD / 2, 20]} />
+          <meshBasicMaterial color="#060606" polygonOffset polygonOffsetFactor={-5} /></mesh>
+        {/* face plate thickness and carrier that live inside the frame */}
+        <mesh position={[mm(0.5), 0, 0]}><boxGeometry args={[mm(1), SIM.len - mm(0.2), SIM.w - mm(0.2)]} />
+          <meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.35} /></mesh>
+        <mesh position={[mm(1) + carrier.x / 2, 0, 0]}><boxGeometry args={[carrier.x, carrier.y, carrier.t]} />
+          <meshPhysicalMaterial color={frame} metalness={0.8} roughness={0.4} /></mesh>
+        {/* nano-SIM, 12.3 x 8.8 x 0.67 mm, gold contacts facing the display */}
+        <mesh position={[mm(1.3) + NANO.w / 2, 0, carrier.t / 2 + NANO.t / 2]}><boxGeometry args={[NANO.w, NANO.l, NANO.t]} />
+          <meshStandardMaterial color="#f2f2ef" roughness={0.55} /></mesh>
+        <mesh position={[mm(1.3) + NANO.w / 2, mm(1.2), carrier.t / 2 + NANO.t + E / 4]}><planeGeometry args={[mm(6.6), mm(5.6)]} />
+          <meshStandardMaterial color="#c9a54a" metalness={0.9} roughness={0.25} /></mesh>
+      </group>
+    </group>)
+}
+
 export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps) {
   const f = IP18_FINISHES[opts.finish] ?? IP18_FINISHES.silver
   const g = useMemo(() => {
@@ -83,15 +146,16 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
     g.translate(0, 0, -SINK); g.rotateY(Math.PI / 2); return g // extrusion now runs along +x
   }
   const side = (x: number, cy: number, len: number, key: string) => (
-    <mesh key={key} geometry={btnGeo(len, mm(2.66), mm(0.45))} position={[x, ty(cy), 0]} rotation={[0, x < 0 ? Math.PI : 0, 0]} castShadow>{metal}</mesh>)
+    <Pressable key={key} depth={mm(0.3)} position={[x, ty(cy), 0]} rotation={[0, x < 0 ? Math.PI : 0, 0]}>
+      <mesh geometry={btnGeo(len, mm(2.66), mm(0.45))} castShadow>{metal}</mesh></Pressable>)
   // Camera Control: flush. Thin metal surround plus a sapphire glass inset, both within 0.05 mm of the frame surface.
   const cameraControl = (cy: number) => (
-    <group position={[W / 2, ty(cy), 0]}>
+    <Pressable depth={mm(0.1)} position={[W / 2, ty(cy), 0]}>
       <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.01), 0, 0]}><shapeGeometry args={[rrect(mm(3.43), mm(17.5), all(mm(1.715))), 32]} />
         <meshPhysicalMaterial color={f.frame} metalness={0.95} roughness={0.18} polygonOffset polygonOffsetFactor={-2} /></mesh>
       <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.03), 0, 0]}><shapeGeometry args={[rrect(mm(3.03), mm(17.1), all(mm(1.515))), 32]} />
         <meshPhysicalMaterial color="#5e6672" metalness={0.1} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} ior={1.77} polygonOffset polygonOffsetFactor={-4} /></mesh>
-    </group>)
+    </Pressable>)
   const lensX = (x: number) => bx(x), lensY = (y: number) => ty(y)
   const zPlat = zb - PLATEAU.rise
   return (
@@ -126,6 +190,7 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
       {/* right side: side button (centre 55.53, 17.7 long) and flush sapphire Camera Control (centre 98.40, 17.1 long) */}
       {side(W / 2, 55.53, mm(17.7), 'side')}
       {cameraControl(98.40)}
+      {opts.simTray && <SimTray frame={f.frame} />}
       {/* bottom: USB-C centred at 35.92 mm, speaker and mic holes Ø1.53, screws Ø1.50 */}
       <group position={[0, -H / 2 - E, 0]} rotation={[Math.PI / 2, 0, 0]}>
         <mesh><shapeGeometry args={[rrect(mm(8.9), mm(3.2), all(mm(1.6))), 24]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>
