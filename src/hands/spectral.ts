@@ -351,8 +351,7 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
         for (let s2 = 0; s2 < 2; s2++) if (!buried(prev[s2]) && !buried(h[s2])) { nudge(prev[s2][0], prev[s2][1], prev[s2][2]); nudge(h[s2][0], h[s2][1], h[s2][2]) }
         prev = h
       } else if (hits.length === 2) {
-        // first good ring: the thumb's base, where it leaves the palm, closed with a line across (the thenar edge)
-        if (!prev && !buried(hits[0]) && !buried(hits[1])) { nudge(hits[0][0], hits[0][1], hits[0][2]); nudge(hits[1][0], hits[1][1], hits[1][2]) }
+        // first good ring: start the two side edges here (no line across the base; it read as a stray mark)
         prev = hits }
       // a ring with no clean crossing (a gap in the cast points) is skipped and the edges bridge over it
     }
