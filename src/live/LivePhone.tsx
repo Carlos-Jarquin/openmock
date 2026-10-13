@@ -25,7 +25,10 @@ const FINISH = params.get('finish') || 'black'
 const START_YAW = Number(params.get('yaw') ?? 0) * Math.PI / 180, START_PITCH = Number(params.get('pitch') ?? 0) * Math.PI / 180
 const HOLD = params.has('hold') // keep the starting angle (for tilted screenshots)
 const SB = (params.get('statusbar') ?? 'auto') as 'auto' | 'dark' | 'light' | 'off'
-const TOP_SAFE = 54 // iOS status bar / top safe area on Dynamic Island iPhones, in points
+// iOS 18+ on 402x874 and 440x956 (16 Pro class onward): status bar 54 pt, top safe area 62 pt.
+// The software Dynamic Island is drawn larger than the glass cut-out: 126 x 37 pt, 14 pt from the top (Apple UI Kit / simulator).
+const STATUS_H = 54, TOP_SAFE = 62
+const ISL = { w: 126, h: 37, top: 14 }
 const SKETCH = params.get('style') === 'sketch' // ?style=sketch: flat illustration look
 const stay = { on: params.has('stay') } // stay at angle: no ease back, screen usable while tilted
 
@@ -36,12 +39,13 @@ function StatusBar({ islandCy, islandW, tone }: { islandCy: number; islandW: num
   const time = `${now.getHours() % 12 || 12}:${String(now.getMinutes()).padStart(2, '0')}`
   const c = tone === 'dark' ? '#000' : '#fff'
   const ear = (CSS_W - islandW) / 2
+  // time and icons are each centred in their ear, vertically on the island's centre line
   const box = { position: 'absolute' as const, top: islandCy - 11, height: 22, width: ear, display: 'flex', alignItems: 'center', justifyContent: 'center' }
   return (
-    <div style={{ position: 'absolute', left: 0, top: 0, width: CSS_W, height: TOP_SAFE, pointerEvents: 'none', color: c,
-      font: '600 17px/22px -apple-system, system-ui, "SF Pro Text", "Helvetica Neue", sans-serif', letterSpacing: -0.4 }}>
-      <div style={{ ...box, left: 6 }}>{time}</div>
-      <div style={{ ...box, right: 6, gap: 6 }}>
+    <div style={{ position: 'absolute', left: 0, top: 0, width: CSS_W, height: STATUS_H, pointerEvents: 'none', color: c,
+      font: '600 17px/22px -apple-system, system-ui, "SF Pro Text", "Helvetica Neue", sans-serif', letterSpacing: -0.43 }}>
+      <div style={{ ...box, left: 0 }}>{time}</div>
+      <div style={{ ...box, right: 0, gap: 7 }}>
         <svg width="19" height="12" viewBox="0 0 19 12" fill={c} aria-hidden>
           <rect x="0" y="8" width="3.2" height="4" rx="0.8" /><rect x="5" y="5.5" width="3.2" height="6.5" rx="0.8" />
           <rect x="10" y="3" width="3.2" height="9" rx="0.8" /><rect x="15" y="0" width="3.2" height="12" rx="0.8" /></svg>
@@ -84,7 +88,8 @@ function Screen({ s, interactive }: { s: IPhoneSpec; interactive: boolean }) {
   const pxPerMm = CSS_W / s.active.w
   const cssH = CSS_H
   const radius = (s.body.cornerR - s.active.inset) * pxPerMm
-  const isl = { w: s.island.w * pxPerMm, h: s.island.h * pxPerMm, top: (s.island.cy - (s.body.h - s.active.h) / 2) * pxPerMm }
+  void s.island // the glass cut-out is smaller; iOS draws a 126 x 37 pt island over it
+  const isl = { w: ISL.w, h: ISL.h, top: ISL.top + ISL.h / 2 }
   const scale = mm(s.active.w) / (CSS_W / PX_PER_UNIT)
   const z = mm(s.body.t) / 2 + 0.0003 * 6
   // drei's Html can lose its first portal root under React 19; remount once after the canvas settles.
