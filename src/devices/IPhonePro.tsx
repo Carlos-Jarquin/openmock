@@ -11,7 +11,7 @@ import type { IPhoneSpec } from './iphoneSpecs'
 const mm = (v: number) => v / 100
 
 export const IP18_FINISHES: Record<string, { label: string; frame: string; back: string }> = {
-  black: { label: 'Black', frame: '#26272a', back: '#2b2c2f' },
+  black: { label: 'Black', frame: '#18191b', back: '#1c1d20' },
   silver: { label: 'Silver', frame: '#e2e3e4', back: '#e6e6e4' },
   glacier: { label: 'Glacier', frame: '#aebfd2', back: '#b8c7d9' },
   burgundy: { label: 'Burgundy', frame: '#4e1c27', back: '#57202c' },
@@ -27,6 +27,30 @@ const rrC = (w: number, h: number, r: number[], cx = 0, cy = 0) => {
 }
 const geoCache = new Map<string, THREE.BufferGeometry>()
 const geoOnce = (k: string, f: () => THREE.BufferGeometry) => { let g = geoCache.get(k); if (!g) geoCache.set(k, g = f()); return g }
+/** Smooth shading for extruded parts: ExtrudeGeometry is unindexed, so computeVertexNormals gives one normal per face
+ * and every bevel facet shows. Average normals of faces meeting at the same point when they are within creaseDeg. */
+function smoothNormals(g: THREE.BufferGeometry, creaseDeg = 50) {
+  const pos = g.attributes.position, n = pos.count, cos = Math.cos(creaseDeg * Math.PI / 180)
+  const fn = new Float32Array(n * 3), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3()
+  for (let i = 0; i < n; i += 3) {
+    a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2)
+    c.sub(b); b.sub(a); c.cross(b) // area-weighted face normal
+    for (let k = 0; k < 3; k++) fn.set([c.x, c.y, c.z], (i + k) * 3)
+  }
+  const key = (i: number) => `${Math.round(pos.getX(i) * 1e5)},${Math.round(pos.getY(i) * 1e5)},${Math.round(pos.getZ(i) * 1e5)}`
+  const groups = new Map<string, number[]>()
+  for (let i = 0; i < n; i++) { const k = key(i); let l = groups.get(k); if (!l) groups.set(k, l = []); l.push(i) }
+  const out = new Float32Array(n * 3), u = new THREE.Vector3(), v = new THREE.Vector3(), sum = new THREE.Vector3()
+  groups.forEach(l => {
+    for (const i of l) {
+      u.fromArray(fn, i * 3).normalize(); sum.set(0, 0, 0)
+      for (const j of l) { v.fromArray(fn, j * 3); const len = v.length(); if (len && u.dot(v) / len >= cos) sum.add(v) }
+      if (sum.lengthSq() === 0) sum.copy(u)
+      sum.normalize().toArray(out, i * 3)
+    }
+  })
+  g.setAttribute('normal', new THREE.BufferAttribute(out, 3)); return g
+}
 const bodySets = new Map<string, Record<string, THREE.BufferGeometry>>()
 function geoSet<T extends Record<string, THREE.BufferGeometry>>(id: string, f: () => T): T {
   let s = bodySets.get(id); if (!s) bodySets.set(id, s = f()); return s as T
@@ -51,9 +75,9 @@ function rrect(w: number, h: number, [bl, br, tr, tl]: number[], cx = 0, cy = 0)
 }
 const all = (r: number) => [r, r, r, r]
 /** Slab with a rounded (quarter-round style) edge band, centred in z. */
-function slab(shape: THREE.Shape, depth: number, edge: number, segs = 8) {
-  const g = new THREE.ExtrudeGeometry(shape, { depth: depth - edge * 2, bevelEnabled: true, bevelThickness: edge, bevelSize: edge, bevelOffset: -edge, bevelSegments: segs, curveSegments: 48 })
-  g.translate(0, 0, -(depth - edge * 2) / 2); g.computeVertexNormals(); return g
+function slab(shape: THREE.Shape, depth: number, edge: number, segs = 16) {
+  const g = new THREE.ExtrudeGeometry(shape, { depth: depth - edge * 2, bevelEnabled: true, bevelThickness: edge, bevelSize: edge, bevelOffset: -edge, bevelSegments: segs, curveSegments: 64 })
+  g.translate(0, 0, -(depth - edge * 2) / 2); return smoothNormals(g)
 }
 /** Antenna split band: the right-hand side profile of the body (flat side plus both rounded edges), extruded along y. */
 function sideBand(w: number, t: number, edge: number, h: number, segs = 8) {
@@ -64,7 +88,7 @@ function sideBand(w: number, t: number, edge: number, h: number, segs = 8) {
   for (let i = 1; i <= segs; i++) { const a = -(Math.PI / 2) * (i / segs); s.lineTo(x0 + R * Math.cos(a), -t / 2 + edge + R * Math.sin(a)) }
   s.lineTo(x0, t / 2 + o)
   const g = new THREE.ExtrudeGeometry(s, { depth: h, bevelEnabled: false })
-  g.rotateX(-Math.PI / 2); g.translate(0, -h / 2, 0); g.computeVertexNormals(); return g
+  g.rotateX(-Math.PI / 2); g.translate(0, -h / 2, 0); return smoothNormals(g)
 }
 function flatUV(shape: THREE.Shape, w: number, h: number) {
   const g = new THREE.ShapeGeometry(shape, 48), p = g.attributes.position, uv = g.attributes.uv
@@ -160,6 +184,47 @@ function LensStack({ r, order = 0 }: { r: number; order?: number }) {
     </group>)
 }
 
+/** Rear camera, built in true 3D on the plateau (local +y = out of the back, 0 = plateau surface).
+ * Polished ring with chamfered lips, a dark recessed barrel, three glass elements at different depths with AR
+ * coatings, an iris ring and a domed sapphire cover. All sizes not on the drawing are estimates. */
+function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }) {
+  const R = d / 2, w = mm(1.15), ri = R - w, c = mm(0.32), floor = mm(0.12)
+  const ring = geoOnce(`lring${d}|${rise}`, () => {
+    const pts = [[R + mm(0.25), 0], [R, mm(0.25)], [R, rise - c], [R - c * 0.3, rise - c * 0.3], [R - c, rise],
+      [ri + c * 0.8, rise], [ri + c * 0.2, rise - c * 0.2], [ri, rise - c * 0.9]].map(([x, y]) => new THREE.Vector2(x, y))
+    return new THREE.LatheGeometry(pts, 128)
+  })
+  const barrel = geoOnce(`lbar${d}|${rise}`, () => {
+    const pts = [[0, floor], [ri * 0.97, floor], [ri, floor + mm(0.1)], [ri, rise - c * 0.9]].map(([x, y]) => new THREE.Vector2(x, y))
+    return new THREE.LatheGeometry(pts, 96)
+  })
+  const dome = geoOnce(`ldome${d}|${rise}`, () => {
+    const rr = ri * 2.6, th = Math.asin(ri / rr)
+    const g = new THREE.SphereGeometry(rr, 96, 12, 0, Math.PI * 2, 0, th)
+    g.translate(0, rise - c - rr * Math.cos(th), 0); return g
+  })
+  const disc = (r: number, y: number, k: string, mat: ReactNode) => (
+    <mesh key={k} position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[r, 96]} />{mat}</mesh>)
+  const ar = (col: string, t: [number, number]) => <meshPhysicalMaterial color={col} metalness={0.2} roughness={0.04} transparent opacity={0.4}
+    iridescence={1} iridescenceIOR={1.5} iridescenceThicknessRange={t} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.5} depthWrite={false} />
+  const h = rise - c
+  return (
+    <group rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh geometry={ring} castShadow><meshPhysicalMaterial color={frame} metalness={1} roughness={0.12} clearcoat={0.4} envMapIntensity={1.5} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={barrel}><meshPhysicalMaterial color="#07080b" metalness={0.4} roughness={0.55} side={THREE.DoubleSide} /></mesh>
+      {disc(ri * 0.98, floor + E / 3, 'floor', <meshPhysicalMaterial color="#010103" roughness={0.3} clearcoat={0.6} envMapIntensity={0.6} />)}
+      {disc(ri * 0.42, floor + h * 0.12, 'e3', ar('#0e1430', [300, 480]))}
+      {disc(ri * 0.62, floor + h * 0.32, 'e2', ar('#121a3a', [250, 420]))}
+      <mesh position={[0, floor + h * 0.22, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[ri * 0.3, ri * 0.44, 64]} />
+        <meshPhysicalMaterial color="#1a1c24" metalness={0.9} roughness={0.25} side={THREE.DoubleSide} /></mesh>
+      {[0.55, 0.7, 0.86].map((k, i) => <mesh key={k} position={[0, floor + h * (0.18 + i * 0.16), 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[ri * k - mm(0.06), ri * k, 96]} /><meshPhysicalMaterial color={i === 1 ? '#3a3260' : '#22305a'} metalness={1} roughness={0.15} side={THREE.DoubleSide} /></mesh>)}
+      {disc(ri * 0.85, floor + h * 0.55, 'e1', ar('#18224a', [220, 380]))}
+      <mesh geometry={dome} renderOrder={6}><meshPhysicalMaterial color="#000" roughness={0.015} specularIntensity={0.45} envMapIntensity={0.8}
+        transparent blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
+    </group>)
+}
+
 function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec: IPhoneSpec }) {
   const f = IP18_FINISHES[opts.finish] ?? IP18_FINISHES.silver
   const W = mm(s.body.w), H = mm(s.body.h), T = mm(s.body.t), CR = mm(s.body.cornerR), EDGE = mm(s.body.edge)
@@ -175,7 +240,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const screen = flatUV(rrect(mm(s.active.w), mm(s.active.h), all(actR)), mm(s.active.w), mm(s.active.h))
     const island = new THREE.ShapeGeometry(rrect(mm(s.island.w), mm(s.island.h), all(mm(s.island.r))), 24)
     // Camera plateau: full width from the top edge, 2.78 mm proud of the back. Its bottom edge is scaled off the side view.
-    const plateau = slab(rrect(W, plH, [mm(P.bottomR), mm(P.bottomR), mm(P.cornerR), mm(P.cornerR)]), rise * 2, rise * 0.35, 6)
+    const plateau = slab(rrect(W, plH, [mm(P.bottomR), mm(P.bottomR), mm(P.cornerR), mm(P.cornerR)]), rise * 2, rise * 0.35, 12)
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
@@ -199,8 +264,8 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   const btnGeo = (len: number, wz: number, prot: number) => geoOnce(`btn${len}|${wz}|${prot}`, () => {
     const bev = Math.min(prot * 0.45, mm(0.2))
     const r = wz / 2
-    const g = new THREE.ExtrudeGeometry(rrect(wz - bev * 2, len - bev * 2, all(r - bev)), { depth: prot + SINK - bev, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 4, curveSegments: 24 })
-    g.translate(0, 0, -SINK); g.rotateY(Math.PI / 2); return g // extrusion now runs along +x
+    const g = new THREE.ExtrudeGeometry(rrect(wz - bev * 2, len - bev * 2, all(r - bev)), { depth: prot + SINK - bev, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 10, curveSegments: 32 })
+    g.translate(0, 0, -SINK); g.rotateY(Math.PI / 2); return smoothNormals(g) // extrusion now runs along +x
   })
   const side = (x: number, b: { cy: number; len: number }, key: string) => (
     <Pressable key={key} depth={mm(0.3)} position={[x, ty(b.cy), 0]} rotation={[0, x < 0 ? Math.PI : 0, 0]}>
@@ -249,10 +314,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* camera plateau: a full-width raised bar of the same aluminium unibody, lenses, flash and sensor sit directly on it */}
       <mesh geometry={g.plateau} position={[0, H / 2 - plH / 2, zb]}>{metal}</mesh>
       {s.lens.at.map(([x, y]) => (
-        <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}>
-          <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -lensRise / 2]}><cylinderGeometry args={[lensD / 2, lensD / 2, lensRise, 64]} /><meshPhysicalMaterial color={f.frame} metalness={1} roughness={0.14} envMapIntensity={1.4} /></mesh>
-          <group position={[0, 0, -lensRise - E]} rotation={[0, Math.PI, 0]}><LensStack r={lensD / 2 - mm(1.1)} /></group>
-        </group>))}
+        <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}><RearLens d={lensD} rise={lensRise} frame={f.frame} /></group>))}
       <mesh position={[bx(s.flash.bx), ty(s.flash.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.flash.d / 2), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>
       <mesh position={[bx(s.sensor.bx), ty(s.sensor.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.sensor.d / 2), 40]} />{black}</mesh>
       <mesh position={[bx(s.rearMic.bx), ty(s.rearMic.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.rearMic.d / 2), 16]} /><meshBasicMaterial color="#111" /></mesh>

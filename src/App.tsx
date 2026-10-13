@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { ContactShadows } from '@react-three/drei'
-import { EffectComposer, DepthOfField, Bloom, Noise } from '@react-three/postprocessing'
+import { EffectComposer, DepthOfField, Bloom, Noise, N8AO } from '@react-three/postprocessing'
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
+RectAreaLightUniformsLib.init()
 import * as THREE from 'three'
 import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
@@ -316,16 +318,23 @@ export default function App() {
           <Rig zoom={pose.zoom} />
           <Env intensity={light.env} />
           <ambientLight intensity={0.35 + light.intensity * 0.15} />
-          <directionalLight position={[lx, ly, lz]} intensity={light.intensity} castShadow />
+          <directionalLight position={[lx, ly, lz]} intensity={light.intensity * 0.6} castShadow />
+          {/* Softboxes: a large key above left, a tall strip on each side for the rolling edge highlights, a top fill. */}
+          <rectAreaLight args={['#ffffff', 1.3 * light.intensity, 3, 2.2]} position={[-2.4, 2.2, 2.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
+          <rectAreaLight args={['#ffffff', 1.0 * light.intensity, 0.6, 3.5]} position={[2.8, 0.3, 0.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
+          <rectAreaLight args={['#ffffff', 0.9 * light.intensity, 0.6, 3.5]} position={[-2.8, 0.3, -0.8]} onUpdate={l => l.lookAt(0, 0, 0)} />
+          <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
             <Centred deps={[device, opts.fold, opts.screen, media?.texture]}>
               <D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} />
             </Centred>
           </group>
           {light.shadow > 0 && <ContactShadows position={[pose.panX, pose.panY - 0.95, 0]} opacity={light.shadow} scale={6} blur={2.6} far={2.5} resolution={1024} frames={Infinity} />}
-          {(fx.dof || fx.bloom || fx.grain) && !transparent && <SceneBg mode={bgMode} c1={bg1} c2={bg2} angle={angle} />}
-          {(fx.dof || fx.bloom || fx.grain) && (
+          {!transparent && <SceneBg mode={bgMode} c1={bg1} c2={bg2} angle={angle} />}
+          {(fx.dof || fx.bloom || fx.grain || !transparent) && (
             <EffectComposer multisampling={4}>
+              {/* Ambient occlusion at part junctions (lens rings, buttons, plateau). Radius in scene units, 0.025 = 2.5 mm. */}
+              <>{!transparent && <N8AO halfRes aoRadius={0.025} distanceFalloff={0.3} intensity={2.2} color="#000" />}</>
               <>{fx.dof && <DepthOfField target={[pose.panX, pose.panY, fx.focus]} focalLength={0.12} bokehScale={fx.blur} />}</>
               <>{fx.bloom && <Bloom intensity={0.2} luminanceThreshold={0.95} mipmapBlur />}</>
               <>{fx.grain && <Noise opacity={0.06} premultiply />}</>
