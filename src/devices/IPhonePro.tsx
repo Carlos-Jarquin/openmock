@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { DeviceProps } from '../types'
@@ -34,8 +34,8 @@ function smoothNormals(g: THREE.BufferGeometry, creaseDeg = 50) {
   const fn = new Float32Array(n * 3), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3()
   for (let i = 0; i < n; i += 3) {
     a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2)
-    c.sub(b); b.sub(a); c.cross(b) // area-weighted face normal
-    for (let k = 0; k < 3; k++) fn.set([c.x, c.y, c.z], (i + k) * 3)
+    c.sub(b); b.sub(a); b.cross(c) // area-weighted face normal, (b - a) x (c - b): outward, same sense as three.js
+    for (let k = 0; k < 3; k++) fn.set([b.x, b.y, b.z], (i + k) * 3)
   }
   const key = (i: number) => `${Math.round(pos.getX(i) * 1e5)},${Math.round(pos.getY(i) * 1e5)},${Math.round(pos.getZ(i) * 1e5)}`
   const groups = new Map<string, number[]>()
@@ -113,18 +113,23 @@ function sdRRect(x: number, y: number, hw: number, hh: number, cx: number, cy: n
  * A vertical skirt along the outline closes the gap down to where the frame's flat side starts. Built in body coordinates,
  * back plane at z = 0, outward (towards the back) is -z.
  */
-function plateauSurface(o: { W: number; H: number; CR: number; edge: number; rise: number; D: number; flat: { top: number; bottom: number; hw: number; rb: number; rt: number } }) {
-  const { W, H, CR, edge, rise, D, flat } = o
+function plateauSurface(o: { W: number; H: number; CR: number; edge: number; rise: number; D: number; edgeK: number; flat: { top: number; bottom: number; hw: number; rb: number; rt: number } }) {
+  const { W, H, CR, edge, rise, D, flat, edgeK } = o
   const yFoot = flat.bottom - D - edge * 0.2, nx = 320, ny = Math.ceil(320 * (H / 2 - yFoot) / W)
   const fcy = (flat.top + flat.bottom) / 2, fhh = (flat.top - flat.bottom) / 2
   const prof = (x: number, y: number) => {
     const d = sdRRect(x, y, flat.hw, fhh, 0, fcy, flat.rb, flat.rt)
-    return d <= 0 ? rise : d >= D ? 0 : rise * (1 + Math.cos(Math.PI * d / D)) / 2
+    // Shoulder: a cosine fall that already has a definite slope at the flat-top edge, rounded into the flat by a tight
+    // (about 0.15 mm) convex radius via a smooth minimum, so Apple's crisp inner edge line shows. Concave fillet at the foot.
+    const c = D * 0.35, nrm = (1 + Math.cos(Math.PI * c / (D + c))) / 2
+    const u = Math.min(1, Math.max(0, (d + c) / (D + c))), hs = rise * (1 + Math.cos(Math.PI * u)) / 2 / nrm
+    const k = edgeK, a = rise, b = hs, hh = Math.max(k - Math.abs(a - b), 0) / k
+    return d >= D ? 0 : Math.min(a, b) - hh * hh * k / 4
   }
   const roll = (e: number) => e >= edge ? 0 : edge - Math.sqrt(Math.max(0, edge * edge - (edge - e) ** 2))
   const sdBody = (x: number, y: number) => sdRRect(x, y, W / 2, H / 2, 0, 0, CR, CR)
   const height = (x: number, y: number) => prof(x, y) - roll(Math.max(0, -sdBody(x, y)))
-  const pos: number[] = [], idx: number[] = []
+  const pos: number[] = [], idx: number[] = [], nor: number[] = []
   for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
     let x = -W / 2 + W * i / nx, y = yFoot + (H / 2 - yFoot) * j / ny
     // Top corners: map the grid's corner square onto the quarter disc of the body's corner radius (square-to-disc),
@@ -132,6 +137,15 @@ function plateauSurface(o: { W: number; H: number; CR: number; edge: number; ris
     const ccx = W / 2 - CR, ccy = H / 2 - CR, vx = Math.abs(x) - ccx, vy = y - ccy
     if (vx > 0 && vy > 0) { const k = Math.max(vx, vy) / Math.hypot(vx, vy); x = Math.sign(x) * (ccx + vx * k); y = ccy + vy * k }
     pos.push(x, y, -height(x, y) - 1e-4) // 0.01 mm proud so the foot never z-fights the body's back
+    // Analytic normal from the height gradient (exact at the frame join, where it turns horizontal like the frame side).
+    const e = 2e-4, hx = (height(x + e, y) - height(x - e, y)) / (2 * e), hy = (height(x, y + e) - height(x, y - e)) / (2 * e)
+    const sdx = sdBody(x, y) > -e ? 1 : 0
+    const n = new THREE.Vector3(-hx, -hy, -1)
+    if (sdx) { // on the outline the surface is vertical: use the outline's outward normal
+      const g = 1e-5, gx = (sdBody(x + g, y) - sdBody(x - g, y)) / (2 * g), gy = (sdBody(x, y + g) - sdBody(x, y - g)) / (2 * g)
+      n.set(gx, gy, 0)
+    }
+    n.normalize(); nor.push(n.x, n.y, n.z)
   }
   const row = nx + 1
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
@@ -141,13 +155,21 @@ function plateauSurface(o: { W: number; H: number; CR: number; edge: number; ris
   // Skirt: along the outline above the foot, from the surface edge straight down to the top of the frame's flat side.
   const base = pos.length / 3, outline = rrect(W, H, all(CR)).getSpacedPoints(1600).filter(p => p.y > yFoot)
   outline.sort((p, q) => Math.atan2(p.y, p.x) - Math.atan2(q.y, q.x))
-  outline.forEach(p => { pos.push(p.x, p.y, -height(p.x, p.y) - 1e-5, p.x, p.y, edge) })
+  outline.forEach(p => {
+    pos.push(p.x, p.y, -height(p.x, p.y) - 1e-5, p.x, p.y, edge)
+    const g = 1e-5, gx = (sdBody(p.x + g, p.y) - sdBody(p.x - g, p.y)) / (2 * g), gy = (sdBody(p.x, p.y + g) - sdBody(p.x, p.y - g)) / (2 * g)
+    const l = Math.hypot(gx, gy) || 1; nor.push(gx / l, gy / l, 0, gx / l, gy / l, 0)
+  })
   for (let k = 0; k < outline.length - 1; k++) {
     const a = base + k * 2, b = a + 2
     idx.push(a, a + 1, b, b, a + 1, b + 1)
   }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx)
-  g.computeVertexNormals(); return g
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3))
+  // UVs exactly as ExtrudeGeometry's world UVs (x, y on caps, so the grain map matches the body; without UVs the
+  // roughness map samples one texel and the plateau reads as a different finish).
+  const uv: number[] = []; for (let i = 0; i < pos.length; i += 3) uv.push(pos[i], pos[i + 1])
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); return g
 }
 
 function plateauFillet(shape: THREE.Shape, h: number, xMax: number, f: number, inset = 0, steps = 8) {
@@ -341,7 +363,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     // starts (EDGE below the back) and rolls in over rise + EDGE to the flat top, so the frame side flows into the shoulder as
     // one surface, replacing the frame's back roundover under the plateau. The straight wall and lower bevel hide in the body.
     const sh = mm(P.shoulder), flatR = mm(P.topR), topIn = Math.max(mm(P.cornerR) - sh, mm(0.5))
-    const plateau = plateauSurface({ W, H, CR, edge: EDGE, rise, D: sh,
+    const plateau = plateauSurface({ W, H, CR, edge: EDGE, rise, D: sh, edgeK: mm(0.06),
       flat: { top: H / 2 - sh, bottom: H / 2 - plH, hw: W / 2 - sh, rb: flatR, rt: topIn } })
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
@@ -357,11 +379,12 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   // The brushed roughness/normal maps caused large blotches on the frame at this scale, so the frame is a clean satin.
   // Fine satin grain: the brushed roughness map tiled much smaller (shares the uploaded source, so no re-upload).
   const grain = useMemo(() => { if (!bR) return null; const t = bR.clone(); t.repeat.set(bR.repeat.x * 8, bR.repeat.y * 8); return t }, [bR])
-  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.3} roughness={0.5} roughnessMap={grain}
-    clearcoat={0.04} clearcoatRoughness={0.4} envMapIntensity={darkF ? 0.4 : 0.32} specularIntensity={darkF ? 0.3 : 0.45} />
-  // Plateau: same bead-blasted aluminium but matte, so the wide shoulder rolls off softly with no hot streak.
-  const plateauMetal = <meshPhysicalMaterial color={f.frame} metalness={0.25} roughness={0.66}
-    envMapIntensity={darkF ? 0.45 : 0.7} specularIntensity={darkF ? 0.5 : 0.75} />
+  // ONE aluminium material instance for the whole unibody: frame, plateau, shoulder, back band and buttons.
+  // Per-finish values depend only on the finish, so every part gets the same colour, roughness, grain and reflection.
+  const alu = useMemo(() => new THREE.MeshPhysicalMaterial({ color: f.frame, metalness: 0.3, roughness: 0.5, roughnessMap: grain,
+    clearcoat: 0.04, clearcoatRoughness: 0.4, envMapIntensity: darkF ? 0.4 : 0.32, specularIntensity: darkF ? 0.3 : 0.45 }), [f.frame, darkF, grain])
+  useEffect(() => () => alu.dispose(), [alu])
+  const metal = <primitive object={alu} attach="material" />
   // Frosted back glass: textured roughness under a thin, slightly glossy coat so highlights spread but stay soft.
   const matte = <meshPhysicalMaterial color={f.back} metalness={0} roughness={0.8} roughnessMap={fR} clearcoat={0.35} clearcoatRoughness={0.38}
     specularIntensity={0.6} envMapIntensity={0.9} />
@@ -385,7 +408,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   const cameraControl = (
     <Pressable depth={mm(0.1)} position={[W / 2, ty(cc.cy), 0]}>
       <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.01), 0, 0]}><shapeGeometry args={[rrC(mm(cc.keepW), mm(cc.keepLen), all(mm(cc.keepW / 2))), 32]} />
-        <meshPhysicalMaterial color={f.frame} metalness={0.95} roughness={0.18} polygonOffset polygonOffsetFactor={-2} /></mesh>
+        {metal}</mesh>
       <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.03), 0, 0]}><shapeGeometry args={[rrC(mm(cc.w), mm(cc.len), all(mm(cc.w / 2))), 32]} />
         <meshPhysicalMaterial color="#5e6672" metalness={0.1} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} ior={1.77} polygonOffset polygonOffsetFactor={-4} /></mesh>
     </Pressable>)
