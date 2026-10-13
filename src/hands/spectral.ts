@@ -212,6 +212,13 @@ function prepare(mesh: THREE.SkinnedMesh, owner: string[]): Prepared {
   for (const fg of FINGERS) finger(fg, `${fg}-phalanx-distal`, `${fg}-tip`, [`${fg}-phalanx-intermediate`, `${fg}-phalanx-distal`],
     [`${fg}-phalanx-proximal`, `${fg}-phalanx-intermediate`, `${fg}-phalanx-distal`])
   finger('thumb', 'thumb-phalanx-distal', 'thumb-tip', ['thumb-phalanx-distal'], ['thumb-phalanx-proximal', 'thumb-phalanx-distal'])
+  // Thumb base: the boundary between the thumb's own segments and the hand (by skin ownership). On these meshes the thumb
+  // is fused into the palm, so from the back-left there is no occluding step or facing switch where it lies over the
+  // hand, and without this it read as part of the palm.
+  { const th = new Set(['thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-distal'])
+    const g = new Float32Array(N); for (let v = 0; v < N; v++) g[v] = th.has(owner[v]) ? 1 : 0
+    const near = new Set([...th, 'index-finger-metacarpal', 'index-finger-phalanx-proximal']) // the web side only, not the wrist
+    contour(geo, g, v => near.has(owner[v]), 0.5, segs) }
   // two more stars by the knuckles of the index and ring fingers
   for (const b of ['index-finger-phalanx-proximal', 'ring-finger-phalanx-intermediate', 'wrist']) { const v = owner.indexOf(b); if (v >= 0) starV.push(v) }
   const p = { segs, starV, bary }; cache.set(geo, p); return p
@@ -279,7 +286,12 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
   }
   const out: number[] = []
   // the toward-camera nudge, in mesh-local units (the hand mesh is in metres): 1.2 mm
-  const nudge = (x: number, y: number, z: number) => { const dx = _cam.x - x, dy = _cam.y - y, dz = _cam.z - z, l = Math.hypot(dx, dy, dz) || 1, k = 0.0012 / l
+  // Silhouette edges get a larger pull (5 mm): on this low-poly mesh the front/back switch often falls on an edge that
+  // sits a few millimetres behind the part's own visible rim (the thumb over the palm was the worst), so a 1.2 mm pull
+  // left the contour failing the depth test and only its faint see-through copy showed. Moving toward the camera does
+  // not shift a line on screen, so the larger pull only changes what it may draw over, by 5 mm.
+  let pull = 0.005
+  const nudge = (x: number, y: number, z: number) => { const dx = _cam.x - x, dy = _cam.y - y, dz = _cam.z - z, l = Math.hypot(dx, dy, dz) || 1, k = pull / l
     out.push(x + dx * k, y + dy * k, z + dz * k) }
   for (let e = 0; e < edges.length; e += 4) {
     const t1 = edges[e + 2], t2 = edges[e + 3]
@@ -287,6 +299,7 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
     const a = edges[e] * 3, b = edges[e + 1] * 3
     nudge(sk[a], sk[a + 1], sk[a + 2]); nudge(sk[b], sk[b + 1], sk[b + 2])
   }
+  pull = 0.0012
   const cr = st.creases; for (let i = 0; i < cr.length; i += 3) nudge(cr[i], cr[i + 1], cr[i + 2])
   st.lines.geometry.dispose(); const g = new LineSegmentsGeometry(); g.setPositions(out); st.lines.geometry = g; for (const gh of st.ghosts) gh.geometry = g
 }
@@ -324,3 +337,54 @@ export function addHull(mesh: THREE.Mesh, m: SpectralMats) {
   mesh.add(d)
 }
 export function removeHull(mesh: THREE.Mesh) { for (const c of [...mesh.children]) if (c.userData.spectral) mesh.remove(c) }
+
+// ---------- screen-space occluding contours ----------
+// Where a nearer part of the hand covers a farther part (the thumb over the palm, a finger over another) the mesh does
+// not always have a front/back switch on a usable edge, so the geometric silhouette test misses it. Instead the hands
+// alone are drawn into a depth target each frame, and a full-screen pass draws a thin line on the near side of every
+// depth step inside the hand. A step is a jump much larger than the local slope, so steep but continuous skin is not
+// mistaken for an edge. The line takes the near surface's depth, so the phone still hides it.
+const edgeVert = `void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }`
+const edgeFrag = /* glsl */`
+uniform sampler2D tDepth; uniform vec2 uRes; uniform float uNear, uFar, uR, uRel, uVal; uniform vec3 uColor;
+float lin(float d) { float z = d * 2.0 - 1.0; return 2.0 * uNear * uFar / (uFar + uNear - z * (uFar - uNear)); }
+float at(vec2 px) { return texture2D(tDepth, px / uRes).r; }
+void main() {
+  vec2 p = gl_FragCoord.xy; float dc = at(p); if (dc >= 1.0) discard;
+  float c = lin(dc), hit = 0.0;
+  for (int i = 0; i < 8; i++) {
+    float a = float(i) * 0.785398; vec2 o = vec2(cos(a), sin(a)) * uR;
+    float dn = at(p + o), dq = at(p - o); if (dn >= 1.0) continue; // the outer outline is the hull's job
+    float n = lin(dn), q = dq >= 1.0 ? c : lin(dq);
+    if (n - c > uRel * c && n - c > 4.0 * abs(c - q)) hit += 1.0; // occluding step: this pixel is the near side
+    else if (i < 4 && dq < 1.0 && c - 0.5 * (n + q) > uVal * c) hit += 1.0; // deep fold (thumb into palm): a valley
+  }
+  if (hit < 1.0) discard;
+  gl_FragColor = vec4(uColor, min(1.0, hit / 2.0));
+  gl_FragDepth = dc - 2e-5;
+  #include <colorspace_fragment>
+}`
+export function makeEdgePass(m: SpectralMats) {
+  const depthTexture = new THREE.DepthTexture(1, 1); depthTexture.type = THREE.UnsignedIntType
+  const rt = new THREE.WebGLRenderTarget(1, 1, { depthTexture, depthBuffer: true })
+  const mat = new THREE.ShaderMaterial({ vertexShader: edgeVert, fragmentShader: edgeFrag, transparent: true, depthWrite: false, depthTest: true,
+    uniforms: { tDepth: { value: depthTexture }, uRes: { value: new THREE.Vector2() }, uNear: { value: 0.1 }, uFar: { value: 100 }, uR: { value: 1 }, uRel: { value: 0.004 }, uVal: { value: 0.0015 }, uColor: { value: m.lineCol } } })
+  const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat)
+  if (import.meta.env.DEV) (globalThis as { __omEdge?: unknown }).__omEdge = mat
+  quad.frustumCulled = false; quad.renderOrder = 12; quad.userData = { spectral: true, noBounds: true }; quad.layers.set(LINE_LAYER)
+  const depthMat = new THREE.MeshBasicMaterial({ colorWrite: false }), size = new THREE.Vector2()
+  return { quad,
+    render(gl: THREE.WebGLRenderer, camera: THREE.Camera, group: THREE.Object3D, meshes: THREE.Mesh[]) {
+      gl.getDrawingBufferSize(size); if (rt.width !== size.x || rt.height !== size.y) rt.setSize(size.x, size.y)
+      const cam = camera as THREE.PerspectiveCamera
+      mat.uniforms.uRes.value.copy(size); mat.uniforms.uNear.value = cam.near; mat.uniforms.uFar.value = cam.far
+      mat.uniforms.uR.value = Math.max(1, gl.getPixelRatio() * 0.9)
+      const hidden: THREE.Object3D[] = []; group.traverse(o => { if (o.userData.spectral && o.visible) { o.visible = false; hidden.push(o) } })
+      const mats = meshes.map(x => x.material); for (const x of meshes) x.material = depthMat
+      const prev = gl.getRenderTarget(), auto = gl.autoClear
+      gl.setRenderTarget(rt); gl.autoClear = true; gl.render(group, camera)
+      gl.setRenderTarget(prev); gl.autoClear = auto
+      meshes.forEach((x, i) => { x.material = mats[i] }); for (const o of hidden) o.visible = true
+    },
+    dispose() { rt.dispose(); depthTexture.dispose(); mat.dispose(); depthMat.dispose(); quad.geometry.dispose() } }
+}
