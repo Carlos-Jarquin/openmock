@@ -18,3 +18,4 @@ button.ghost { background: #fff; color: #1d1d22; }
 .stage.checker { background: repeating-conic-gradient(#eee 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
 .stage.drag { outline: 3px dashed #4b6bff; outline-offset: -10px; }
 .dropnote { position: absolute; inset: 0; display: grid; place-items: center; font-size: 18px; pointer-events: none; color: #4b6bff; }
+.stage { touch-action: none; cursor: grab; } .stage:active { cursor: grabbing; }

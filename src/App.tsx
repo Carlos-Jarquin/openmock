@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Canvas, useThree } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { ContactShadows } from '@react-three/drei'
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
@@ -8,6 +8,8 @@ import type { DeviceId, DeviceOptions } from './types'
 import { FINISHES, INNER_PX, OUTER_PX } from './devices/Duo'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
+const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
+const wrap = (v: number) => ((v + 540) % 360) - 180
 const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0 }
 const LIGHT = { intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45 }
 
@@ -55,6 +57,27 @@ function loadLogo(file: File): Promise<{ mask: THREE.Texture; aspect: number }> 
   })
 }
 
+/** Keeps its children centred on their own bounding-box centre (measured unrotated), so the view orbits the device. */
+function Centred({ deps, children }: { deps: unknown[]; children: React.ReactNode }) {
+  const inner = useRef<THREE.Group>(null)
+  const dirty = useRef(true)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { dirty.current = true }, deps)
+  useFrame(() => {
+    const g = inner.current; if (!g || !dirty.current) return
+    const parent = g.parent!
+    const saved = parent.matrixWorld.clone()
+    parent.matrixWorld.identity()
+    g.position.set(0, 0, 0); g.updateMatrixWorld(true)
+    for (const c of g.children) c.updateMatrixWorld(true)
+    const box = new THREE.Box3().setFromObject(g, true)
+    parent.matrixWorld.copy(saved)
+    if (!box.isEmpty()) { const c = box.getCenter(new THREE.Vector3()); g.position.set(-c.x, -c.y, -c.z) }
+    dirty.current = false
+  })
+  return <group ref={inner}>{children}</group>
+}
+
 function Rig({ zoom }: { zoom: number }) {
   const { camera } = useThree()
   useEffect(() => { camera.position.set(0, 0, 4.2 / zoom); camera.lookAt(0, 0, 0) }, [zoom, camera])
@@ -77,6 +100,7 @@ export default function App() {
   const [status, setStatus] = useState('Drop, paste or choose an image or video to start.')
   const three = useRef<{ gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera } | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  const drag = useRef<{ x: number; y: number; pan: boolean } | null>(null)
   const def = DEVICES.find(d => d.id === device)!
   const screenAspect = typeof def.screenAspect === 'function' ? def.screenAspect(opts) : def.screenAspect
 
@@ -176,7 +200,7 @@ export default function App() {
           <p className="hint">Native size: {opts.screen === 'inner' ? `${INNER_PX.w} × ${INNER_PX.h}` : `${OUTER_PX.w} × ${OUTER_PX.h}`} px. Screenshots at this size fit exactly.</p>
         </section>}
         <section><h2>Camera</h2>
-          {slider('Tilt X', pose.tiltX, -60, 60, 1, n => setPose({ ...pose, tiltX: n }), '°')}
+          {slider('Tilt X', pose.tiltX, -90, 90, 1, n => setPose({ ...pose, tiltX: n }), '°')}
           {slider('Tilt Y', pose.tiltY, -180, 180, 1, n => setPose({ ...pose, tiltY: n }), '°')}
           {slider('Rotate', pose.rotZ, -45, 45, 1, n => setPose({ ...pose, rotZ: n }), '°')}
           {slider('Zoom', pose.zoom, 0.5, 2.5, 0.01, n => setPose({ ...pose, zoom: n }))}
@@ -210,7 +234,22 @@ export default function App() {
       </aside>
       <main className={`stage ${transparent ? 'checker' : ''} ${dragging ? 'drag' : ''}`} style={{ background: bgCss }}
         onDragOver={e => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)}
-        onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) loadFile(f) }}>
+        onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) loadFile(f) }}
+        onContextMenu={e => e.preventDefault()}
+        onPointerDown={e => {
+          if (e.button !== 0 && e.button !== 2) return
+          ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+          drag.current = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }
+        }}
+        onPointerMove={e => {
+          const d = drag.current; if (!d) return
+          const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY
+          setPose(p => d.pan
+            ? { ...p, panX: clamp(p.panX + dx * 0.004 / p.zoom, -1.5, 1.5), panY: clamp(p.panY - dy * 0.004 / p.zoom, -1.5, 1.5) }
+            : { ...p, tiltY: wrap(p.tiltY + dx * 0.4), tiltX: clamp(p.tiltX + dy * 0.4, -90, 90) })
+        }}
+        onPointerUp={e => { drag.current = null; (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId) }}
+        onWheel={e => { const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)); setPose(p => ({ ...p, zoom: clamp(p.zoom * k, 0.5, 2.5) })) }}>
         <Canvas shadows gl={{ alpha: true, preserveDrawingBuffer: true, antialias: true }} camera={{ fov: 30, position: [0, 0, 4.2] }}
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
@@ -219,7 +258,9 @@ export default function App() {
           <ambientLight intensity={0.35 + light.intensity * 0.15} />
           <directionalLight position={[lx, ly, lz]} intensity={light.intensity} castShadow />
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
-            <D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} />
+            <Centred deps={[device, opts.fold, opts.screen, media?.texture]}>
+              <D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} />
+            </Centred>
           </group>
           {light.shadow > 0 && <ContactShadows position={[pose.panX, -1.05, 0]} opacity={light.shadow} scale={6} blur={2.6} far={2.5} />}
         </Canvas>
