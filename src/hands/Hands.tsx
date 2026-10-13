@@ -6,6 +6,9 @@
 // any camera angle.
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { useGLTF } from '@react-three/drei'
+import { useFrame, useThree } from '@react-three/fiber'
+import { spectralMaterials, buildSpectral, addHull, removeHull, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
+import { LINE_LAYER } from '../sketch/Sketch'
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, type Gesture } from './gestures'
@@ -21,6 +24,7 @@ export const SKIN_TONES: Record<string, { label: string; color: string; sheen: s
   brown: { label: 'Brown', color: '#77503a', sheen: '#b9806a' },
   deep: { label: 'Deep', color: '#4a2f22', sheen: '#8a5a4a' },
   silhouette: { label: 'Silhouette', color: '#2b2346', sheen: '#a894ff' },
+  spectral: { label: 'Spectral', color: '#206DD0', sheen: '#206DD0' },
 }
 /** Device body in model units (1 = 100 mm): width, height, thickness, corner radius, edge fillet. */
 export interface HandFit { W: number; H: number; T: number; R: number; E: number; SW?: number; SH?: number; PW?: number; PH?: number }
@@ -410,22 +414,32 @@ function placeArm(mesh: THREE.Mesh, rig: Rig) {
 }
 
 /** Wraps the device: turns it for landscape and adds the posed hands, which Centred leaves out of its bounds. */
-export function HandRig({ pose, tone, fit, gesture, onGesture, children }: { pose: HandPose; tone: string; fit: HandFit | null; gesture?: Gesture; onGesture?: (g: Gesture) => void; children: React.ReactNode }) {
+export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTRAL_DEFAULTS, children }: { pose: HandPose; tone: string; fit: HandFit | null; spectral?: SpectralOptions; gesture?: Gesture; onGesture?: (g: Gesture) => void; children: React.ReactNode }) {
   const on = pose !== 'off' && !!fit
   return (
     <group rotation={[0, 0, on && pose === 'landscape' ? Math.PI / 2 : 0]} userData={{ handRig: true }}>
       {children}
-      {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} gesture={gesture} /></Suspense>}
+      {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} gesture={gesture} sp={spectral} /></Suspense>}
       {on && isGesture(pose) && gesture && onGesture && <ScreenTarget pose={pose} fit={fit!} g={gesture} onChange={onGesture} />}
     </group>)
 }
 
-function Hands({ pose, tone, fit, gesture }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture }) {
+function Hands({ pose, tone, fit, gesture, sp }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture; sp: SpectralOptions }) {
   const right = useGLTF(URL_R), left = useGLTF(URL_L)
   const group = useRef<THREE.Group>(null)
   const rigs = useMemo(() => ({ right: makeRig(right.scene), left: makeRig(left.scene) }), [right.scene, left.scene])
-  const mat = useMemo(() => skinMaterial(tone), [tone])
-  useEffect(() => () => mat.dispose(), [mat])
+  const spectral = tone === 'spectral'
+  const spm = useMemo<SpectralMats | null>(() => spectral ? spectralMaterials(SPECTRAL_DEFAULTS) : null, [spectral])
+  useEffect(() => () => spm?.dispose(), [spm])
+  const mat = useMemo(() => spm ? spm.body : skinMaterial(tone), [tone, spm])
+  useEffect(() => () => { if (!spm) mat.dispose() }, [mat, spm])
+  // live uniforms: tint, transparency and the three effects
+  useEffect(() => { if (!spm) return
+    spm.tint.set(sp.tint); spm.line.color.set(sp.tint)
+    const u = spm.body.uniforms; u.uAlpha.value = 1 - sp.transparency; u.uGlimmer.value = sp.glimmer ? 1 : 0; u.uShimmer.value = sp.shimmer ? 1 : 0
+  }, [spm, sp.tint, sp.transparency, sp.glimmer, sp.shimmer])
+  const { size, gl } = useThree()
+  useFrame(({ clock }) => { spm?.frame(size.width, size.height, gl.getPixelRatio(), clock.elapsedTime) })
   useEffect(() => { rigs.right.mesh.material = mat; rigs.left.mesh.material = mat }, [rigs, mat])
   // Only the gesture fields the pose uses, so moving a marker re-solves just the touching hand.
   const ges = isGesture(pose) ? gesture : undefined
@@ -444,6 +458,19 @@ function Hands({ pose, tone, fit, gesture }: { pose: HandPose; tone: string; fit
     }
     for (const side of ['right', 'left'] as const) if (!used.has(rigs[side].root)) { g.remove(rigs[side].root, arms[side]); delete solved.current[side] }
   }, [pose, fit, rigs, ges, arms])
+  // Spectral: outlines, inner lines and stars follow each re-solve; the hands leave the shadow pass (line layer) and cast none.
+  useEffect(() => {
+    for (const side of ['right', 'left'] as const) {
+      const r = rigs[side], arm = arms[side]
+      // renderOrder 10: the clear body draws after the phone's glass and the floor shadow, so its depth (which the outline
+      // needs) doesn't cut holes in them
+      for (const m of [r.mesh, arm] as THREE.Mesh[]) { m.layers.set(spm ? LINE_LAYER : 0); m.castShadow = !spm; m.renderOrder = spm ? 10 : 0; if (!spm) removeHull(m) }
+      if (!spm) continue
+      addHull(r.mesh, spm); addHull(arm, spm)
+      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm, sp.stars)
+    }
+    if (import.meta.env.DEV) (globalThis as { __omHands?: unknown }).__omHands = { rigs, arms }
+  }, [spm, rigs, arms, pose, fit, ges, sp.stars])
   useEffect(() => () => { const g = group.current; for (const side of ['right', 'left'] as const) g?.remove(rigs[side].root, arms[side]); solved.current = {} }, [rigs, arms])
   return <group ref={group} userData={{ noBounds: true }} />
 }

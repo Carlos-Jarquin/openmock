@@ -14,6 +14,7 @@ import { loadLogo, loadLocalLogo } from './localLogo'
 import { Env, retryEnvironment } from './Env'
 import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type Guide } from './hands/aiHands'
 import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
+import { SPECTRAL_DEFAULTS, type SpectralOptions } from './hands/spectral'
 import { GestureControls, GESTURE_DEFAULT, isGesture, rescale, screenOf, type Gesture } from './hands/gestures'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER, SKETCH_SHADOW } from './sketch/Sketch'
@@ -151,6 +152,7 @@ export default function App() {
   const [sk, setSk] = useState(SKETCH_DEFAULTS)
   const sketch = style === 'sketch'
   const [hands, setHands] = useState<{ pose: HandPose; tone: string }>({ pose: 'off', tone: 'fair' })
+  const [spectral, setSpectral] = useState<SpectralOptions>(SPECTRAL_DEFAULTS)
   const [gesture, setGesture] = useState<Gesture>(GESTURE_DEFAULT)
   const gestureFit = useRef(HAND_FITS.ip18!)
   useEffect(() => { const f = HAND_FITS[device]; if (f && f !== gestureFit.current) { setGesture(g => rescale(g, screenOf(gestureFit.current), screenOf(f))); gestureFit.current = f } }, [device])
@@ -276,7 +278,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setSbOn, setSb }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setSbOn, setSb, setSpectral }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -353,6 +355,16 @@ export default function App() {
             {hands.pose !== 'off' && <>
               <div className="seg wrap">{Object.entries(SKIN_TONES).map(([k, t]) => <button key={k} className={hands.tone === k ? 'on' : ''} title={t.label} onClick={() => setHands({ ...hands, tone: k })}>
                 <span className="swatch" style={{ background: t.color }} />{t.label}</button>)}</div>
+              {hands.tone === 'spectral' && <>
+                <label className="row"><span>Tint</span>
+                  <input type="color" value={spectral.tint.toLowerCase()} onChange={e => setSpectral({ ...spectral, tint: e.target.value })} />
+                  <input type="text" key={spectral.tint} defaultValue={spectral.tint} maxLength={7} style={{ width: 70 }} onChange={e => { const v = e.target.value.trim(); if (/^#[0-9a-fA-F]{6}$/.test(v)) setSpectral({ ...spectral, tint: v.toUpperCase() }) }} /></label>
+                {slider('Transparency', Math.round(spectral.transparency * 100), 0, 100, 1, n => setSpectral({ ...spectral, transparency: n / 100 }), '%')}
+                <label className="check"><input type="checkbox" checked={spectral.glimmer} onChange={e => setSpectral({ ...spectral, glimmer: e.target.checked })} /> Glimmer</label>
+                <label className="check"><input type="checkbox" checked={spectral.stars} onChange={e => setSpectral({ ...spectral, stars: e.target.checked })} /> Stars</label>
+                <label className="check"><input type="checkbox" checked={spectral.shimmer} onChange={e => setSpectral({ ...spectral, shimmer: e.target.checked })} /> Shimmer</label>
+                <button className="ghost" onClick={() => setSpectral(SPECTRAL_DEFAULTS)}>Reset spectral</button>
+              </>}
               <p className="hint">The hands move with the phone, so set any camera angle. Two hands turns the phone sideways.</p>
               {isGesture(hands.pose) && <GestureControls pose={hands.pose} fit={HAND_FITS[device]!} g={gesture} set={setGesture} />}
               <h3>Photoreal hands</h3>
@@ -475,7 +487,7 @@ export default function App() {
           </>}
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
             <Centred deps={[device, opts.fold, opts.screen, screenTex.texture, hands.pose]}>
-              <HandRig pose={hands.pose} tone={hands.tone} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture}>
+              <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture}>
                 <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts} /></SketchStyle>
               </HandRig>
             </Centred>
@@ -493,7 +505,8 @@ export default function App() {
           {(fx.dof || fx.bloom || fx.grain || !transparent) && (
             <EffectComposer multisampling={4}>
               {/* Ambient occlusion at part junctions (lens rings, buttons, plateau). Radius in scene units, 0.025 = 2.5 mm. */}
-              <>{!transparent && !sketch && <N8AO halfRes aoRadius={0.025} distanceFalloff={0.3} intensity={2.2} color="#000" />}</>
+              <>{/* off with Spectral hands: their depth (needed for the outline) made the AO paint faceted dark patches through the clear hand */}
+              {!transparent && !sketch && !(hands.pose !== 'off' && hands.tone === 'spectral') && <N8AO halfRes aoRadius={0.025} distanceFalloff={0.3} intensity={2.2} color="#000" />}</>
               <>{fx.dof && <DepthOfField target={[pose.panX, pose.panY, fx.focus]} focalLength={0.12} bokehScale={fx.blur} />}</>
               <>{fx.bloom && <Bloom intensity={0.2} luminanceThreshold={0.95} mipmapBlur />}</>
               <>{fx.grain && <Noise opacity={0.06} premultiply />}</>
