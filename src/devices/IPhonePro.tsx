@@ -212,14 +212,17 @@ function LensStack({ r, order = 0 }: { r: number; order?: number }) {
  * Polished ring with chamfered lips, a dark recessed barrel, three glass elements at different depths with AR
  * coatings, an iris ring and a domed sapphire cover. All sizes not on the drawing are estimates. */
 function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }) {
-  // Ring: outer edge at the drawn 16.58 diameter; about 2 mm wide as in Apple's photos (estimate).
-  const R = d / 2, w = mm(2.0), ri = R - w, c = mm(0.32), floor = mm(0.12)
+  // Ring: outer edge at the drawn 16.58 diameter; width 1.25 mm, measured from Apple's hero photo along the unforeshortened axis (ring/diameter ~0.075).
+  const R = d / 2, w = mm(1.25), ri = R - w, c = mm(0.32), floor = mm(0.12)
   const ring = geoOnce(`lring${d}|${rise}`, () => {
     // Satin body of the ring: outer wall and wide flat top.
-    const pts = [[R + mm(0.25), 0], [R, mm(0.25)], [R, rise - c], [R - c * 0.3, rise - c * 0.3], [R - c, rise],
+    const pts = [[R - c * 0.3, rise - c * 0.3], [R - c, rise],
       [ri + c * 1.2, rise]].map(([x, y]) => new THREE.Vector2(x, y))
     return new THREE.LatheGeometry(pts, 128)
   })
+  // Outer wall: same satin metal, but it faces away from the key lights, so it reads a shade darker as in Apple's photos.
+  const wall = geoOnce(`lwall${d}|${rise}`, () => new THREE.LatheGeometry(
+    [[R + mm(0.25), 0], [R, mm(0.25)], [R, rise - c], [R - c * 0.3, rise - c * 0.3]].map(([x, y]) => new THREE.Vector2(x, y)), 128))
   // Brighter chamfered inner lip, cut and polished down into the barrel.
   const lip = geoOnce(`llip${d}|${rise}`, () => {
     const pts = [[ri + c * 1.2, rise], [ri + c * 0.5, rise - c * 0.25], [ri + c * 0.1, rise - c * 0.7], [ri, rise - c * 0.9]].map(([x, y]) => new THREE.Vector2(x, y))
@@ -236,21 +239,22 @@ function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }
   const disc = (r: number, y: number, k: string, mat: ReactNode) => (
     <mesh key={k} position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[r, 96]} />{mat}</mesh>)
   const ar = (col: string, t: [number, number]) => <meshPhysicalMaterial color={col} metalness={0.2} roughness={0.04} transparent opacity={0.4}
-    iridescence={1} iridescenceIOR={1.5} iridescenceThicknessRange={t} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.5} depthWrite={false} />
+    iridescence={1} iridescenceIOR={1.3} iridescenceThicknessRange={t} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.5} depthWrite={false} />
   const h = rise - c
   return (
     <group rotation={[-Math.PI / 2, 0, 0]}>
-      <mesh geometry={ring} castShadow><meshPhysicalMaterial color={frame} metalness={0.3} roughness={0.5} roughnessMap={frostRoughness()} side={THREE.DoubleSide} /></mesh>
-      <mesh geometry={lip}><meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.2} envMapIntensity={1.3} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={ring} castShadow><meshPhysicalMaterial color={frame} metalness={0.3} roughness={0.56} roughnessMap={frostRoughness()} envMapIntensity={0.85} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={wall} castShadow><meshPhysicalMaterial color={frame} metalness={0.3} roughness={0.7} envMapIntensity={0.45} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={lip}><meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.2} envMapIntensity={1.1} side={THREE.DoubleSide} /></mesh>
       <mesh geometry={barrel}><meshPhysicalMaterial color="#07080b" metalness={0.4} roughness={0.55} side={THREE.DoubleSide} /></mesh>
       {disc(ri * 0.98, floor + E / 3, 'floor', <meshPhysicalMaterial color="#010103" roughness={0.3} clearcoat={0.6} envMapIntensity={0.6} />)}
-      {disc(ri * 0.42, floor + h * 0.12, 'e3', ar('#0e1430', [300, 480]))}
-      {disc(ri * 0.62, floor + h * 0.32, 'e2', ar('#121a3a', [250, 420]))}
+      {disc(ri * 0.42, floor + h * 0.12, 'e3', ar('#101218', [300, 480]))}
+      {disc(ri * 0.62, floor + h * 0.32, 'e2', ar('#14161e', [250, 420]))}
       <mesh position={[0, floor + h * 0.22, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[ri * 0.3, ri * 0.44, 64]} />
         <meshPhysicalMaterial color="#1a1c24" metalness={0.9} roughness={0.25} side={THREE.DoubleSide} /></mesh>
       {[0.55, 0.7, 0.86].map((k, i) => <mesh key={k} position={[0, floor + h * (0.18 + i * 0.16), 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[ri * k - mm(0.06), ri * k, 96]} /><meshPhysicalMaterial color={i === 1 ? '#3a3260' : '#22305a'} metalness={1} roughness={0.15} side={THREE.DoubleSide} /></mesh>)}
-      {disc(ri * 0.85, floor + h * 0.55, 'e1', ar('#18224a', [220, 380]))}
+        <ringGeometry args={[ri * k - mm(0.06), ri * k, 96]} /><meshPhysicalMaterial color={i === 1 ? '#34303e' : '#262a34'} metalness={1} roughness={0.15} side={THREE.DoubleSide} /></mesh>)}
+      {disc(ri * 0.85, floor + h * 0.55, 'e1', ar('#1a1c26', [220, 380]))}
       <mesh geometry={dome} renderOrder={6}><meshPhysicalMaterial color="#000" roughness={0.015} specularIntensity={0.45} envMapIntensity={0.8}
         transparent blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
     </group>)
