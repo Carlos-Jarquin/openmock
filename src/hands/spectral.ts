@@ -25,9 +25,10 @@ const SKIN_BODY = /* glsl */`
 #include <project_vertex>
 `
 const bodyVert = `${SKIN_PARS}
+attribute vec3 smoothNormal;
 varying vec3 vN; varying vec3 vV; varying vec3 vW; varying vec3 vB;
 void main() {
-${SKIN_BODY}
+${SKIN_BODY.replace('#include <beginnormal_vertex>', 'vec3 objectNormal = smoothNormal;')}
   vN = normalize(normalMatrix * objectNormal); vV = -mvPosition.xyz; vW = (modelMatrix * vec4(transformed, 1.0)).xyz;
   vB = position; // bind-pose position: glints stay put on the skin as the hand poses
 }`
@@ -240,12 +241,35 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
 }
 
 /** The opaque outer outline: an inverted hull sharing the hand's geometry and skeleton (or a plain mesh for the forearm). */
+/** The hand meshes have hard (split) normals at UV seams and low-poly creases, so a Fresnel rim from them shows flat facets
+ *  and shards. Average the normals of every vertex sharing a position (0.05 mm grid) into 'smoothNormal' for the body shader. */
+function ensureSmooth(g: THREE.BufferGeometry) {
+  if (g.getAttribute('smoothNormal')) return
+  if (!g.getAttribute('normal')) g.computeVertexNormals()
+  const pos = g.getAttribute('position'), nor = g.getAttribute('normal'), n = pos.count
+  const key = (i: number) => `${Math.round(pos.getX(i) / 5e-5)},${Math.round(pos.getY(i) / 5e-5)},${Math.round(pos.getZ(i) / 5e-5)}`
+  const sum = new Map<string, THREE.Vector3>(), keys: string[] = []
+  for (let i = 0; i < n; i++) { const k = key(i); keys.push(k); const v = sum.get(k) ?? new THREE.Vector3(); v.x += nor.getX(i); v.y += nor.getY(i); v.z += nor.getZ(i); sum.set(k, v) }
+  const out = new Float32Array(n * 3)
+  for (let i = 0; i < n; i++) { const v = sum.get(keys[i])!.clone().normalize(); out[i * 3] = v.x; out[i * 3 + 1] = v.y; out[i * 3 + 2] = v.z }
+  g.setAttribute('smoothNormal', new THREE.BufferAttribute(out, 3))
+}
 export function addHull(mesh: THREE.Mesh, m: SpectralMats) {
+  ensureSmooth(mesh.geometry)
   for (const c of [...mesh.children]) if (c.userData.spectralHull) mesh.remove(c)
   let h: THREE.Mesh
   if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) { const s = mesh as THREE.SkinnedMesh; const sh = new THREE.SkinnedMesh(s.geometry, m.hull); sh.bind(s.skeleton, s.bindMatrix); sh.bindMode = s.bindMode; h = sh }
   else h = new THREE.Mesh(mesh.geometry, m.hull)
   h.renderOrder = 11; h.frustumCulled = false; h.userData = { spectral: true, spectralHull: true, noBounds: true }; h.layers.set(LINE_LAYER); h.castShadow = false
   mesh.add(h)
+  // Depth prepass: the body is see-through, so without it the palm, the thumb behind it and fingers wrapping the phone
+  // each add their own Glimmer rim and Shimmer, which shows as shards and flat facets. Writing depth first means only the
+  // nearest skin surface is shaded (the phone still shows through, since it is drawn before at renderOrder 0).
+  const pm = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true })
+  let d: THREE.Mesh
+  if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) { const s = mesh as THREE.SkinnedMesh; const sd = new THREE.SkinnedMesh(s.geometry, pm); sd.bind(s.skeleton, s.bindMatrix); sd.bindMode = s.bindMode; d = sd }
+  else d = new THREE.Mesh(mesh.geometry, pm)
+  d.renderOrder = 9; d.frustumCulled = false; d.userData = { spectral: true, spectralHull: true, noBounds: true }; d.layers.set(LINE_LAYER); d.castShadow = false
+  mesh.add(d)
 }
 export function removeHull(mesh: THREE.Mesh) { for (const c of [...mesh.children]) if (c.userData.spectral) mesh.remove(c) }
