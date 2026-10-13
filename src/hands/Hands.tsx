@@ -40,12 +40,15 @@ function sdf(p: THREE.Vector3, f: HandFit) {
 
 /** Finger joint plan: fixed angles in degrees for [metacarpal, proximal, intermediate, distal], and whether the
  * proximal to distal joints keep closing past those angles until contact (up to max). spread turns the finger about the palm normal. */
-interface FingerPlan { curl: [number, number, number, number]; close?: boolean; max?: [number, number, number]; spread?: number }
-interface ThumbPlan { oppose: number; abduct: number; curl: [number, number, number]; close?: boolean; max?: [number, number] }
+/** tip: where the fingertip pad should rest (device space). When set, the finger's spread and curls are solved to reach it. */
+interface FingerPlan { curl: [number, number, number, number]; close?: boolean; max?: [number, number, number]; spread?: number; tip?: THREE.Vector3 }
+interface ThumbPlan { oppose: number; abduct: number; curl: [number, number, number]; close?: boolean; max?: [number, number]; tip?: THREE.Vector3 }
 /** knuckle: where the middle finger's knuckle (MCP joint) goes. F: palm direction, wrist to knuckles. N: out of the palm. */
 interface HandPlan { side: 'right' | 'left'; knuckle: THREE.Vector3; F: THREE.Vector3; N: THREE.Vector3; roll?: number; seat?: number; fingers: FingerPlan[]; thumb: ThumbPlan }
 
-const mirror = (p: HandPlan): HandPlan => ({ ...p, side: p.side === 'right' ? 'left' : 'right', knuckle: v3(-p.knuckle.x, p.knuckle.y, p.knuckle.z), F: v3(-p.F.x, p.F.y, p.F.z), N: v3(-p.N.x, p.N.y, p.N.z) })
+const mx = (v: THREE.Vector3) => v3(-v.x, v.y, v.z)
+const mt = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && mx(o.tip) })
+const mirror = (p: HandPlan): HandPlan => ({ ...p, side: p.side === 'right' ? 'left' : 'right', knuckle: mx(p.knuckle), F: mx(p.F), N: mx(p.N), fingers: p.fingers.map(mt), thumb: mt(p.thumb) })
 
 /** Poses in device space: x right and y up seen from the front, z out of the screen. Sizes scale with the device. */
 function plans(pose: HandPose, f: HandFit): HandPlan[] {
@@ -56,31 +59,39 @@ function plans(pose: HandPose, f: HandFit): HandPlan[] {
   // [spread, starting knuckle bend] for index, middle, ring, little finger. The index and little finger start bent
   // so they wrap the back with the others; every finger then closes until it touches.
   const wrap = (k: [number, number][]): FingerPlan[] => k.map(([spread, c]) => ({ curl: [0, c, 6, 4], close: true, max: [95, 95, 70], spread }))
+  // Fingertip targets: the solver bends each chain until its tip reaches the target without entering the phone.
+  const back = (x: number, y: number, spread: number): FingerPlan => ({ curl: [0, 20, 6, 4], spread, tip: v3(x, y, -ht - 0.05) })
+  const edge = (y: number, spread: number): FingerPlan => ({ curl: [0, 20, 6, 4], spread, tip: v3(-hw - 0.045, y, -ht * 0.25) })
   const grip: HandPlan = {
-    // The right edge rests in the palm, the fingers wrap the back and reach the left edge, the thumb rests on the screen.
-    side: 'right', knuckle: v3(hw - 0.02, -f.H * 0.14, -ht - 0.09), F: v3(-0.1, 0.9, -0.42), N: v3(-1, 0, 0), seat: 0.004,
-    fingers: wrap([[2, 60], [0, 20], [-2, 20], [-5, 55]]),
-    thumb: { oppose: 0, abduct: 40, curl: [0, 0, 0], close: true, max: [40, 40] },
+    // The right edge rests in the palm, the thumb lies along the right frame, the fingertips reach the left edge
+    // and the little finger supports the bottom.
+    side: 'right', knuckle: v3(hw + 0.12, -hh * 0.42, -ht - 0.1), F: v3(-0.1, 0.9, -0.42), N: v3(-0.85, 0, 0.5), seat: 0.004,
+    fingers: [edge(-f.H * 0.02, 2), edge(-f.H * 0.15, 0), edge(-f.H * 0.28, -3),
+      { curl: [0, 50, 40, 20], spread: -6, tip: v3(hw * 0.2, -hh - 0.05, -ht * 0.3) }],
+    thumb: { oppose: 0, abduct: 0, curl: [0, 0, 0], tip: v3(hw + 0.055, -hh * 0.05, ht * 0.2) },
   }
   if (pose === 'right') return [grip]
   if (pose === 'left') return [mirror(grip)]
   if (pose === 'landscape') {
-    // The rig turns the device 90 degrees, so its bottom end is on the right. Each hand cups one end from below,
-    // the end resting in the palm, fingers across the back and the thumb on the screen.
+    // The rig turns the device 90 degrees, so its bottom end is on the right. Each hand cups one end from below:
+    // thumb on the end frame, fingers spread across its own half of the back, little finger under the long edge.
     const r: HandPlan = {
       side: 'right', knuckle: v3(-hw * 0.1, -hh + 0.02, -ht - 0.09), F: v3(0.9, -0.1, -0.42), N: v3(0, 1, 0), seat: 0.004,
-      fingers: wrap([[2, 60], [0, 20], [-2, 20], [-5, 55]]),
-      thumb: { oppose: 0, abduct: 40, curl: [0, 0, 0], close: true, max: [40, 40] },
+      fingers: [back(hw * 0.7, -hh + 0.48, 2), back(hw * 0.25, -hh + 0.5, 0), back(-hw * 0.25, -hh + 0.44, -3),
+        { curl: [0, 40, 30, 20], spread: -6, tip: v3(-hw - 0.05, -hh + 0.17, -ht * 0.3) }],
+      thumb: { oppose: 0, abduct: 30, curl: [0, 0, 0], tip: v3(hw * 0.3, -hh - 0.055, ht * 0.2) },
     }
-    const flipY = (v: THREE.Vector3) => v3(v.x, -v.y, v.z)
-    return [r, { ...r, side: 'left', knuckle: flipY(r.knuckle), F: flipY(r.F), N: flipY(r.N) }]
+    const fy = (v: THREE.Vector3) => v3(v.x, -v.y, v.z)
+    const ft = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && fy(o.tip) })
+    return [r, { ...r, side: 'left', knuckle: fy(r.knuckle), F: fy(r.F), N: fy(r.N), fingers: r.fingers.map(ft), thumb: ft(r.thumb) }]
   }
   if (pose === 'pinch') return [{
-    // Presenting: the lower right corner held in the fingertips, thumb on the screen edge, ring and little finger tucked.
-    side: 'right', knuckle: v3(hw + 0.14, -hh * 0.6, -ht - 0.1), F: v3(-0.25, 0.85, -0.45), N: v3(-1, 0, 0.1), seat: 0.03,
-    fingers: [{ curl: [0, 35, 6, 4], close: true, max: [95, 95, 70], spread: 3 }, { curl: [0, 30, 6, 4], close: true, max: [95, 95, 70] },
-      { curl: [0, 70, 75, 40], spread: -3 }, { curl: [0, 75, 80, 45], spread: -7 }],
-    thumb: { oppose: 0, abduct: 30, curl: [0, 0, 0], close: true, max: [45, 45] },
+    // Presenting: held low on the right edge, thumb on the frame, two fingertips on the back, the ring finger
+    // under the bottom edge and the little finger tucked. The screen stays clear.
+    side: 'right', knuckle: v3(hw + 0.2, -hh * 0.7, -ht - 0.2), F: v3(-0.25, 0.85, -0.45), N: v3(-0.9, 0, 0.4), seat: 0.03,
+    fingers: [{ curl: [0, 20, 6, 4], spread: 3, tip: v3(hw * 0.3, -hh * 0.4, -ht - 0.04) }, { curl: [0, 20, 6, 4], tip: v3(hw * 0.15, -hh * 0.62, -ht - 0.04) },
+      { curl: [0, 40, 30, 20], spread: -3, tip: v3(hw * 0.45, -hh - 0.05, -ht * 0.3) }, { curl: [0, 75, 80, 45], spread: -7 }],
+    thumb: { oppose: 0, abduct: 20, curl: [0, 0, 0], tip: v3(hw + 0.06, -hh * 0.5, -ht * 0.2) },
   }]
   return []
 }
@@ -100,12 +111,11 @@ function pores() {
 }
 function skinMaterial(tone: string) {
   const t = SKIN_TONES[tone] ?? SKIN_TONES.fair
-  // Physically based skin: satin roughness with pores, a warm sheen for the soft rim glow, a touch of transmission
-  // with a red attenuation for light passing through thin edges (fingertips, webbing).
+  // Physically based skin: satin roughness with pores and a warm sheen for the soft rim glow. No transmission:
+  // its screen-space refraction drew dark lines along the fingers where they sit close to the phone.
   return new THREE.MeshPhysicalMaterial({
     color: t.color, roughness: 0.58, roughnessMap: pores(), metalness: 0, specularIntensity: 0.45, ior: 1.4,
     sheen: 0.7, sheenColor: new THREE.Color(t.sheen), sheenRoughness: 0.5, clearcoat: 0.06, clearcoatRoughness: 0.6,
-    transmission: 0.04, thickness: 0.12, attenuationColor: new THREE.Color('#b8322a'), attenuationDistance: 0.25,
   })
 }
 
@@ -208,10 +218,48 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
       chainPose(names, axes, angles, pre); update()
     }
   }
+  /** Reach: coordinate descent on a digit's angles (degrees) so its tip lands on a target, while keeping the
+   * finger out of the device (spheres along the bones) and staying near the starting pose. */
+  const reach = (names: string[], target: THREE.Vector3, x0: number[], lo: number[], hi: number[], apply: (x: number[]) => void, radius: number) => {
+    const tipB = rig.bones[names[names.length - 1]], wp = new THREE.Vector3(), wq = new THREE.Vector3()
+    const cost = (x: number[]) => {
+      apply(x); update()
+      let c = tipB.getWorldPosition(wp).distanceToSquared(target)
+      for (let k = 1; k < names.length; k++) {
+        rig.bones[names[k]].getWorldPosition(wp); rig.bones[names[k - 1]].getWorldPosition(wq)
+        for (const t of [0, 0.33, 0.66]) {
+          if (k === 1 && t > 0.5) continue   // the knuckle itself may rest on the edge
+          const q = wp.clone().lerp(wq, t), r = radius * (k === names.length - 1 ? 0.8 : 1), pen = r - sdf(q, fit)
+          if (pen > 0) c += 200 * pen * pen
+        }
+      }
+      for (let k = 0; k < x.length; k++) c += 2e-7 * (x[k] - x0[k]) ** 2
+      return c
+    }
+    const x = x0.slice(); let best = cost(x)
+    for (let step = 8; step >= 0.5; step /= 2) {
+      for (let it = 0, moved = true; moved && it < 40; it++) {
+        moved = false
+        for (let k = 0; k < x.length; k++) for (const sgn of [1, -1]) {
+          const v = x[k]; x[k] = Math.min(hi[k], Math.max(lo[k], v + sgn * step))
+          const c = cost(x); if (c < best - 1e-9) { best = c; moved = true } else x[k] = v
+        }
+      }
+    }
+    apply(x); update()
+  }
   FINGERS.forEach((fn, i) => {
     const fp = plan.fingers[i], names = JOINTS.map(j => `${fn}-${j}`)
     const axes = names.slice(0, 4).map((n, k) => curlAxis(n, names[k + 1]))
     const angles = fp.curl.map(deg)
+    const pre0 = fp.spread ? (M: THREE.Matrix4) => hinge(M, P(names[1]), N0, deg(fp.spread!) * h) : undefined
+    if (fp.tip) {
+      // Start from a contact wrap (so the finger begins outside the phone), then reach for the target.
+      chainPose(names, axes, angles, pre0); update(); close(names, axes, angles, 1, fp.max ?? [95, 95, 70], pre0)
+      const apply = (x: number[]) => chainPose(names, axes, [0, x[1], x[2], x[3]].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h))
+      reach(names.slice(1), fp.tip, [fp.spread ?? 0, ...angles.slice(1).map(a => a * 180 / Math.PI)], [-25, -15, 0, 0], [25, 95, 105, 80], apply, 0.07)
+      return
+    }
     const pre = fp.spread ? (M: THREE.Matrix4) => hinge(M, P(names[1]), N0, deg(fp.spread!) * h) : undefined
     chainPose(names, axes, angles, pre); update()
     if (fp.close) close(names, axes, angles, 1, fp.max ?? [80, 90, 70], pre)
@@ -220,6 +268,11 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
   const tp = plan.thumb, axesT = THUMB.slice(0, 3).map((n, k) => curlAxis(n, THUMB[k + 1]))
   const preT = (M: THREE.Matrix4) => { hinge(M, P(THUMB[0]), F0, deg(tp.oppose) * -h); hinge(M, P(THUMB[0]), N0, deg(tp.abduct) * h) }
   const angT = tp.curl.map(deg)
+  if (tp.tip) {
+    const apply = (x: number[]) => chainPose(THUMB, axesT, [x[2], x[3], x[4]].map(deg), M => { hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h) })
+    reach(THUMB, tp.tip, [tp.oppose, tp.abduct, ...tp.curl], [-60, -60, -20, -20, -10], [90, 70, 60, 70, 80], apply, 0.08)
+    update(); return
+  }
   chainPose(THUMB, axesT, angT, preT); update()
   if (tp.close) close(THUMB, axesT, angT, 1, tp.max ?? [50, 45], preT)
   update()

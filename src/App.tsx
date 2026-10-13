@@ -134,6 +134,8 @@ export default function App() {
   const [hands, setHands] = useState<{ pose: HandPose; tone: string }>({ pose: 'off', tone: 'fair' })
   // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
   const [ai, setAi] = useState<{ guide: Guide; shadows: boolean; busy: boolean; url: string | null }>({ guide: 'depth', shadows: false, busy: false, url: null })
+  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
+  const [seedLock, setSeedLock] = useState(false)
   const aiAbort = useRef<AbortController | null>(null)
   const [bgMode, setBgMode] = useState<'solid' | 'gradient'>('gradient')
   const [bg1, setBg1] = useState('#dfe7ff')
@@ -205,11 +207,13 @@ export default function App() {
     const t = three.current; if (!t || ai.busy) return
     if (!(await comfyReachable())) { setStatus('ComfyUI is not running. Start it on port 8188, then try again.'); return }
     const ctl = new AbortController(); aiAbort.current = ctl
+    const runSeed = seedLock ? seed : Math.floor(Math.random() * 1e9)
+    setSeed(runSeed)
     setAi(a => ({ ...a, busy: true }))
     try {
       await new Promise(r => requestAnimationFrame(r))
       const passes = await renderPasses(t, hands.tone)
-      const res = await runComfy(passes, { guide: ai.guide, seed: Math.floor(Math.random() * 1e9), onStatus: setStatus, signal: ctl.signal })
+      const res = await runComfy(passes, { guide: ai.guide, seed: runSeed, onStatus: setStatus, signal: ctl.signal })
       const out = composite(passes, res, { shadows: ai.shadows })
       const url = URL.createObjectURL(await new Promise<Blob>(r => out.toBlob(b => r(b!), 'image/png')))
       setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return { ...a, busy: false, url } })
@@ -313,6 +317,9 @@ export default function App() {
               <div className="seg"><button className={ai.guide === 'depth' ? 'on' : ''} onClick={() => setAi({ ...ai, guide: 'depth' })}>Guide by depth</button>
                 <button className={ai.guide === 'pose' ? 'on' : ''} onClick={() => setAi({ ...ai, guide: 'pose' })}>Guide by pose</button></div>
               <label className="check"><input type="checkbox" checked={ai.shadows} onChange={e => setAi({ ...ai, shadows: e.target.checked })} /> Contact shadows (darkens the phone slightly)</label>
+              <div className="row"><label>Seed <input type="number" min={0} value={seed} onChange={e => setSeed(Math.max(0, Math.floor(Number(e.target.value) || 0)))} style={{ width: 110 }} /></label>
+                <button className="ghost" title="Pick a new random seed" onClick={() => setSeed(Math.floor(Math.random() * 1e9))}>Randomise</button></div>
+              <label className="check"><input type="checkbox" checked={seedLock} onChange={e => setSeedLock(e.target.checked)} /> Lock seed (repeat the same result)</label>
               {ai.busy ? <button onClick={() => aiAbort.current?.abort()}>Cancel</button> : <button onClick={makePhotoreal}>Make hands photoreal</button>}
               {ai.url && <button className="ghost" onClick={() => setAi(a => { URL.revokeObjectURL(a.url!); return { ...a, url: null } })}>Back to 3D hands</button>}
               <button className="ghost" onClick={exportAiPasses}>Export for AI hands</button>
