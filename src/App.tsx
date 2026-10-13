@@ -16,6 +16,8 @@ type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const wrap = (v: number) => ((v + 540) % 360) - 180
 const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0 }
+/** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
+const APPLE_HERO = { tiltX: -13, tiltY: 230, rotZ: -4, zoom: 2.275, panX: 0.31, panY: -0.37 }
 const LIGHT = { preset: 'soft' as 'soft' | 'apple', intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
 const FX = { dof: false, focus: 0, blur: 2, bloom: false, grain: false }
 
@@ -204,6 +206,9 @@ export default function App() {
   }
 
   const apple = light.preset === 'apple'
+  // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
+  const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 2.4 : 1
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -256,6 +261,7 @@ export default function App() {
           {slider('Pan X', pose.panX, -1.5, 1.5, 0.01, n => setPose({ ...pose, panX: n }))}
           {slider('Pan Y', pose.panY, -1.5, 1.5, 0.01, n => setPose({ ...pose, panY: n }))}
           <button className="ghost" onClick={() => setPose(POSE)}>Reset camera</button>
+          <button className="ghost" onClick={() => setPose(APPLE_HERO)}>Apple hero angle</button>
         </section>
         <section><h2>Background</h2>
           <label className="check"><input type="checkbox" checked={transparent} onChange={e => setTransparent(e.target.checked)} /> Transparent</label>
@@ -320,14 +326,14 @@ export default function App() {
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
           <Rig zoom={pose.zoom} />
-          <Env intensity={apple ? 0.75 : light.env} mode={light.preset} />
+          <Env intensity={apple ? 0.75 * lift : light.env} mode={light.preset} />
           {apple ? <>
             {/* Apple studio: almost no fill, two tall rim strips behind and a narrow key, so edges carry the highlights. */}
-            <ambientLight intensity={0.04} />
+            <ambientLight intensity={0.04 * lift} />
             <directionalLight position={[lx, ly, lz]} intensity={light.intensity * 0.2} castShadow />
-            <rectAreaLight args={['#ffffff', 1.6 * light.intensity, 0.25, 4]} position={[-2.6, 0.4, -1.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
-            <rectAreaLight args={['#ffffff', 1.6 * light.intensity, 0.25, 4]} position={[2.6, 0.4, -1.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
-            <rectAreaLight args={['#ffffff', 0.8 * light.intensity, 0.4, 3]} position={[-2.2, 1.8, 2.4]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#ffffff', 1.6 * lift * light.intensity, 0.25, 4]} position={[-2.6, 0.4, -1.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#ffffff', 1.6 * lift * light.intensity, 0.25, 4]} position={[2.6, 0.4, -1.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#ffffff', 0.8 * lift * light.intensity, 0.4, 3]} position={[-2.2, 1.8, 2.4]} onUpdate={l => l.lookAt(0, 0, 0)} />
           </> : <>
             <ambientLight intensity={0.35 + light.intensity * 0.15} />
             <directionalLight position={[lx, ly, lz]} intensity={light.intensity * 0.6} castShadow />
