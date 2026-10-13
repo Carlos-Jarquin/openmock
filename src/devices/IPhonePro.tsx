@@ -106,25 +106,30 @@ function sdRRect(x: number, y: number, hw: number, hh: number, cx: number, cy: n
 /**
  * Camera plateau as ONE swept height field over the top of the back, fused with the frame.
  * Height above the back = plateau profile minus the frame's back roundover:
- *  - plateau profile: flat top at `rise`, then a single cosine S-curve over the shoulder width D down to 0 (convex at the top,
- *    concave fillet at the foot, zero slope at both ends), so there is no stacked lip or separate fillet band;
+ *  - plateau profile: flat top at `rise`, then a single concave fillet over the shoulder width D down to 0 (steep at the
+ *    plateau wall, tangent to the back at the foot), traced from the drawing's side view, so there is no ramp or step;
  *  - roundover: the same quarter-round (radius `edge`) the frame uses, applied to the whole surface near the body outline,
  *    so at the outline the surface turns vertical and continues straight down the frame side (tangent-continuous, no kink).
  * A vertical skirt along the outline closes the gap down to where the frame's flat side starts. Built in body coordinates,
  * back plane at z = 0, outward (towards the back) is -z.
  */
-function plateauSurface(o: { W: number; H: number; CR: number; edge: number; rise: number; D: number; edgeK: number; flat: { top: number; bottom: number; hw: number; rb: number; rt: number } }) {
-  const { W, H, CR, edge, rise, D, flat, edgeK } = o
-  const yFoot = flat.bottom - D - edge * 0.2, nx = 320, ny = Math.ceil(320 * (H / 2 - yFoot) / W)
+function plateauSurface(o: { W: number; H: number; CR: number; edge: number; rise: number; D: number; edgeK: number; m: number; flat: { top: number; bottom: number; hw: number; rb: number; rt: number } }) {
+  const { W, H, CR, edge, rise, D, flat, edgeK, m } = o
+  const yFoot = flat.bottom - D - edge * 0.2, nx = 560, ny = Math.ceil(560 * (H / 2 - yFoot) / W)
   const fcy = (flat.top + flat.bottom) / 2, fhh = (flat.top - flat.bottom) / 2
   const prof = (x: number, y: number) => {
     const d = sdRRect(x, y, flat.hw, fhh, 0, fcy, flat.rb, flat.rt)
-    // Shoulder: a cosine fall that already has a definite slope at the flat-top edge, rounded into the flat by a tight
-    // (about 0.15 mm) convex radius via a smooth minimum, so Apple's crisp inner edge line shows. Concave fillet at the foot.
-    const c = D * 0.35, nrm = (1 + Math.cos(Math.PI * c / (D + c))) / 2
-    const u = Math.min(1, Math.max(0, (d + c) / (D + c))), hs = rise * (1 + Math.cos(Math.PI * u)) / 2 / nrm
+    // Shoulder per the drawing's side view: one concave superelliptic fillet, tangent to the back at the foot (d = D)
+    // and rising steeply into the plateau's side wall at the flat edge (d = 0). Exponent m fitted to the drawing.
+    // A tight convex radius (smooth minimum, edgeK) rounds the crisp top edge.
+    if (d >= D) return 0
+    // The pure curve is vertical at d = 0; starting it 3% in caps the wall slope (about 5:1) so the height field and its
+    // normals stay clean at the flat's edge, then it is rescaled to reach exactly `rise`.
+    const e0 = 0.03, top = 1 - Math.pow(1 - Math.pow(1 - e0, m), 1 / m)
+    const s = e0 + (1 - e0) * Math.min(1, Math.max(0, d / D)), q = Math.max(0, 1 - Math.pow(1 - s, m))
+    const hs = rise * (1 - Math.pow(q, 1 / m)) / top
     const k = edgeK, a = rise, b = hs, hh = Math.max(k - Math.abs(a - b), 0) / k
-    return d >= D ? 0 : Math.min(a, b) - hh * hh * k / 4
+    return Math.min(a, b) - hh * hh * k / 4
   }
   const roll = (e: number) => e >= edge ? 0 : edge - Math.sqrt(Math.max(0, edge * edge - (edge - e) ** 2))
   const sdBody = (x: number, y: number) => sdRRect(x, y, W / 2, H / 2, 0, 0, CR, CR)
@@ -363,12 +368,12 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     // starts (EDGE below the back) and rolls in over rise + EDGE to the flat top, so the frame side flows into the shoulder as
     // one surface, replacing the frame's back roundover under the plateau. The straight wall and lower bevel hide in the body.
     const sh = mm(P.shoulder), flatR = mm(P.topR), topIn = Math.max(mm(P.cornerR) - sh, mm(0.5))
-    // Shoulder width from the side view overlay (sheet 1 at matched scale): the plateau climbs its 2.78 mm over about
-    // 2.6 mm at the top and bottom ends, not the 5 mm inset between Detail D's outlines (that inset also includes the
-    // frame's edge roundover). A wider shoulder made the plateau read far more extruded than Apple's.
-    const shD = mm(2.6)
-    const plateau = plateauSurface({ W, H, CR, edge: EDGE, rise, D: shD, edgeK: mm(0.06),
-      flat: { top: H / 2 - shD - mm(0.8), bottom: H / 2 - plH, hw: W / 2 - shD - mm(0.3), rb: flatR, rt: topIn } })
+    // Shoulder cross-section fitted to the drawing's side view (sheet 1, 1200 dpi trace of the plateau's bottom edge):
+    // a concave superellipse P.filletW wide with exponent P.filletM, rising the full 2.78 mm. The flat top starts
+    // P.flatTop below the top edge, as drawn; the frame's roundover takes over near the outline.
+    const shD = mm(P.filletW)
+    const plateau = plateauSurface({ W, H, CR, edge: EDGE, rise, D: shD, edgeK: mm(0.12), m: P.filletM,
+      flat: { top: H / 2 - mm(P.flatTop), bottom: H / 2 - plH, hw: W / 2 - shD - mm(0.3), rb: flatR, rt: topIn } })
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
