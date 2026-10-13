@@ -21,10 +21,49 @@ const wrap = (v: number) => ((v + 540) % 360) - 180
 const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
 /** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
 const APPLE_HERO = { tiltX: -18.438, tiltY: 230.375, rotZ: -3.125, zoom: 1.937, panX: 0.347, panY: -0.307, fov: 21.375 }
-const LIGHT = { preset: 'soft' as 'soft' | 'apple', intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
+type LightPreset = 'soft' | 'apple' | 'violet'
+type BgMode = 'solid' | 'gradient' | 'streaks'
+const LIGHT = { preset: 'soft' as LightPreset, intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
 // Device bodies the hands can grip, in model units (1 = 100 mm).
 const fitOf = (s: typeof IPHONE_18_PRO): HandFit => ({ W: s.body.w / 100, H: s.body.h / 100, T: s.body.t / 100, R: s.body.cornerR / 100, E: s.body.edge / 100 })
 const HAND_FITS: Partial<Record<DeviceId, HandFit>> = { ip18: fitOf(IPHONE_18_PRO), ip18max: fitOf(IPHONE_18_PRO_MAX) }
+/** Violet silhouette scene: a hand held up from the lower right against a violet backdrop with light streaks. */
+const VIOLET_CAMERA = { tiltX: 4, tiltY: -16, rotZ: -11, zoom: 1.1, panX: -0.11, panY: 0.1, fov: 26 }
+const VIOLET_BG = { c1: '#7c68ea', c2: '#a996ff', angle: 110 }
+
+/** Paints the backdrop. Streaks: the gradient plus soft diagonal light beams, the same every time. */
+function paintBg(ctx: CanvasRenderingContext2D, w: number, h: number, mode: BgMode, c1: string, c2: string, angle: number) {
+  if (mode === 'solid') ctx.fillStyle = c1
+  else {
+    const a = (angle - 90) * Math.PI / 180, cx = w / 2, cy = h / 2
+    const len = Math.abs(w * Math.cos(a)) / 2 + Math.abs(h * Math.sin(a)) / 2
+    const g = ctx.createLinearGradient(cx - Math.cos(a) * len, cy - Math.sin(a) * len, cx + Math.cos(a) * len, cy + Math.sin(a) * len)
+    g.addColorStop(0, c1); g.addColorStop(1, c2); ctx.fillStyle = g
+  }
+  ctx.fillRect(0, 0, w, h)
+  if (mode !== 'streaks') return
+  // Beams lean like the reference: from lower left up to the right, fanning slightly.
+  let seed = 7
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+  const S = Math.max(w, h)
+  ctx.save(); ctx.globalCompositeOperation = 'screen'
+  for (let i = 0; i < 34; i++) {
+    const x = (rnd() * 1.6 - 0.3) * w, bw = S * (0.004 + rnd() * rnd() * (i % 5 === 0 ? 0.22 : 0.09)), lean = 0.35 + rnd() * 0.35
+    const k = Math.min(0.9, 0.18 + rnd() * rnd() * 0.9)
+    ctx.filter = `blur(${Math.round(S * (0.001 + rnd() * 0.006))}px)`
+    ctx.globalAlpha = k
+    const g = ctx.createLinearGradient(0, h, 0, 0)
+    g.addColorStop(0, 'rgba(255,240,255,0.25)'); g.addColorStop(0.5 + rnd() * 0.4, 'rgba(255,245,255,1)'); g.addColorStop(1, 'rgba(255,240,255,0.4)')
+    ctx.fillStyle = g
+    ctx.beginPath(); ctx.moveTo(x, h); ctx.lineTo(x + bw, h); ctx.lineTo(x + bw + h * lean, 0); ctx.lineTo(x + h * lean, 0); ctx.closePath(); ctx.fill()
+  }
+  ctx.restore()
+  // Soft vignette toward the corners, darker at the edges as in studio streak backdrops.
+  const v = ctx.createRadialGradient(w * 0.55, h * 0.45, S * 0.1, w * 0.55, h * 0.45, S * 0.75)
+  v.addColorStop(0, 'rgba(255,255,255,0)'); v.addColorStop(1, 'rgba(40,20,90,0.28)')
+  ctx.fillStyle = v; ctx.fillRect(0, 0, w, h)
+}
+
 const FX = { dof: false, focus: 0, blur: 2, bloom: false, grain: false }
 
 type Grab = { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera; setDpr: (n: number) => void; dpr: number }
@@ -38,20 +77,13 @@ function GLGrab({ onReady }: { onReady: (s: Grab) => void }) {
 
 
 /** Paints the background into the scene so post effects (which drop canvas transparency) keep it. */
-function SceneBg({ mode, c1, c2, angle }: { mode: 'solid' | 'gradient'; c1: string; c2: string; angle: number }) {
+function SceneBg({ mode, c1, c2, angle }: { mode: BgMode; c1: string; c2: string; angle: number }) {
   const { scene, size } = useThree()
   useEffect(() => {
-    const w = 512, h = Math.max(1, Math.round(512 * size.height / size.width))
+    const w = mode === 'streaks' ? 1600 : 512, h = Math.max(1, Math.round(w * size.height / size.width))
     const cv = document.createElement('canvas'); cv.width = w; cv.height = h
     const ctx = cv.getContext('2d')!
-    if (mode === 'solid') ctx.fillStyle = c1
-    else {
-      const a = (angle - 90) * Math.PI / 180, cx = w / 2, cy = h / 2
-      const len = Math.abs(w * Math.cos(a)) / 2 + Math.abs(h * Math.sin(a)) / 2
-      const g = ctx.createLinearGradient(cx - Math.cos(a) * len, cy - Math.sin(a) * len, cx + Math.cos(a) * len, cy + Math.sin(a) * len)
-      g.addColorStop(0, c1); g.addColorStop(1, c2); ctx.fillStyle = g
-    }
-    ctx.fillRect(0, 0, w, h)
+    paintBg(ctx, w, h, mode, c1, c2, angle)
     const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace
     scene.background = t
     return () => { scene.background = null; t.dispose() }
@@ -137,7 +169,7 @@ export default function App() {
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
   const [seedLock, setSeedLock] = useState(false)
   const aiAbort = useRef<AbortController | null>(null)
-  const [bgMode, setBgMode] = useState<'solid' | 'gradient'>('gradient')
+  const [bgMode, setBgMode] = useState<BgMode>('gradient')
   const [bg1, setBg1] = useState('#dfe7ff')
   const [bg2, setBg2] = useState('#f7d9e8')
   const [angle, setAngle] = useState(135)
@@ -214,7 +246,7 @@ export default function App() {
       await new Promise(r => requestAnimationFrame(r))
       const passes = await renderPasses(t, hands.tone)
       const res = await runComfy(passes, { guide: ai.guide, seed: runSeed, onStatus: setStatus, signal: ctl.signal })
-      const out = composite(passes, res, { shadows: ai.shadows })
+      const out = composite(passes, res, { shadows: ai.shadows, silhouette: hands.tone === 'silhouette' })
       const url = URL.createObjectURL(await new Promise<Blob>(r => out.toBlob(b => r(b!), 'image/png')))
       setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return { ...a, busy: false, url } })
       setStatus(`Photoreal hands ready at ${passes.w} × ${passes.h}. Export PNG saves this picture. Change anything to go back to 3D.`)
@@ -242,26 +274,24 @@ export default function App() {
     const w = gl.domElement.width, h = gl.domElement.height
     const out = document.createElement('canvas'); out.width = w; out.height = h
     const ctx = out.getContext('2d')!
-    if (!transparent) {
-      if (bgMode === 'solid') ctx.fillStyle = bg1
-      else {
-        const a = (angle - 90) * Math.PI / 180, cx = w / 2, cy = h / 2
-        const len = Math.abs(w * Math.cos(a)) / 2 + Math.abs(h * Math.sin(a)) / 2
-        const g = ctx.createLinearGradient(cx - Math.cos(a) * len, cy - Math.sin(a) * len, cx + Math.cos(a) * len, cy + Math.sin(a) * len)
-        g.addColorStop(0, bg1); g.addColorStop(1, bg2); ctx.fillStyle = g
-      }
-      ctx.fillRect(0, 0, w, h)
-    }
+    if (!transparent) paintBg(ctx, w, h, bgMode, bg1, bg2, angle)
     ctx.drawImage(gl.domElement, 0, 0)
     t.setDpr(prev)
     const a = document.createElement('a'); a.download = `openmock-${w}x${h}.png`; a.href = out.toDataURL('image/png'); a.click()
     setStatus(`Exported ${w} × ${h} PNG.`)
   }
 
-  const apple = light.preset === 'apple'
+  const apple = light.preset === 'apple', violet = light.preset === 'violet'
+  const violetScene = () => {
+    setLight(l => ({ ...l, preset: 'violet', intensity: 1.6, shadow: 0 }))
+    setBgMode('streaks'); setBg1(VIOLET_BG.c1); setBg2(VIOLET_BG.c2); setAngle(VIOLET_BG.angle); setTransparent(false)
+    if (HAND_FITS[device]) setHands({ pose: 'hold', tone: 'silhouette' })
+    else { setDevice('ip18'); setHands({ pose: 'hold', tone: 'silhouette' }) }
+    setOpts(o => ({ ...o, finish: 'black' })); setPose(VIOLET_CAMERA)
+  }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -281,6 +311,10 @@ export default function App() {
           <button onClick={() => fileInput.current?.click()}>Choose image or video</button>
           <input ref={fileInput} type="file" accept="image/*,video/*" hidden onChange={e => e.target.files?.[0] && loadFile(e.target.files[0])} />
           <p className="hint">{media ? media.name : 'You can also drag a file in or paste with Cmd+V.'}</p>
+        </section>
+        <section><h2>Scenes</h2>
+          <button onClick={violetScene}>Violet silhouette</button>
+          <p className="hint">A dark hand holds the phone up against a violet backdrop with light streaks. Change the colours under Background.</p>
         </section>
         <section><h2>Device</h2>
           <div className="seg">{DEVICES.map(d => <button key={d.id} className={d.id === device ? 'on' : ''} onClick={() => { setDevice(d.id); if (d.defaultFinish && !(d.finishes && opts.finish in d.finishes)) setOpts(o => ({ ...o, finish: d.defaultFinish! })) }}>{d.label}</button>)}</div>
@@ -341,18 +375,19 @@ export default function App() {
         <section><h2>Background</h2>
           <label className="check"><input type="checkbox" checked={transparent} onChange={e => setTransparent(e.target.checked)} /> Transparent</label>
           {!transparent && <>
-            <div className="seg"><button className={bgMode === 'solid' ? 'on' : ''} onClick={() => setBgMode('solid')}>Solid</button><button className={bgMode === 'gradient' ? 'on' : ''} onClick={() => setBgMode('gradient')}>Gradient</button></div>
+            <div className="seg"><button className={bgMode === 'solid' ? 'on' : ''} onClick={() => setBgMode('solid')}>Solid</button><button className={bgMode === 'gradient' ? 'on' : ''} onClick={() => setBgMode('gradient')}>Gradient</button><button className={bgMode === 'streaks' ? 'on' : ''} onClick={() => setBgMode('streaks')}>Streaks</button></div>
             <label className="row"><span>Colour 1</span><input type="color" value={bg1} onChange={e => setBg1(e.target.value)} /><input className="hex" value={bg1} onChange={e => setBg1(e.target.value)} /></label>
-            {bgMode === 'gradient' && <>
+            {bgMode !== 'solid' && <>
               <label className="row"><span>Colour 2</span><input type="color" value={bg2} onChange={e => setBg2(e.target.value)} /><input className="hex" value={bg2} onChange={e => setBg2(e.target.value)} /></label>
               {slider('Angle', angle, 0, 360, 1, setAngle, '°')}
             </>}
           </>}
         </section>
         <section><h2>Lighting</h2>
-          <div className="seg">{([['soft', 'Soft studio'], ['apple', 'Apple studio']] as const).map(([k, l]) =>
+          <div className="seg">{([['soft', 'Soft studio'], ['apple', 'Apple studio'], ['violet', 'Violet rim']] as const).map(([k, l]) =>
             <button key={k} className={light.preset === k ? 'on' : ''} onClick={() => setLight({ ...light, preset: k })}>{l}</button>)}</div>
           {apple && <p className="hint">Dark room with a few strip lights, like Apple's product shots. Looks best on a dark background.</p>}
+          {violet && <p className="hint">Low violet fill with lavender rim lights behind, so hands read as silhouettes and the screen stays bright.</p>}
           {slider('Intensity', light.intensity, 0, 4, 0.05, n => setLight({ ...light, intensity: n }))}
           {slider('Direction', light.azimuth, -180, 180, 1, n => setLight({ ...light, azimuth: n }), '°')}
           {slider('Height', light.elevation, 5, 90, 1, n => setLight({ ...light, elevation: n }), '°')}
@@ -401,8 +436,16 @@ export default function App() {
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
           <Rig zoom={pose.zoom} fov={pose.fov} />
-          <Env intensity={apple ? 0.75 * lift : light.env} mode={light.preset} />
-          {apple ? <>
+          <Env intensity={apple ? 0.75 * lift : violet ? 0.35 : light.env} mode={light.preset === 'violet' ? 'apple' : light.preset} />
+          {violet ? <>
+            {/* Violet rim: dim violet fill, a soft key on the screen, two lavender rims behind for the silhouette edge. */}
+            <ambientLight color="#6f5bd6" intensity={0.12} />
+            <directionalLight position={[lx, ly, lz]} intensity={light.intensity * 0.15} castShadow />
+            <rectAreaLight args={['#ffffff', 0.5 * light.intensity, 2, 3]} position={[-1.2, 1.2, 3]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#e2d8ff', 4 * light.intensity, 0.4, 4]} position={[2.4, 0.6, -1.8]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#b9a6ff', 1.8 * light.intensity, 0.4, 4]} position={[-2.4, 1.2, -1.6]} onUpdate={l => l.lookAt(0, 0, 0)} />
+            <rectAreaLight args={['#c8b8ff', 1.2 * light.intensity, 3, 0.5]} position={[0.5, -2.6, -1]} onUpdate={l => l.lookAt(0, 0, 0)} />
+          </> : apple ? <>
             {/* Apple studio: almost no fill, two tall rim strips behind and a narrow key, so edges carry the highlights. */}
             <ambientLight intensity={0.04 * lift} />
             <directionalLight position={[lx, ly, lz]} intensity={light.intensity * 0.2} castShadow />

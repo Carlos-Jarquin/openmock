@@ -9,8 +9,8 @@ import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 
-export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch'
-export const HAND_POSES: [HandPose, string][] = [['off', 'Off'], ['right', 'Right hand'], ['left', 'Left hand'], ['landscape', 'Two hands'], ['pinch', 'Present']]
+export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold'
+export const HAND_POSES: [HandPose, string][] = [['off', 'Off'], ['right', 'Right hand'], ['left', 'Left hand'], ['landscape', 'Two hands'], ['pinch', 'Present'], ['hold', 'Hold up']]
 export const SKIN_TONES: Record<string, { label: string; color: string; sheen: string }> = {
   light: { label: 'Light', color: '#f0c8ae', sheen: '#ffd9cf' },
   fair: { label: 'Fair', color: '#dfa98a', sheen: '#ffcbb8' },
@@ -18,6 +18,7 @@ export const SKIN_TONES: Record<string, { label: string; color: string; sheen: s
   olive: { label: 'Olive', color: '#9f714f', sheen: '#d9a07c' },
   brown: { label: 'Brown', color: '#77503a', sheen: '#b9806a' },
   deep: { label: 'Deep', color: '#4a2f22', sheen: '#8a5a4a' },
+  silhouette: { label: 'Silhouette', color: '#2b2346', sheen: '#a894ff' },
 }
 /** Device body in model units (1 = 100 mm): width, height, thickness, corner radius, edge fillet. */
 export interface HandFit { W: number; H: number; T: number; R: number; E: number }
@@ -71,6 +72,15 @@ function plans(pose: HandPose, f: HandFit): HandPlan[] {
     thumb: { oppose: 0, abduct: 0, curl: [0, 0, 0], tip: v3(hw + 0.055, -hh * 0.05, ht * 0.2) },
   }
   if (pose === 'right') return [grip]
+  if (pose === 'hold') {
+    const hold = (y: number, spread: number): FingerPlan => ({ curl: [0, 20, 6, 4], spread, tip: v3(-hw - 0.075, y, ht * 0.1) })
+    // Held up from the lower right: palm behind the lower right of the phone, the wrist dropping out of frame,
+    // fingertips curling round the left edge and the thumb on the right frame.
+    const g = (globalThis as { __holdTweak?: Partial<HandPlan> }).__holdTweak
+    return [{ ...grip, knuckle: v3(hw + 0.08, -hh * 0.3, -ht - 0.12), F: v3(-0.25, 0.9, -0.38), N: v3(-0.8, 0.05, 0.55), seat: 0.006,
+      fingers: [hold(hh * 0.05, 3), hold(-hh * 0.15, 0), hold(-hh * 0.35, -3), hold(-hh * 0.55, -6)],
+      thumb: { oppose: 0, abduct: 0, curl: [0, 0, 0], tip: v3(hw + 0.05, hh * 0.18, ht * 0.25) }, ...(import.meta.env.DEV ? g : {}) }]
+  }
   if (pose === 'left') return [mirror(grip)]
   if (pose === 'landscape') {
     // The rig turns the device 90 degrees, so its bottom end is on the right. Each hand cups one end from below:
@@ -111,6 +121,11 @@ function pores() {
 }
 function skinMaterial(tone: string) {
   const t = SKIN_TONES[tone] ?? SKIN_TONES.fair
+  // Silhouette: near-black violet skin that only lights at grazing angles, so it reads as a rim-lit shape.
+  if (tone === 'silhouette') return new THREE.MeshPhysicalMaterial({
+    color: t.color, roughness: 0.7, roughnessMap: pores(), metalness: 0, specularIntensity: 0.25,
+    sheen: 1, sheenColor: new THREE.Color(t.sheen), sheenRoughness: 0.35,
+  })
   // Physically based skin: satin roughness with pores and a warm sheen for the soft rim glow. No transmission:
   // its screen-space refraction drew dark lines along the fingers where they sit close to the phone.
   return new THREE.MeshPhysicalMaterial({

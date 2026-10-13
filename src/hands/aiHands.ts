@@ -24,6 +24,10 @@ const TONE_WORDS: Record<string, string> = {
   light: 'very light, fair', fair: 'fair', medium: 'medium, lightly tanned', olive: 'olive', brown: 'brown', deep: 'deep dark brown',
 }
 export function handPrompt(tone: string) {
+  // Silhouette: ask for a plain backlit hand with skin detail; composite() grades it to the dark violet look.
+  if (tone === 'silhouette') return 'Photorealistic low-key studio photograph of an adult hand holding a smartphone upright, strongly backlit, ' +
+    'soft rim light along the fingers and the edge of the hand, the front of the hand in shadow, natural skin texture, knuckles and creases, ' +
+    'relaxed natural grip, sharp focus. No rings, no jewellery, no watch, no sleeve, no text.'
   const t = TONE_WORDS[tone] ?? SKIN_TONES[tone]?.label.toLowerCase() ?? 'natural'
   return `Photorealistic studio product photograph of an adult's hand with ${t} skin holding a smartphone, like Apple's iPhone product shots. ` +
     'Natural skin with fine texture and pores, realistic knuckles, creases and clean short fingernails, relaxed natural grip, ' +
@@ -201,7 +205,15 @@ export async function runComfy(p: Passes, opts: { guide: Guide; seed: number; on
 
 /** The final picture: the live render, then the AI hands cut by Openmock's own full-resolution soft mask, minus anywhere
  * the phone is in front. Optional contact shadows multiply in the AI's darkening just outside the hands. */
-export function composite(p: Passes, ai: AiResult, opts: { shadows: boolean }) {
+/** Silhouette grade: AI skin luminance mapped from a dark violet shadow up to a lavender rim. */
+const GRADE = { lo: [30, 23, 52], hi: [196, 178, 255] }
+function grade(d: Uint8ClampedArray) {
+  for (let i = 0; i < d.length; i += 4) {
+    const l = (0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]) / 255, t = Math.pow(l, 2.4) * 0.75
+    for (let k = 0; k < 3; k++) d[i + k] = GRADE.lo[k] * (0.7 + l * 0.6) + (GRADE.hi[k] - GRADE.lo[k]) * t
+  }
+}
+export function composite(p: Passes, ai: AiResult, opts: { shadows: boolean; silhouette?: boolean }) {
   const { w, h } = p, out = canvas(w, h), o = out.getContext('2d')!
   o.drawImage(p.beauty, 0, 0)
   const gen = scaled(Object.assign(canvas(ai.full.naturalWidth, ai.full.naturalHeight)), w, h)
@@ -235,6 +247,7 @@ export function composite(p: Passes, ai: AiResult, opts: { shadows: boolean }) {
   wx.putImageData(W2, 0, 0)
   const soft = canvas(w, h), sx = soft.getContext('2d')!; sx.filter = `blur(${Math.max(1, w / 900).toFixed(1)}px)`; sx.drawImage(wide, 0, 0)
   const D = sx.getImageData(0, 0, w, h).data
+  if (opts.silhouette) grade(G.data)   // after the skin test above, which needs the AI's natural colours
   for (let i = 0; i < B.data.length; i += 4) {
     // Under the 3D hand the base is the clean plate, so no CG skin survives anywhere.
     const m = Math.min(1, M[i] / 255 * 4)   // grown a couple of pixels, so no anti-aliased CG edge is left
