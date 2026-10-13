@@ -32,32 +32,47 @@ const ISL = { w: 126, h: 37, top: 14 }
 const SKETCH = params.get('style') === 'sketch' // ?style=sketch: flat illustration look
 const stay = { on: params.has('stay') } // stay at angle: no ease back, screen usable while tilted
 
-/** iOS status bar: time in the left ear, signal, Wi-Fi and battery in the right, centred on the island. */
-function StatusBar({ islandCy, islandW, tone }: { islandCy: number; islandW: number; tone: 'dark' | 'light' }) {
+// Measured from two native iPhone 16 Pro screenshots (1206x2622 at 3x), compact-island layout, in pt:
+// time + glyph group centred at x 73.8, right cluster (signal, Wi-Fi, battery) centred at x 327.3, centre line y 32.3.
+// Signal 19x13.3 (bars 3.33 wide on 5.33 pitch), Wi-Fi 16x12, battery body 24.7x13.3 with a 1x3.3 cap, 8 pt gaps.
+const SB_PCT = params.get('battery') !== 'plain' // iOS 18 battery with the percentage inside (default on)
+const SB_LEVEL = Math.max(0, Math.min(100, Number(params.get('level') ?? 88)))
+const SB_CY = 32.3, SB_LEFT_CX = 65, SB_RIGHT_CX_FROM_RIGHT = 402 - 327.3 // time alone sits where the device draws it (43.3 to 86.7 pt)
+
+/** iOS status bar: time centred in the left ear, signal, Wi-Fi and battery centred in the right, on the island centre line. */
+function StatusBar({ tone }: { islandCy: number; islandW: number; tone: 'dark' | 'light' }) {
   const [now, setNow] = useState(() => new Date())
   useEffect(() => { const i = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(i) }, [])
   const time = `${now.getHours() % 12 || 12}:${String(now.getMinutes()).padStart(2, '0')}`
   const c = tone === 'dark' ? '#000' : '#fff'
-  const ear = (CSS_W - islandW) / 2
-  // time and icons are each centred in their ear, vertically on the island's centre line
-  const box = { position: 'absolute' as const, top: islandCy - 11, height: 22, width: ear, display: 'flex', alignItems: 'center', justifyContent: 'center' }
+  const lvl = SB_LEVEL / 100
+  const W = 78 // right cluster width: 19 + 8 + 16 + 8 + 24.7 + 1.3 + 1
   return (
-    <div style={{ position: 'absolute', left: 0, top: 0, width: CSS_W, height: STATUS_H, pointerEvents: 'none', color: c,
-      font: '600 17px/22px -apple-system, system-ui, "SF Pro Text", "Helvetica Neue", sans-serif', letterSpacing: -0.43 }}>
-      <div style={{ ...box, left: 0 }}>{time}</div>
-      <div style={{ ...box, right: 0, gap: 7 }}>
-        <svg width="19" height="12" viewBox="0 0 19 12" fill={c} aria-hidden>
-          <rect x="0" y="8" width="3.2" height="4" rx="0.8" /><rect x="5" y="5.5" width="3.2" height="6.5" rx="0.8" />
-          <rect x="10" y="3" width="3.2" height="9" rx="0.8" /><rect x="15" y="0" width="3.2" height="12" rx="0.8" /></svg>
-        <svg width="17" height="12" viewBox="0 0 17 12" fill={c} aria-hidden>
-          <path d="M8.5 2.3c2.4 0 4.6.9 6.3 2.5l1.2-1.2C14 1.6 11.4.6 8.5.6S3 1.6 1 3.6l1.2 1.2c1.7-1.6 3.9-2.5 6.3-2.5z" />
-          <path d="M8.5 5.6c1.5 0 2.9.6 4 1.6l1.2-1.2c-1.4-1.3-3.2-2.1-5.2-2.1S4.7 4.7 3.3 6l1.2 1.2c1.1-1 2.5-1.6 4-1.6z" />
-          <path d="M8.5 8.9c.7 0 1.3.3 1.8.7L8.5 11.5 6.7 9.6c.5-.4 1.1-.7 1.8-.7z" /></svg>
-        <svg width="27" height="13" viewBox="0 0 27 13" aria-hidden>
-          <rect x="0.5" y="0.5" width="23" height="12" rx="3.8" fill="none" stroke={c} strokeOpacity="0.35" />
-          <rect x="2" y="2" width="20" height="9" rx="2.5" fill={c} />
-          <path d="M25 4.5v4c.8-.3 1.3-1.1 1.3-2s-.5-1.7-1.3-2z" fill={c} fillOpacity="0.4" /></svg>
-      </div>
+    <div style={{ position: 'absolute', left: 0, top: 0, width: CSS_W, height: STATUS_H, pointerEvents: 'none', color: c }}>
+      <div style={{ position: 'absolute', left: SB_LEFT_CX - 60, width: 120, top: SB_CY - 11, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        font: '600 17px/22px -apple-system, system-ui, "SF Pro Text", "Helvetica Neue", sans-serif', letterSpacing: -0.3 }}>{time}</div>
+      <svg width={W} height="14" viewBox={`0 0 ${W} 14`} aria-hidden style={{ position: 'absolute', left: CSS_W - SB_RIGHT_CX_FROM_RIGHT - W / 2, top: SB_CY - 7 }}>
+        <defs><mask id="sb-pct" maskUnits="userSpaceOnUse">
+          <rect x="0" y="0" width={W} height="14" fill="#fff" />
+          {SB_PCT && <text x={51 + 12.35} y="10.9" textAnchor="middle" fill="#000" style={{ font: '700 11px -apple-system, system-ui, "SF Pro Text", sans-serif', letterSpacing: -0.2 }}>{SB_LEVEL}</text>}
+        </mask></defs>
+        {/* signal: bottoms at 13.4, tops measured */}
+        {[4.3, 3.3, 1.6, 0].map((t, i) => <rect key={i} x={i * 5.33} y={t + 0.4} width="3.33" height={13 - t} rx="1" fill={c} />)}
+        {/* Wi-Fi 16 x 12 */}
+        <g transform="translate(27 1)" fill={c}>
+          <path d="M8 0C11.1 0 13.9 1.2 16 3.2L14.6 4.6C12.9 2.9 10.6 2 8 2S3.1 2.9 1.4 4.6L0 3.2C2.1 1.2 4.9 0 8 0z" />
+          <path d="M8 4.1c2 0 3.8.8 5.1 2L11.7 7.5C10.7 6.6 9.4 6 8 6S5.3 6.6 4.3 7.5L2.9 6.1C4.2 4.9 6 4.1 8 4.1z" />
+          <path d="M8 8.2c1 0 1.9.4 2.6 1L8 12 5.4 9.2C6.1 8.6 7 8.2 8 8.2z" /></g>
+        {/* battery: body 24.7 x 13.3, cap 1 x 3.3 */}
+        {SB_PCT ? <g mask="url(#sb-pct)">
+          <rect x="51" y="0.35" width="24.7" height="13.3" rx="4.2" fill={c} fillOpacity="0.4" />
+          <clipPath id="sb-lvl"><rect x="51" y="0" width={24.7 * lvl} height="14" /></clipPath>
+          <rect x="51" y="0.35" width="24.7" height="13.3" rx="4.2" fill={c} clipPath="url(#sb-lvl)" />
+        </g> : <g>
+          <rect x="51.5" y="0.85" width="23.7" height="12.3" rx="3.8" fill="none" stroke={c} strokeOpacity="0.35" />
+          <rect x="53" y="2.35" width={20.7 * lvl} height="9.3" rx="2.4" fill={c} /></g>}
+        <path d="M77 5.35v3.3c.6-.2 1-.9 1-1.65s-.4-1.45-1-1.65z" fill={c} fillOpacity="0.4" />
+      </svg>
     </div>
   )
 }
@@ -145,6 +160,12 @@ function Rig({ onFaceOn, faceOn }: { onFaceOn: (v: boolean) => void; faceOn: boo
 }
 
 export default function LivePhone() {
+  // ?sbtest: flat 1:1 status bar with the compact island, for pixel checks against device screenshots
+  if (params.has('sbtest')) return (
+    <div style={{ position: 'relative', width: CSS_W, height: 60, background: params.get('sbtest') || '#333', overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', left: (CSS_W - ISL.w) / 2, top: ISL.top, width: ISL.w, height: ISL.h, borderRadius: ISL.h / 2, background: '#000' }} />
+      <StatusBar islandCy={ISL.top + ISL.h / 2} islandW={ISL.w} tone={SB === 'dark' ? 'dark' : 'light'} />
+    </div>)
   const [faceOn, setFaceOn] = useState(!HOLD || stay.on || (START_YAW === 0 && START_PITCH === 0))
   const [stayOn, setStayOn] = useState(stay.on)
   useEffect(() => { stay.on = stayOn }, [stayOn])
