@@ -300,8 +300,9 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   // Brushed aluminium frame: anisotropic highlight along the band, streaky roughness and faint grooves.
   const darkF = new THREE.Color(f.frame).getHSL({ h: 0, s: 0, l: 0 }).l < 0.35
   const bR = brushedRoughness(), bN = brushedNormal(), fR = frostRoughness(), sR = smudgeRoughness()
-  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.3} roughness={0.5} roughnessMap={bR} normalMap={bN} normalScale={NORMAL_SCALE}
-    anisotropy={0.3} clearcoat={0.04} clearcoatRoughness={0.4} envMapIntensity={darkF ? 0.45 : 0.75} specularIntensity={darkF ? 0.5 : 0.8} />
+  // The brushed roughness/normal maps caused large blotches on the frame at this scale, so the frame is a clean satin.
+  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.3} roughness={0.5}
+    anisotropy={0.3} clearcoat={0.04} clearcoatRoughness={0.4} envMapIntensity={darkF ? 0.45 : 0.5} specularIntensity={darkF ? 0.5 : 0.6} />
   // Plateau: same bead-blasted aluminium but matte, so the wide shoulder rolls off softly with no hot streak.
   const plateauMetal = <meshPhysicalMaterial color={f.frame} metalness={0.25} roughness={0.66}
     envMapIntensity={darkF ? 0.45 : 0.7} specularIntensity={darkF ? 0.5 : 0.75} />
@@ -350,12 +351,23 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       sh.uniforms.uBand = { value: yb }; sh.uniforms.uOff = { value: 0 }
       sh.vertexShader = 'uniform float uOff;\nvarying float vDevY;\nvarying float vNz;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvDevY = position.y + uOff; vNz = objectNormal.z;')
       sh.fragmentShader = 'uniform vec4 uBand;\nvarying float vDevY;\nvarying float vNz;\n' + sh.fragmentShader.replace('void main() {',
-        'void main() {\n  if (!((vDevY > uBand.x && vDevY < uBand.y) || (vDevY > uBand.z && vDevY < uBand.w)) || abs(vNz) > 0.9) discard;')
+        'void main() {\n  if (!((vDevY > uBand.x && vDevY < uBand.y) || (vDevY > uBand.z && vDevY < uBand.w)) || abs(vNz) > 0.93) discard;')
       m.userData.sh = sh
     }
     m.customProgramCacheKey = () => 'om-band'
     return m
   }, [bandColour, s, H])
+  // Inner edge of the plateau: a thin crisp line where the shoulder meets the flat top (normal-band overlay on the plateau).
+  const creaseMat = useMemo(() => {
+    const m = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(f.frame).lerp(new THREE.Color('#ffffff'), darkF ? 0.12 : 0.3),
+      metalness: 0.5, roughness: 0.3, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, depthFunc: THREE.LessEqualDepth })
+    m.onBeforeCompile = sh => {
+      sh.vertexShader = 'varying float vNz;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvNz = objectNormal.z;')
+      sh.fragmentShader = 'varying float vNz;\n' + sh.fragmentShader.replace('void main() {', 'void main() {\n  if (abs(vNz) < 0.93 || abs(vNz) > 0.975) discard;')
+    }
+    m.customProgramCacheKey = () => 'om-crease'
+    return m
+  }, [f.frame, darkF])
   const plY = H / 2 - (plH + mm(P.shoulder)) / 2
   const bandMats = useMemo(() => [0, plY].map(y => {
     const mat = bandMaterial.clone(); mat.onBeforeCompile = sh => { bandMaterial.onBeforeCompile(sh, null as never); sh.uniforms.uOff.value = y }
@@ -391,6 +403,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* Antenna bands run over the plateau's outer shoulder and stop at the inner edge of the flat top (normal-based cut). */}
       {bandOn(g.plateau, plY, zb)}
       {bandOn(g.fillet, plY, zb)}
+      <mesh geometry={g.plateau} position={[0, plY, zb]} renderOrder={2} material={creaseMat} />
       {s.lens.at.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}><RearLens d={lensD} rise={lensRise} frame={f.frame} /></group>))}
       <mesh position={[bx(s.flash.bx), ty(s.flash.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.flash.d / 2), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>
