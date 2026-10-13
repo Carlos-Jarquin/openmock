@@ -53,6 +53,8 @@ const leadOff = (sb: SbCfg) => { const g = sbGlyph(sb)
 export function islandLayout(sb: SbCfg, CSS_W: number) {
   const dx = (CSS_W - 402) / 2
   const main = !sbAct(sb) ? { l: 138, r: 264 } : sb.bubble ? { l: 108.3, r: 263.7 } : sb.act ? { l: 107.3, r: 304.7 } : { l: 109.7, r: 285.3 }
+  // Lock screen: the island starts further right (114.25 measured; the island div snaps to whole CSS px, so it draws at 114; measured on the 3x ROGERS lock screen; right edge 263.75 unchanged)
+  if (sb.islandIcon === 'lock') main.l = LOCK.islandL
   return { l: main.l + dx, r: main.r + dx, top: ISL.top, h: ISL.h, bubble: sb.bubble ? { l: 271.7 + dx, d: 36.7 } : null, dx }
 }
 
@@ -69,6 +71,15 @@ const NavArrow = ({ cx, cy }: { cx: number; cy: number }) => { const hw = NAV.w 
   return <svg {...snapBox(cx - hw - 2, cy - hh - 2, 1, -hw - 2, -hh - 2, NAV.w + 4, NAV.h + 4)}>
     <path d={`M0 ${-hh + i * 1.25}L${hw - i * 1.17} ${hh - i - 0.23}L0 ${-hh + NAV.notch - i * 1.34}L${-hw + i * 1.17} ${hh - i - 0.23}z`} fill={NAV.color} stroke={NAV.color} strokeWidth={sw} strokeLinejoin="round" /></svg> }
 
+// Lock-screen padlock in the island, traced from the 3x ROGERS lock screen: ink 11.13 x 14.7 pt, body 126.77-137.90 x 31.2-39.5 (r 1.5),
+// shackle stroke 1.35 on a 3.5 pt centre radius (outer top y 24.87, outer legs 128.17-136.53), centred x 132.33, flat grey #d5d5d5.
+// Positioned from the island's left edge (body 12.52 pt in).
+export const LOCK = { islandL: 114.25, dx: 12.52, bw: 11.13, by: 31.35, bh: 8.2, br: 1.5, sr: 3.5, sw: 1.35, top: 25.0, color: '#d5d5d5' }
+const Padlock = ({ l }: { l: number }) => { const x0 = l + LOCK.dx, cx = LOCK.bw / 2, ay = LOCK.top + LOCK.sw / 2 + LOCK.sr
+  return <svg {...snapBox(x0 - 1, LOCK.top - 1, 1, -1, LOCK.top - 1, LOCK.bw + 2, LOCK.by + LOCK.bh - LOCK.top + 2)}>
+    <path d={`M${cx - LOCK.sr} ${LOCK.by + 0.5}V${ay}a${LOCK.sr} ${LOCK.sr} 0 0 1 ${2 * LOCK.sr} 0V${LOCK.by + 0.5}`} fill="none" stroke={LOCK.color} strokeWidth={LOCK.sw} />
+    <rect x="0" y={LOCK.by} width={LOCK.bw} height={LOCK.bh} rx={LOCK.br} fill={LOCK.color} /></svg> }
+
 /** The Dynamic Island with an optional timer-style live activity and a minimal bubble. */
 export function Island({ sb, w }: { sb: SbCfg; w: number }) {
   const L = islandLayout(sb, w)
@@ -80,6 +91,7 @@ export function Island({ sb, w }: { sb: SbCfg; w: number }) {
     </div>
     {/* drawn in page coordinates, outside the island div, so its sub-pixel position is exact */}
     {sbAct(sb) && sb.islandIcon === 'arrow' && <NavArrow cx={NAV.cx + L.dx} cy={NAV.cy} />}
+    {sb.islandIcon === 'lock' && <Padlock l={L.l} />}
     {L.bubble && <div style={{ position: 'absolute', left: L.bubble.l, top: L.top, width: L.bubble.d, height: L.bubble.d, borderRadius: '50%', background: '#000', pointerEvents: 'none' }}>
       {sb.bubbleIcon === 'arrow' && <svg width="13" height="14" viewBox="0 0 13 14" style={{ position: 'absolute', left: (L.bubble.d - 12.3) / 2, top: (L.bubble.d - 13.3) / 2 - 0.4 }}>
         <path d="M6.5 0.3L12.6 13.4 6.5 10.2 0.4 13.4z" fill="#3e8bff" /></svg>}
@@ -100,6 +112,10 @@ function snapBox(left: number, top: number, k: number, vx: number, vy: number, v
   return { width: w, height: h, viewBox: `${vx - (left - l) / k} ${vy - (top - t) / k} ${w / k} ${h / k}`, overflow: 'visible' as const,
     style: { position: 'absolute' as const, left: l, top: t, overflow: 'visible' as const } }
 }
+
+// Lock-screen line under the battery, measured on the 3x ROGERS lock screen: x 315.67-370.5 (54.83 wide, rounded ends),
+// y 47.0-49.26 (2.26 thick). It adds a flat +61/255 to every channel (bg 231,210,135 -> 255,255,196), i.e. white at 0.24 with plus-lighter.
+export const BLINE = { l: 315.67, w: 54.83, y: 47.0, h: 2.26, a: 0.24 }
 
 /** iOS status bar: time (or carrier) on the left, signal, network and battery on the right, on the island centre line. */
 export function StatusBar({ tone, sb, w: CSS_W, time }: { tone: 'dark' | 'light'; sb: SbCfg; w: number; time: string }) {
@@ -160,6 +176,8 @@ export function StatusBar({ tone, sb, w: CSS_W, time }: { tone: 'dark' | 'light'
           {sb.carrier ?? time.split(':').map((p, i) => i ? [<tspan key={'c' + i} dy={COLON_DY}>:</tspan>, <tspan key={'d' + i} dy={-COLON_DY}>{p}</tspan>] : <tspan key="h">{p}</tspan>)}</text>
         {!sb.carrier && sbGlyph(sb) === 'moon' && <Moon c={c} x={tw + GAP} />}{!sb.carrier && sbGlyph(sb) === 'arrow' && <Arrow c={c} x={tw + GAP} />}</g>
       </svg>
+      {sb.batteryLine && <svg {...snapBox(BLINE.l + L.dx, BLINE.y, 1, 0, 0, BLINE.w, BLINE.h)} style={{ ...snapBox(BLINE.l + L.dx, BLINE.y, 1, 0, 0, BLINE.w, BLINE.h).style, mixBlendMode: tone === 'light' ? 'plus-lighter' : 'normal' }}>
+        <rect width={BLINE.w} height={BLINE.h} rx={BLINE.h / 2} fill={tone === 'light' ? '#fff' : '#000'} fillOpacity={BLINE.a} /></svg>}
       <svg {...snapBox(rcx - W * K / 2, SB_CY - 8 * K - 0.33, K, 0, 0, W, 16)} aria-hidden>{els}</svg>
     </div>
   )

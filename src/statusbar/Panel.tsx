@@ -1,6 +1,6 @@
 // Status bar controls, shared by the /live floating panel and the studio's Status bar section.
 import { useState } from 'react'
-import { SB_DEFAULT, type SbCfg } from './config'
+import { SB_DEFAULT, SB_LOCK, SB_UNLOCK, sbLockScreen, type SbCfg } from './config'
 
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between', minHeight: 24 }
 const sub: React.CSSProperties = { ...row, paddingLeft: 14 }
@@ -25,6 +25,7 @@ export function StatusBarControls({ sb, onChange, resetKey = 0 }: { sb: SbCfg; o
   const timeOk = /^\d{1,2}:\d{2}$/.test(timeText)
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 4, font: '13px -apple-system, system-ui, sans-serif', color: '#1d1d1f' }}>
         <div style={row}>Text colour <Seg id="sb-mode" value={sb.mode} onChange={v => up({ mode: v })} opts={[['auto', 'Auto'], ['dark', 'Dark'], ['light', 'Light'], ['off', 'Off']]} /></div>
+        <Check id="sb-lockscreen" label="Lock screen (carrier, padlock, battery line)" on={sbLockScreen(sb)} set={v => { if (v) setCarrierText(sb.carrier ?? (carrierText || 'ROGERS')); up(v ? { ...SB_LOCK, carrier: sb.carrier ?? (carrierText || 'ROGERS') } : SB_UNLOCK) }} />
         <Check id="sb-carrier-on" label="Show carrier instead of time" on={sb.carrier !== null} set={v => up({ carrier: v ? carrierText || 'ROGERS' : null })} />
         {sb.carrier !== null
           ? <div style={sub}>Carrier <input id="sb-carrier" style={field} value={carrierText} onChange={e => { setCarrierText(e.target.value); up({ carrier: e.target.value }) }} /></div>
@@ -42,10 +43,12 @@ export function StatusBarControls({ sb, onChange, resetKey = 0 }: { sb: SbCfg; o
         {sb.sig >= 0 && <Check id="sb-dual" label="Dual SIM" on={sb.dual} set={v => up({ dual: v })} style={{ paddingLeft: 14 }} />}
         {sb.sig >= 0 && sb.dual && <div style={sub}>Second signal <Seg id="sb-sig2" value={sb.sig2} onChange={v => up({ sig2: v })} opts={[[0, '0'], [1, '1'], [2, '2'], [3, '3'], [4, '4']]} /></div>}
         <div style={row}>Battery <input id="sb-level" type="range" min={0} max={100} value={sb.level} onChange={e => up({ level: Number(e.target.value) })} style={{ flex: 1 }} /> <span style={{ width: 34, textAlign: 'right' }}>{sb.level}%</span></div>
+        <Check id="sb-batteryline" label="Line under battery (lock screen)" on={sb.batteryLine} set={v => up({ batteryLine: v })} style={{ paddingLeft: 14 }} />
         <Check id="sb-percent" label="Show percentage" on={sb.pct} set={v => up({ pct: v })} style={{ paddingLeft: 14 }} />
         <div style={row}>Island <Seg id="sb-island" value={sb.island} onChange={v => up({ island: v })} opts={[['compact', 'Compact'], ['activity', 'Activity']]} /></div>
         {sb.island === 'activity' && !sb.bubble && <div style={sub}>Activity text <input id="sb-act" style={field} value={sb.act} onChange={e => up({ act: e.target.value })} /></div>}
-        {sb.island === 'activity' || sb.bubble ? <div style={sub}>Island icon <Seg id="sb-islandicon" value={sb.islandIcon} onChange={v => up({ islandIcon: v })} opts={[['ring', 'Ring'], ['arrow', 'Arrow'], ['none', 'None']]} /></div> : null}
+        <div style={sub}>Island icon <Seg id="sb-islandicon" value={sb.islandIcon} onChange={v => up({ islandIcon: v })} opts={[['ring', 'Ring'], ['arrow', 'Arrow'], ['lock', 'Lock'], ['none', 'None']]} /></div>
+        {!(sb.island === 'activity' || sb.bubble) && sb.islandIcon !== 'lock' && <div style={{ ...sub, color: '#6e6e73', fontSize: 11 }}>Ring and arrow show with an activity or bubble.</div>}
         {((sb.island === 'activity' || sb.bubble) && sb.islandIcon === 'ring' || sb.bubble && sb.bubbleIcon === 'ring') && <div style={sub}>Ring <input id="sb-ring" type="range" min={0} max={100} value={Math.round(sb.ring * 100)} onChange={e => up({ ring: Number(e.target.value) / 100 })} style={{ flex: 1 }} /></div>}
         <Check id="sb-bubble" label="Bubble" on={sb.bubble} set={v => up({ bubble: v })} />
         {sb.bubble && <div style={sub}>Bubble icon <Seg id="sb-bubbleicon" value={sb.bubbleIcon} onChange={v => up({ bubbleIcon: v })} opts={[['ring', 'Ring'], ['arrow', 'Arrow'], ['none', 'None']]} /></div>}

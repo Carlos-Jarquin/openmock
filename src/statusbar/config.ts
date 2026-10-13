@@ -11,10 +11,11 @@ export type SbCfg = {
   level: number; pct: boolean
   island: 'compact' | 'activity'; act: string; ring: number
   bubble: boolean
-  islandIcon: SbIcon; bubbleIcon: SbIcon // leading icon of the expanded island / the bubble
+  islandIcon: SbIcon; bubbleIcon: SbIcon // leading icon of the expanded island / the bubble ('lock' only for the island)
+  batteryLine: boolean // lock-screen line under the battery
 }
-export type SbIcon = 'ring' | 'arrow' | 'none'
-const ICONS = ['ring', 'arrow', 'none'] as const
+export type SbIcon = 'ring' | 'arrow' | 'lock' | 'none'
+const ICONS = ['ring', 'arrow', 'lock', 'none'] as const
 const icon = (v: string | null, d: SbIcon): SbIcon => (ICONS as readonly string[]).includes(v ?? '') ? v as SbIcon : d
 
 const clampN = (v: string | null, d: number, lo: number, hi: number) => { const n = Number(v ?? d); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d }
@@ -33,12 +34,17 @@ export function parseSb(p: URLSearchParams): SbCfg {
     level: Math.round(clampN(q('level'), 88, 0, 100)), pct: q('battery') !== 'plain',
     island: q('island') === 'activity' ? 'activity' : 'compact', act: q('activity') ?? '23m', ring: clampN(q('ring'), 0.9, 0, 1),
     bubble: q('bubble') === 'on',
-    islandIcon: icon(q('islandIcon'), 'ring'), bubbleIcon: icon(q('bubbleIcon'), 'arrow'),
+    islandIcon: icon(q('islandIcon'), 'ring'), bubbleIcon: ((b: SbIcon) => b === 'lock' ? 'arrow' : b)(icon(q('bubbleIcon'), 'arrow')),
+    batteryLine: q('batteryLine') === 'on',
   }
 }
 export const SB_DEFAULT = parseSb(new URLSearchParams())
 /** The moon wins over the arrow, as on iOS (both in one slot). */
 export const sbGlyph = (c: SbCfg): 'moon' | 'arrow' | null => c.dnd ? 'moon' : c.loc ? 'arrow' : null
+/** Lock screen: carrier name, padlock in the island and the line under the battery (iOS 18 lock screen, 16 Pro). */
+export const sbLockScreen = (c: SbCfg) => c.carrier !== null && c.islandIcon === 'lock' && c.batteryLine
+export const SB_LOCK: Partial<SbCfg> = { carrier: 'ROGERS', islandIcon: 'lock', batteryLine: true }
+export const SB_UNLOCK: Partial<SbCfg> = { carrier: null, islandIcon: 'ring', batteryLine: false }
 export const sbAct = (c: SbCfg) => c.island === 'activity' || c.bubble
 
 /** Write only non-default values; other params (device, src, style...) are kept. */
@@ -56,6 +62,7 @@ export function writeSb(c: SbCfg) {
   set('activity', c.act !== d.act ? c.act : null); set('ring', c.ring !== d.ring ? String(c.ring) : null)
   set('bubble', c.bubble ? 'on' : null)
   set('islandIcon', c.islandIcon !== d.islandIcon ? c.islandIcon : null); set('bubbleIcon', c.bubbleIcon !== d.bubbleIcon ? c.bubbleIcon : null)
+  set('batteryLine', c.batteryLine ? 'on' : null)
   const qs = p.toString()
   history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash)
 }
