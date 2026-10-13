@@ -212,10 +212,17 @@ function LensStack({ r, order = 0 }: { r: number; order?: number }) {
  * Polished ring with chamfered lips, a dark recessed barrel, three glass elements at different depths with AR
  * coatings, an iris ring and a domed sapphire cover. All sizes not on the drawing are estimates. */
 function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }) {
-  const R = d / 2, w = mm(1.15), ri = R - w, c = mm(0.32), floor = mm(0.12)
+  // Ring: outer edge at the drawn 16.58 diameter; about 2 mm wide as in Apple's photos (estimate).
+  const R = d / 2, w = mm(2.0), ri = R - w, c = mm(0.32), floor = mm(0.12)
   const ring = geoOnce(`lring${d}|${rise}`, () => {
+    // Satin body of the ring: outer wall and wide flat top.
     const pts = [[R + mm(0.25), 0], [R, mm(0.25)], [R, rise - c], [R - c * 0.3, rise - c * 0.3], [R - c, rise],
-      [ri + c * 0.8, rise], [ri + c * 0.2, rise - c * 0.2], [ri, rise - c * 0.9]].map(([x, y]) => new THREE.Vector2(x, y))
+      [ri + c * 1.2, rise]].map(([x, y]) => new THREE.Vector2(x, y))
+    return new THREE.LatheGeometry(pts, 128)
+  })
+  // Brighter chamfered inner lip, cut and polished down into the barrel.
+  const lip = geoOnce(`llip${d}|${rise}`, () => {
+    const pts = [[ri + c * 1.2, rise], [ri + c * 0.5, rise - c * 0.25], [ri + c * 0.1, rise - c * 0.7], [ri, rise - c * 0.9]].map(([x, y]) => new THREE.Vector2(x, y))
     return new THREE.LatheGeometry(pts, 128)
   })
   const barrel = geoOnce(`lbar${d}|${rise}`, () => {
@@ -233,7 +240,8 @@ function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }
   const h = rise - c
   return (
     <group rotation={[-Math.PI / 2, 0, 0]}>
-      <mesh geometry={ring} castShadow><meshPhysicalMaterial color={frame} metalness={1} roughness={0.12} clearcoat={0.4} envMapIntensity={1.5} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={ring} castShadow><meshPhysicalMaterial color={frame} metalness={0.3} roughness={0.5} roughnessMap={frostRoughness()} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={lip}><meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.2} envMapIntensity={1.3} side={THREE.DoubleSide} /></mesh>
       <mesh geometry={barrel}><meshPhysicalMaterial color="#07080b" metalness={0.4} roughness={0.55} side={THREE.DoubleSide} /></mesh>
       {disc(ri * 0.98, floor + E / 3, 'floor', <meshPhysicalMaterial color="#010103" roughness={0.3} clearcoat={0.6} envMapIntensity={0.6} />)}
       {disc(ri * 0.42, floor + h * 0.12, 'e3', ar('#0e1430', [300, 480]))}
