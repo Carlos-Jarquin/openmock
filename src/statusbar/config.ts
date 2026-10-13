@@ -32,12 +32,12 @@ export function parseSb(p: URLSearchParams): SbCfg {
     wifi: Math.round(clampN(q('wifi'), 3, 0, 3)),
     sig: q('signal') === 'none' ? -1 : Math.round(clampN(q('signal'), 4, 0, 4)),
     dual: q('sim') === 'dual', sig2: Math.round(clampN(q('signal2'), 3, 0, 4)),
-    level: Math.round(clampN(q('level'), 88, 0, 100)), pct: q('battery') !== 'plain',
+    level: Math.round(clampN(q('level'), 77, 0, 100)), pct: q('battery') !== 'plain',
     island: q('island') === 'activity' ? 'activity' : 'compact', act: q('activity') ?? '23m', ring: clampN(q('ring'), 0.9, 0, 1),
     bubble: q('bubble') === 'on',
     islandIcon: icon(q('islandIcon'), 'ring'), bubbleIcon: ((b: SbIcon) => b === 'lock' ? 'arrow' : b)(icon(q('bubbleIcon'), 'arrow')),
     batteryLine: q('batteryLine') === 'on',
-    homeBar: q('homebar') === 'on',
+    homeBar: q('homebar') !== 'off', // on by default
   }
 }
 export const SB_DEFAULT = parseSb(new URLSearchParams())
@@ -65,7 +65,7 @@ export function writeSb(c: SbCfg) {
   set('bubble', c.bubble ? 'on' : null)
   set('islandIcon', c.islandIcon !== d.islandIcon ? c.islandIcon : null); set('bubbleIcon', c.bubbleIcon !== d.bubbleIcon ? c.bubbleIcon : null)
   set('batteryLine', c.batteryLine ? 'on' : null)
-  set('homebar', c.homeBar ? 'on' : null)
+  set('homebar', c.homeBar ? null : 'off')
   const qs = p.toString()
   history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash)
 }

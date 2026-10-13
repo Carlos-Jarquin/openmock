@@ -287,7 +287,7 @@ function SimTray({ frame, x, y, len, w }: { frame: string; x: number; y: number;
 }
 
 // Sketch: the front camera takes the island's exact tone (same dark toon fill, no inner lines) so the island reads as one pill.
-const ISLAND_TONE = { sketchTone: 'dark' } as const
+const ISLAND_TONE = { sketchTone: 'black' } as const // Sketch: island and lens are flat black, like the real island on a dark screen
 /** Camera lens as seen through cover glass, facing +z. r is the visible outer radius.
  * Layers: dark barrel ring, lens body, AR-coated element (thin-film iridescence for the blue/purple sheen),
  * two concentric element edges, a small iris, and a curved additive glass cap that only adds reflections. */

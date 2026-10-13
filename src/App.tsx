@@ -23,7 +23,7 @@ import { StatusBarControls } from './statusbar/Panel'
 import { useStatusComposite } from './statusbar/composite'
 import { islandSketch } from './statusbar/StatusBar'
 
-type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
+type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement; svg?: string }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const wrap = (v: number) => ((v + 540) % 360) - 180
 const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
@@ -142,7 +142,7 @@ export default function App() {
   const [device, setDevice] = useState<DeviceId>('ip18')
   const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'silver', logo: null, logoSize: 0.16, logoTint: '#8a8f99', simTray: true })
   const [media, setMedia] = useState<Media | null>(null)
-  const [sbOn, setSbOn] = useState(false) // off by default so existing exports do not change
+  const [sbOn, setSbOn] = useState(true) // on by default (Carlos, Oct 13)
   const [sb, setSb] = useState<SbCfg>(SB_DEFAULT)
   const [sbReset, setSbReset] = useState(0)
   const [pose, setPose] = useState(POSE)
@@ -194,6 +194,26 @@ export default function App() {
   // status bar on: its island is the single island, so the 3D island mesh and front lens are hidden
   const devOpts = useMemo(() => sbOn && sbSize ? { ...opts, hideIsland: true } : opts, [opts, sbOn, !!sbSize])
 
+  /** SVG markup: rasterised at 3x the Pro Max screen width (1320 px) for the screen texture; the markup is kept for SVG export. */
+  const loadSvg = useCallback((text: string, name: string, done?: string) => {
+    const doc = new DOMParser().parseFromString(text, 'image/svg+xml'), el = doc.documentElement
+    if (el.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) { flash('That SVG could not be read.', true); return }
+    const vb = el.getAttribute('viewBox')?.split(/[\s,]+/).map(Number)
+    const w0 = parseFloat(el.getAttribute('width') ?? '') || vb?.[2] || 402, h0 = parseFloat(el.getAttribute('height') ?? '') || vb?.[3] || 874
+    if (!el.getAttribute('viewBox')) el.setAttribute('viewBox', `0 0 ${w0} ${h0}`)
+    const W = 1320, H = Math.round(W * h0 / w0)
+    el.setAttribute('width', String(W)); el.setAttribute('height', String(H))
+    const src = new XMLSerializer().serializeToString(el)
+    const img = new Image()
+    img.onload = () => {
+      const c = document.createElement('canvas'); c.width = W; c.height = H; c.getContext('2d')!.drawImage(img, 0, 0, W, H)
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8
+      setMedia(m => { m?.video?.pause(); m?.texture.dispose(); return { texture: t, aspect: W / H, kind: 'image', name, svg: text } })
+      setStatus(`Loaded SVG: ${name} (rasterised at ${W} × ${H})`); if (done) flash(done)
+    }
+    img.onerror = () => flash('That SVG could not be drawn (it may use external images or fonts).', true)
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(src)
+  }, [flash])
   const loadFile = useCallback((file: File, done?: string) => {
     const url = URL.createObjectURL(file)
     if (file.type.startsWith('video/')) {
@@ -205,6 +225,8 @@ export default function App() {
         setMedia(m => { m?.video?.pause(); m?.texture.dispose(); return { texture: t, aspect: v.videoWidth / v.videoHeight, kind: 'video', name: file.name, video: v } })
         setStatus(`Loaded video: ${file.name}`); if (done) flash(done)
       }
+    } else if (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
+      file.text().then(t => loadSvg(t, file.name, done))
     } else if (file.type.startsWith('image/')) {
       new THREE.TextureLoader().load(url, t => {
         t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8
@@ -213,7 +235,7 @@ export default function App() {
         setStatus(`Loaded image: ${file.name}`); if (done) flash(done)
       }, undefined, () => flash(`Couldn't read that image (${file.type || 'unknown type'}).`, true))
     } else flash('That file type is not supported. Use an image (PNG, JPEG, WebP) or a video.', true)
-  }, [flash])
+  }, [flash, loadSvg])
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -225,13 +247,16 @@ export default function App() {
       const fromItems = Array.from(dt.items).filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter((f): f is File => !!f)
       const f = fromItems[0] ?? Array.from(dt.files).find(x => x.type.startsWith('image/') || x.type.startsWith('video/'))
       e.preventDefault()
+      // Figma "Copy as SVG" puts the markup on the clipboard as text
+      const txt = (dt.getData('image/svg+xml') || dt.getData('text/plain') || '').trim()
+      if (!f && /^(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(txt)) { loadSvg(txt, 'Pasted SVG', 'Pasted onto screen'); return }
       if (!f) { flash('The clipboard has no image. Copy an image (for example Copy as PNG in Figma), then press Cmd+V.', true); return }
       const named = f.name && f.name !== 'image.png' ? f : new File([f], `Pasted image.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type })
       loadFile(named, 'Pasted onto screen')
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
-  }, [loadFile])
+  }, [loadFile, loadSvg])
 
   const bgCss = transparent ? undefined : bgMode === 'solid' ? bg1 : `linear-gradient(${angle}deg, ${bg1}, ${bg2})`
 
@@ -288,6 +313,25 @@ export default function App() {
     const a = document.createElement('a'); a.download = `openmock-${w}x${h}.png`; a.href = out.toDataURL('image/png'); a.click()
     setStatus(`Exported ${w} × ${h} PNG.`)
   }
+  /** SVG export: the full render as an embedded PNG (not vector: lighting, shading and perspective are raster). When the
+   *  screen design came in as SVG, its original markup rides along as a hidden, named layer so it stays editable. */
+  const exportSvg = async () => {
+    const t = three.current; if (!t) return
+    const { gl } = t, size = gl.getSize(new THREE.Vector2()), prev = t.dpr
+    t.setDpr(Math.min(scale, 4096 / Math.max(size.x, size.y)))
+    for (let i = 0; i < 4; i++) await new Promise(r => requestAnimationFrame(r))
+    const w = gl.domElement.width, h = gl.domElement.height
+    const out = document.createElement('canvas'); out.width = w; out.height = h
+    const ctx = out.getContext('2d')!
+    if (!transparent) paintBg(ctx, w, h, bgMode, bg1, bg2, angle)
+    ctx.drawImage(ai.url ? await new Promise<HTMLImageElement>(r => { const i = new Image(); i.onload = () => r(i); i.src = ai.url! }) : gl.domElement, 0, 0, w, h)
+    t.setDpr(prev)
+    const png = out.toDataURL('image/png')
+    const design = media?.svg ? `\n  <g id="screen-design-vector" display="none"><!-- the pasted screen design, as vector -->\n${media.svg.replace(/^<\?xml[^>]*>\s*/, '')}\n  </g>` : ''
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">\n  <title>Openmock render</title>\n  <image id="render" width="${w}" height="${h}" href="${png}"/>${design}\n</svg>\n`
+    const a = document.createElement('a'); a.download = `openmock-${w}x${h}.svg`; a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' })); a.click()
+    setStatus(`Exported ${w} × ${h} SVG (the render is an embedded PNG${media?.svg ? '; your SVG screen design is included as a hidden vector layer' : ''}).`)
+  }
 
   const apple = light.preset === 'apple', violet = light.preset === 'violet'
   const violetScene = () => {
@@ -317,7 +361,7 @@ export default function App() {
         <h1>Openmock</h1>
         <section><h2>Media</h2>
           <button onClick={() => fileInput.current?.click()}>Choose image or video</button>
-          <input ref={fileInput} type="file" accept="image/*,video/*" hidden onChange={e => e.target.files?.[0] && loadFile(e.target.files[0])} />
+          <input ref={fileInput} type="file" accept="image/*,video/*,.svg" hidden onChange={e => e.target.files?.[0] && loadFile(e.target.files[0])} />
           <p className="hint">{media ? media.name : 'You can also drag a file in or paste with Cmd+V.'}</p>
         </section>
         <section><h2>Scenes</h2>
@@ -456,6 +500,7 @@ export default function App() {
         <section><h2>Export</h2>
           <div className="seg">{[1, 2, 4].map(s => <button key={s} className={s === scale ? 'on' : ''} onClick={() => setScale(s)}>{s}x</button>)}</div>
           <button onClick={exportPng}>Export PNG</button>
+          <button className="ghost" onClick={exportSvg}>Export SVG</button>
           <p className="hint">Longest edge is capped at 4096 px.</p>
         </section>
         <p className="status">{status}</p>

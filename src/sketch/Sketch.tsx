@@ -121,7 +121,7 @@ const matColour = (m: THREE.Material) => (m as THREE.MeshBasicMaterial).color as
  *  sketchEdges: false    no automatic crease lines (open surfaces whose border is not a real edge)
  *  sketchLines: Float32Array  extra thin line segments in local space
  *  sketchHide: true      hidden in sketch mode
- *  sketchTone: 'dark' | 'screen' | 'fill'   force a tone
+ *  sketchTone: 'dark' | 'black' | 'screen' | 'fill'   force a tone
  * Group userData.sketchNoEdges stops automatic crease lines for everything inside (lens internals).
  */
 export function SketchStyle({ on, o = SKETCH_DEFAULTS, children }: { on: boolean; o?: SketchOptions; children: ReactNode }) {
@@ -158,7 +158,16 @@ export function SketchStyle({ on, o = SKETCH_DEFAULTS, children }: { on: boolean
 
 function makeMats(o: SketchOptions) {
   const col = (s: string) => new THREE.Color(s)
-  const fill = col(o.fill), s1 = col(o.shade1), s2 = col(o.shade2)
+  // Shade bands and the bezel follow the body colour: the default cream's own ratios (per channel) applied to the chosen
+  // colour, so any base recolours the whole phone in the same hue, a little darker and duller. Cream gives the old tones.
+  const fill = col(o.fill), base = col(SKETCH_DEFAULTS.fill)
+  const rel = (tone: string) => { const t = col(tone), r = (k: 'r' | 'g' | 'b') => t[k] / Math.max(base[k], 1e-4)
+    const c = new THREE.Color(fill.r * r('r'), fill.g * r('g'), fill.b * r('b'))
+    if (o.fill.toLowerCase() === SKETCH_DEFAULTS.fill) return t
+    // a touch of desaturation toward the colour's own grey, as shadows on a coloured surface read duller
+    const l = c.r * 0.3 + c.g * 0.59 + c.b * 0.11; return c.lerp(new THREE.Color(l, l, l), 0.12) }
+  const s1 = o.fill.toLowerCase() === SKETCH_DEFAULTS.fill ? col(o.shade1) : rel(SKETCH_DEFAULTS.shade1)
+  const s2 = o.fill.toLowerCase() === SKETCH_DEFAULTS.fill ? col(o.shade2) : rel(SKETCH_DEFAULTS.shade2)
   const res = new THREE.Vector2(1, 1)
   const thick = new THREE.ShaderMaterial({ uniforms: { uColor: { value: col(o.line) }, uWidth: { value: o.outer }, uRes: { value: res } },
     vertexShader: hullVert, fragmentShader: hullFrag, side: THREE.BackSide, toneMapped: false })
@@ -167,8 +176,9 @@ function makeMats(o: SketchOptions) {
   // darker than the idle screen: a near line-coloured tone read as a second thick outline inside the frame, since
   // at an angle the 1 to 2 mm ring shrinks to a few pixels. Its thin crease lines still mark the screen edge.
   const dark = toonMaterial(col('#bdb5a6'), col('#b0a898'), col('#a39b8b'))
-  const bezel = toonMaterial(col('#d4cdbf'), col('#ccc5b7'), col('#c4bdaf'))
-  const idle = new THREE.MeshBasicMaterial({ color: '#e7e1d5', toneMapped: false })
+  const bezel = toonMaterial(rel('#d4cdbf'), rel('#ccc5b7'), rel('#c4bdaf'))
+  const idle = new THREE.MeshBasicMaterial({ color: rel('#e7e1d5'), toneMapped: false }) // blank screen follows the body colour too
+  const black = new THREE.MeshBasicMaterial({ color: '#000000', toneMapped: false })
   const logo = new THREE.MeshBasicMaterial({ color: o.line, transparent: true, opacity: 0.55, depthWrite: false, toneMapped: false })
   const cache = new Map<string, THREE.Material>()
   /** One clone per (base, polygonOffset) pair, offset pushed back so the lines win the depth test. */
@@ -181,8 +191,8 @@ function makeMats(o: SketchOptions) {
     return v
   }
   const fillMat = toonMaterial(fill, s1, s2)
-  return { fill: fillMat, dark, bezel, idle, logo, thick, thin, res, variant, logoCache: new Map<THREE.Texture, THREE.Material>(),
-    dispose() { [fillMat, dark, bezel, idle, logo, thick, thin, ...cache.values()].forEach(x => x.dispose()) } }
+  return { fill: fillMat, dark, bezel, idle, black, logo, thick, thin, res, variant, logoCache: new Map<THREE.Texture, THREE.Material>(),
+    dispose() { [fillMat, dark, bezel, idle, black, logo, thick, thin, ...cache.values()].forEach(x => x.dispose()) } }
 }
 type Mats = ReturnType<typeof makeMats>
 
@@ -199,6 +209,7 @@ function pick(src: THREE.Material, mesh: THREE.Mesh, m: Mats): THREE.Material | 
     if (!v) { v = m.logo.clone(); (v as THREE.MeshBasicMaterial).alphaMap = mb.alphaMap; v.polygonOffset = true; v.polygonOffsetFactor = -2; v.polygonOffsetUnits = -2; v.needsUpdate = true; m.logoCache.set(mb.alphaMap, v) }
     return v
   }
+  if (tone === 'black') return m.variant(m.black, src)
   if (tone === 'fill') return m.variant(m.fill, src)
   if (mesh.name === 'ip18-cover') return m.variant(m.bezel, src)
   const c = matColour(src)

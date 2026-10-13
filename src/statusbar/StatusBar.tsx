@@ -109,7 +109,7 @@ export type IslandLook = { fill: string; line: string; lw: number; accent: strin
 export const ISLAND_PHOTO: IslandLook = { fill: '#000', line: 'none', lw: 0, accent: ORANGE, lock: LOCK.color, lens: true }
 /** Sketch: fill = Sketch's dark tone (#bdb5a6), outline in the sketch line colour; orange deepened and padlock in the line colour
  *  so they stay legible on the light pill. */
-export const islandSketch = (line: string): IslandLook => ({ fill: '#bdb5a6', line, lw: 0.6, accent: '#c96f00', lock: line })
+export const islandSketch = (line: string): IslandLook => ({ fill: '#000', line, lw: 0.6, accent: ORANGE, lock: LOCK.color }) // black like the screen (supersedes the beige pill); lens blended in, so no lens drawn
 
 /** The Dynamic Island with an optional timer-style live activity and a minimal bubble. */
 export function Island({ sb, w, look = ISLAND_PHOTO }: { sb: SbCfg; w: number; look?: IslandLook }) {
