@@ -8,7 +8,8 @@
   html, body { margin: 0; height: 100%; font: 16px/1.4 -apple-system, system-ui, sans-serif; background: #f2f2f7; color: #111; }
   .screen { position: absolute; inset: 0; display: none; flex-direction: column; }
   .screen.on { display: flex; }
-  header { padding: 62px 20px 12px; background: #f2f2f7; }
+  :root { --safe-top: max(env(safe-area-inset-top), 54px); } /* iOS top safe area under the status bar */
+  header { padding: calc(var(--safe-top) + 8px) 20px 12px; background: #f2f2f7; }
   header h1 { margin: 0; font-size: 32px; letter-spacing: -0.5px; }
   .back { background: none; border: 0; color: #0a66d8; font-size: 17px; padding: 0; margin-bottom: 8px; cursor: pointer; }
   main { flex: 1; overflow-y: auto; padding: 0 16px 100px; -webkit-overflow-scrolling: touch; }
