@@ -17,7 +17,7 @@ export const IP18_FINISHES: Record<string, { label: string; frame: string; back:
   burgundy: { label: 'Burgundy', frame: '#5b2230', back: '#6a2a38' },
 }
 
-const NORMAL_SCALE = new THREE.Vector2(0.06, 0.06)
+const NORMAL_SCALE = new THREE.Vector2(0.02, 0.02)
 // Shapes and geometries are cached by their parameters (and the spec id for the body set), so a re-render
 // (every drag frame) reuses them instead of building and uploading new GPU buffers that never get freed.
 const shapeCache = new Map<string, THREE.Shape>()
@@ -176,20 +176,17 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const island = new THREE.ShapeGeometry(rrect(mm(s.island.w), mm(s.island.h), all(mm(s.island.r))), 24)
     // Camera plateau: full width from the top edge, 2.78 mm proud of the back. Its bottom edge is scaled off the side view.
     const plateau = slab(rrect(W, plH, [mm(P.bottomR), mm(P.bottomR), mm(P.cornerR), mm(P.cornerR)]), rise * 2, rise * 0.9, 6)
-    // Raised flat top of the plateau (camera glass window).
-    const winW = W - mm(P.topInset) * 2, winH = mm(P.topBottom - P.topInset)
-    const window = new THREE.ShapeGeometry(rrect(winW, winH, all(mm(P.topR))), 48)
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
     const bandH = mm(s.antennaBands[0][1] - s.antennaBands[0][0])
     const band = sideBand(W, T, EDGE, bandH)
-    return { body, glass, screen, island, plateau, window, backGlass, band }
+    return { body, glass, screen, island, plateau, backGlass, band }
   })
   useMemo(() => fitTexture(texture, mediaAspect, aspect), [texture, mediaAspect, aspect])
   // Brushed aluminium frame: anisotropic highlight along the band, streaky roughness and faint grooves.
   const bR = brushedRoughness(), bN = brushedNormal(), fR = frostRoughness(), sR = smudgeRoughness()
-  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.9} roughness={0.55} roughnessMap={bR} normalMap={bN} normalScale={NORMAL_SCALE}
+  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.6} roughness={0.36} roughnessMap={bR} normalMap={bN} normalScale={NORMAL_SCALE}
     anisotropy={0.55} clearcoat={0.08} clearcoatRoughness={0.3} envMapIntensity={1.15} />
   // Frosted back glass: textured roughness under a thin, slightly glossy coat so highlights spread but stay soft.
   const matte = <meshPhysicalMaterial color={f.back} metalness={0} roughness={0.8} roughnessMap={fR} clearcoat={0.35} clearcoatRoughness={0.38}
@@ -220,7 +217,6 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     </Pressable>)
   const zPlat = zb - rise
   const lensD = mm(s.lens.d), lensRise = mm(s.lens.rise)
-  const winCy = (P.topInset + P.topBottom) / 2
   // Front camera: the drawing gives only the island (front camera keepout); the lens sits in the right-hand cap (assumed).
   const fcamX = mm(s.island.w / 2 - s.island.h / 2)
   const isl = ty(s.island.cy)
@@ -250,10 +246,8 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
           transparent blending={THREE.AdditiveBlending} depthWrite={false} polygonOffset polygonOffsetFactor={-8} /></mesh>
       {/* back: aluminium between the plateau and the glass, then the matte glass window */}
       <mesh geometry={g.backGlass} position={[0, ty(s.backGlass.top) - (H - mm(s.backGlass.top) - EDGE * 0.8) / 2, zb - E]} rotation={[0, Math.PI, 0]}>{matte}</mesh>
-      {/* camera plateau, part of the aluminium unibody */}
+      {/* camera plateau: a full-width raised bar of the same aluminium unibody, lenses, flash and sensor sit directly on it */}
       <mesh geometry={g.plateau} position={[0, H / 2 - plH / 2, zb]}>{metal}</mesh>
-      <mesh geometry={g.window} position={[0, ty(winCy), zPlat - E]} rotation={[0, Math.PI, 0]}>
-        <meshPhysicalMaterial color={f.back} roughness={0.75} roughnessMap={fR} clearcoat={0.4} clearcoatRoughness={0.3} metalness={0.05} /></mesh>
       {s.lens.at.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}>
           <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -lensRise / 2]}><cylinderGeometry args={[lensD / 2, lensD / 2 + mm(0.4), lensRise, 64]} />{metal}</mesh>
