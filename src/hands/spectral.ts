@@ -9,7 +9,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LINE_LAYER } from '../sketch/Sketch'
 
 export interface SpectralOptions { tint: string; line: string; transparency: number; glimmer: boolean; stars: boolean; shimmer: boolean; seeBlur: number }
-export const SPECTRAL_DEFAULTS: SpectralOptions = { tint: '#206DD0', line: '#206DD0', transparency: 0.98, seeBlur: 0.6, glimmer: false, stars: false, shimmer: false }
+export const SPECTRAL_DEFAULTS: SpectralOptions = { tint: '#206DD0', line: '#206DD0', transparency: 0.98, seeBlur: 0.85, glimmer: false, stars: false, shimmer: false }
 export const SPECTRAL_OUTER = 2.4, SPECTRAL_INNER = 0.75 // CSS px, like Sketch's outer and inner lines
 
 const SKIN_PARS = /* glsl */`
@@ -91,15 +91,15 @@ export function spectralMaterials(o: SpectralOptions) {
   const line = new LineMaterial({ color: o.line ?? o.tint, linewidth: SPECTRAL_INNER, worldUnits: false, transparent: true, opacity: 0.85, depthWrite: false })
   // See-through layers: the same lines where they sit behind the nearest skin (depth test inverted against the body's depth
   // prepass), drawn as three stacked strokes, wider and fainter as the blur rises, which reads as a soft, out-of-focus line.
-  const ghosts = [0, 1, 2].map(() => new LineMaterial({ color: o.line ?? o.tint, linewidth: SPECTRAL_INNER, worldUnits: false, transparent: true, opacity: 0, depthWrite: false, depthFunc: THREE.GreaterDepth }))
-  let blur = o.seeBlur ?? 0.6
+  const ghosts = [0, 1, 2].map(() => new LineMaterial({ color: o.line ?? o.tint, linewidth: SPECTRAL_INNER, worldUnits: false, transparent: true, opacity: 0, depthWrite: false }))
+  let blur = o.seeBlur ?? 0.85
   return { body, hull, line, ghosts, res, tint, lineCol,
     setLine(c: string) { lineCol.set(c); line.color.set(c); for (const g of ghosts) g.color.set(c) },
     setBlur(b: number) { blur = b },
     /** per frame: pixel ratio and canvas size for the screen-space widths, and the shimmer clock (frozen when still) */
     frame(w: number, h: number, dpr: number, t: number) {
       res.set(w * dpr, h * dpr); line.resolution.set(w * dpr, h * dpr); line.linewidth = SPECTRAL_INNER * dpr
-      const spread = [1, 3.5, 7], op = [0.8 * (1 - blur) + 0.09 * blur, 0.06 * blur, 0.035 * blur]
+      const spread = [2, 6, 12], op = [0.8 * (1 - blur) ** 2 + 0.05 * blur, 0.035 * blur, 0.02 * blur]
       ghosts.forEach((g, i) => { g.resolution.set(w * dpr, h * dpr); g.linewidth = SPECTRAL_INNER * dpr * (1 + blur * spread[i]); g.opacity = op[i]; g.visible = op[i] > 0.003 })
       hull.uniforms.uWidth.value = SPECTRAL_OUTER * dpr; body.uniforms.uTime.value = t
     },
@@ -165,11 +165,23 @@ function prepare(mesh: THREE.SkinnedMesh, owner: string[]): Prepared {
     // barycentric point on the hit triangle, so it follows the skin as the hand poses.
     // Nail plate: squoval covering the last ~45% of the distal segment (s 0.5 to 0.95 of D to tip) and ~75% of the finger
     // width (a chord at +-48.6 deg round it); squarer at the free edge (superellipse power 4), rounder at the cuticle (2.6).
-    const n0 = 0.5, n1 = 0.95, nc = (n0 + n1) / 2, nh = (n1 - n0) / 2, A = Math.asin(0.75)
+    // Measured from the real fingertip (the furthest skin past the tip joint, not the joint), the plate spans the distal
+    // 10% to 55% of the last phalanx, so its free edge ends a millimetre or two short of the tip.
+    let Lmax = len; for (let v = 0; v < N; v++) if (ownD(v)) Lmax = Math.max(Lmax, B[v].clone().sub(D).dot(ax))
+    const n0 = (Lmax * 0.45) / len, n1 = (Lmax * 0.9) / len, nc = (n0 + n1) / 2, nh = (n1 - n0) / 2, A = Math.asin(0.75)
+    // Orientation and centre per finger: the bone sits nearer the back than the fleshy pad, so the cross-section centroid
+    // (over the nail's span) points from the axis toward the pad. Its opposite is the nail's facing; the palm-plane normal
+    // alone tilted the thumb's nails and any finger rolled about its axis. The centroid's sideways offset recentres it.
+    const cen = new THREE.Vector3(); let cn = 0
+    for (let v = 0; v < N; v++) if (ownD(v)) { const d = B[v].clone().sub(D), a = d.dot(ax) / len; if (a > n0 && a < n1) { cen.add(d.addScaledVector(ax, -d.dot(ax))); cn++ } }
+    let nb = nrm.clone(), off = new THREE.Vector3()
+    if (cn > 4) { cen.divideScalar(cn); const pd = cen.clone().normalize(); void pd // tried: facing from the centroid; it rolled the nails sideways on these meshes, so keep the palm-plane facing
+      off = side.clone().multiplyScalar(cen.dot(side) * 0.5) } // half the sideways offset: recentre without overshooting
+    const sb = new THREE.Vector3().crossVectors(ax, nb).normalize().multiplyScalar(Math.sign(new THREE.Vector3().crossVectors(ax, nb).dot(side)) || 1)
     const tris: number[] = []; { const idx = geo.index!; for (let t = 0; t < idx.count; t += 3) { const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2); if (ownD(a) || ownD(b) || ownD(c)) tris.push(a, b, c) } }
     const cast = (u: number, w: number): Bary | null => {
-      const O = D.clone().addScaledVector(ax, (nc + u * nh) * len), ang = w * A
-      const dir = nrm.clone().multiplyScalar(-Math.cos(ang)).addScaledVector(side, Math.sin(ang))
+      const O = D.clone().add(off).addScaledVector(ax, (nc + u * nh) * len), ang = w * A
+      const dir = nb.clone().multiplyScalar(-Math.cos(ang)).addScaledVector(sb, Math.sin(ang))
       let best: Bary | null = null, bt = Infinity
       for (let t = 0; t < tris.length; t += 3) { const h = rayTri(O, dir, B[tris[t]], B[tris[t + 1]], B[tris[t + 2]]); if (h && h[0] < bt) { bt = h[0]; best = [tris[t], tris[t + 1], tris[t + 2], h[1], h[2]] } }
       return best }
@@ -245,7 +257,8 @@ export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: Spect
   lines.userData = { spectral: true, noBounds: true }; lines.layers.set(LINE_LAYER); lines.frustumCulled = false; mesh.add(lines)
   const ghosts = m.ghosts.map((gm, i) => { const g = new LineSegments2(lines.geometry, gm);
     g.userData = { spectral: true, noBounds: true, ghost: true }; g.layers.set(LINE_LAYER); g.frustumCulled = false; mesh.add(g); return g })
-  for (const g of ghosts) g.renderOrder = 13 // after the prepass (9), body (10) and crisp lines (12), so the inverted test sees the skin's depth
+  for (const g of ghosts) g.renderOrder = 8 // before the hand's depth prepass (9): they test only against the phone's depth,
+  // so nothing behind the phone ever shows; the clear skin (10) then lies over them and the crisp lines (12) win where visible
   mesh.userData.spectralLines = { skinned: sk, creases: new Float32Array(cr), lines, ghosts, camKey: '' } as LineState
 }
 

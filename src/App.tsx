@@ -452,7 +452,7 @@ export default function App() {
                 <label className="row"><span>Line colour</span>
                   <input type="color" value={(spectral.line ?? spectral.tint).toLowerCase()} onChange={e => setSpectral({ ...spectral, line: e.target.value.toUpperCase() })} />
                   <input type="text" key={'l' + spectral.line} defaultValue={spectral.line} maxLength={7} style={{ width: 70 }} onChange={e => { const v = e.target.value.trim(); if (/^#[0-9a-fA-F]{6}$/.test(v)) setSpectral({ ...spectral, line: v.toUpperCase() }) }} /></label>
-                {slider('See-through blur', Math.round((spectral.seeBlur ?? 0.6) * 100), 0, 100, 1, n => setSpectral({ ...spectral, seeBlur: n / 100 }), '%')}
+                {slider('See-through blur', Math.round((spectral.seeBlur ?? 0.85) * 100), 0, 100, 1, n => setSpectral({ ...spectral, seeBlur: n / 100 }), '%')}
                 {slider('Transparency', Math.round(spectral.transparency * 100), 0, 100, 1, n => setSpectral({ ...spectral, transparency: n / 100 }), '%')}
                 <label className="check"><input type="checkbox" checked={spectral.glimmer} onChange={e => setSpectral({ ...spectral, glimmer: e.target.checked })} /> Glimmer</label>
                 <label className="check"><input type="checkbox" checked={spectral.stars} onChange={e => setSpectral({ ...spectral, stars: e.target.checked })} /> Stars</label>
