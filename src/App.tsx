@@ -8,6 +8,7 @@ import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
 import { INNER_PX, OUTER_PX } from './devices/Duo'
 import { sceneHit } from './devices/shared'
+import { ErrorBoundary } from './ErrorBoundary'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -311,6 +312,7 @@ export default function App() {
         }}
         onPointerUp={e => { drag.current = null; (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId) }}
         onWheel={e => { const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)); setPose(p => ({ ...p, zoom: clamp(p.zoom * k, 0.5, 2.5) })) }}>
+        <ErrorBoundary label="3D preview">
         <Canvas shadows gl={{ alpha: true, preserveDrawingBuffer: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1 }} camera={{ fov: 30, position: [0, 0, 4.2] }}
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
@@ -332,6 +334,7 @@ export default function App() {
               <>{fx.grain && <Noise opacity={0.06} premultiply />}</>
             </EffectComposer>)}
         </Canvas>
+        </ErrorBoundary>
         {dragging && <div className="dropnote">Drop to use as the screen</div>}
       </main>
     </div>
