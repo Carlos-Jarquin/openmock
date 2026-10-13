@@ -17,6 +17,9 @@ import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './
 import { GestureControls, GESTURE_DEFAULT, isGesture, rescale, screenOf, type Gesture } from './hands/gestures'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER } from './sketch/Sketch'
+import { SB_DEFAULT, type SbCfg } from './statusbar/config'
+import { StatusBarControls } from './statusbar/Panel'
+import { useStatusComposite } from './statusbar/composite'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -137,6 +140,9 @@ export default function App() {
   const [device, setDevice] = useState<DeviceId>('ip18')
   const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'silver', logo: null, logoSize: 0.16, logoTint: '#8a8f99', simTray: true })
   const [media, setMedia] = useState<Media | null>(null)
+  const [sbOn, setSbOn] = useState(false) // off by default so existing exports do not change
+  const [sb, setSb] = useState<SbCfg>(SB_DEFAULT)
+  const [sbReset, setSbReset] = useState(0)
   const [pose, setPose] = useState(POSE)
   const [light, setLight] = useState(LIGHT)
   const [fx, setFx] = useState(FX)
@@ -171,6 +177,9 @@ export default function App() {
   }, [])
   const def = DEVICES.find(d => d.id === device)!
   const screenAspect = typeof def.screenAspect === 'function' ? def.screenAspect(opts) : def.screenAspect
+  // Screen in iPhone points for the status bar: Pro 402x874, Pro Max 440x956
+  const sbSize = device === 'ip18' ? { w: 402, h: 874 } : device === 'ip18max' ? { w: 440, h: 956 } : null
+  const screenTex = useStatusComposite(media, sbOn, sb, sbSize)
 
   const loadFile = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
@@ -263,7 +272,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setSbOn, setSb }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -318,6 +327,16 @@ export default function App() {
           </>}
           {def.nativePx && <p className="hint">Native size: {def.nativePx.w} × {def.nativePx.h} px. Screenshots at this size fit exactly.</p>}
         </section>}
+        <section><h2>Status bar</h2>
+          {sbSize ? <>
+            <div className="seg"><button className={sbOn ? 'on' : ''} onClick={() => setSbOn(true)}>On</button><button className={!sbOn ? 'on' : ''} onClick={() => setSbOn(false)}>Off</button></div>
+            {sbOn && <>
+              <StatusBarControls sb={sb} onChange={setSb} resetKey={sbReset} />
+              <button className="ghost" onClick={() => { setSb(SB_DEFAULT); setSbReset(sbReset + 1) }}>Reset status bar</button>
+              <p className="hint">Drawn onto the screen in iPhone points, so it shows in renders and exports. Auto picks dark or light text from the top of your image or video.</p>
+            </>}
+          </> : <p className="hint">Available for the iPhone 18 Pro and Pro Max.</p>}
+        </section>
         {def.foldable && <section><h2>iPhone Duo</h2>
           {slider('Fold', opts.fold, 0, 180, 1, n => setOpts({ ...opts, fold: n }), '°')}
           <p className="hint">180 is open flat, 0 is closed.</p>
@@ -447,9 +466,9 @@ export default function App() {
             <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
           </>}
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
-            <Centred deps={[device, opts.fold, opts.screen, media?.texture, hands.pose]}>
+            <Centred deps={[device, opts.fold, opts.screen, screenTex.texture, hands.pose]}>
               <HandRig pose={hands.pose} tone={hands.tone} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture}>
-                <SketchStyle on={sketch} o={sk}><D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} /></SketchStyle>
+                <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={opts} /></SketchStyle>
               </HandRig>
             </Centred>
           </group>
