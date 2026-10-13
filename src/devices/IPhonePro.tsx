@@ -239,7 +239,7 @@ function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }
   const disc = (r: number, y: number, k: string, mat: ReactNode) => (
     <mesh key={k} position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[r, 96]} />{mat}</mesh>)
   const ar = (col: string, t: [number, number]) => <meshPhysicalMaterial color={col} metalness={0.2} roughness={0.04} transparent opacity={0.4}
-    iridescence={1} iridescenceIOR={1.3} iridescenceThicknessRange={t} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.5} depthWrite={false} />
+    iridescence={1} iridescenceIOR={1.4} iridescenceThicknessRange={t} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.5} depthWrite={false} />
   const h = rise - c
   return (
     <group rotation={[-Math.PI / 2, 0, 0]}>
@@ -248,13 +248,13 @@ function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }
       <mesh geometry={lip}><meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.2} envMapIntensity={1.1} side={THREE.DoubleSide} /></mesh>
       <mesh geometry={barrel}><meshPhysicalMaterial color="#07080b" metalness={0.4} roughness={0.55} side={THREE.DoubleSide} /></mesh>
       {disc(ri * 0.98, floor + E / 3, 'floor', <meshPhysicalMaterial color="#010103" roughness={0.3} clearcoat={0.6} envMapIntensity={0.6} />)}
-      {disc(ri * 0.42, floor + h * 0.12, 'e3', ar('#101218', [300, 480]))}
-      {disc(ri * 0.62, floor + h * 0.32, 'e2', ar('#14161e', [250, 420]))}
+      {disc(ri * 0.42, floor + h * 0.12, 'e3', ar('#11121c', [300, 480]))}
+      {disc(ri * 0.62, floor + h * 0.32, 'e2', ar('#161724', [250, 420]))}
       <mesh position={[0, floor + h * 0.22, 0]} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[ri * 0.3, ri * 0.44, 64]} />
         <meshPhysicalMaterial color="#1a1c24" metalness={0.9} roughness={0.25} side={THREE.DoubleSide} /></mesh>
       {[0.55, 0.7, 0.86].map((k, i) => <mesh key={k} position={[0, floor + h * (0.18 + i * 0.16), 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[ri * k - mm(0.06), ri * k, 96]} /><meshPhysicalMaterial color={i === 1 ? '#34303e' : '#262a34'} metalness={1} roughness={0.15} side={THREE.DoubleSide} /></mesh>)}
-      {disc(ri * 0.85, floor + h * 0.55, 'e1', ar('#1a1c26', [220, 380]))}
+        <ringGeometry args={[ri * k - mm(0.06), ri * k, 96]} /><meshPhysicalMaterial color={i === 1 ? '#363048' : '#262b3c'} metalness={1} roughness={0.15} side={THREE.DoubleSide} /></mesh>)}
+      {disc(ri * 0.85, floor + h * 0.55, 'e1', ar('#1c1d2c', [220, 380]))}
       <mesh geometry={dome} renderOrder={6}><meshPhysicalMaterial color="#000" roughness={0.015} specularIntensity={0.45} envMapIntensity={0.8}
         transparent blending={THREE.AdditiveBlending} depthWrite={false} /></mesh>
     </group>)
@@ -330,13 +330,35 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   const isl = ty(s.island.cy)
   // Antenna bands are a moulded resin: the frame colour pulled toward a neutral grey, matte, non-metallic.
   const bandColour = useMemo(() => new THREE.Color(f.frame).lerp(new THREE.Color('#77797e'), 0.45), [f.frame])
-  const bandMat = <meshPhysicalMaterial color={bandColour} metalness={0} roughness={0.72} clearcoat={0.15} clearcoatRoughness={0.5} polygonOffset polygonOffsetFactor={-1} />
+  // The bands are drawn as an overlay on the same body, plateau and fillet meshes, kept only inside the band heights, so they wrap
+  // the frame sides and run up over the plateau shoulder exactly on the surface (same geometry, LessEqual depth, no z-fighting).
+  const bandMaterial = useMemo(() => {
+    const m = new THREE.MeshPhysicalMaterial({ color: bandColour, metalness: 0.05, roughness: 0.62, clearcoat: 0.25, clearcoatRoughness: 0.4,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, depthFunc: THREE.LessEqualDepth })
+    const [[a1, b1], [a2, b2]] = s.antennaBands
+    const yb = new THREE.Vector4(ty(b1), ty(a1), ty(b2), ty(a2))
+    m.onBeforeCompile = sh => {
+      sh.uniforms.uBand = { value: yb }; sh.uniforms.uOff = { value: 0 }
+      sh.vertexShader = 'uniform float uOff;\nvarying float vDevY;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvDevY = position.y + uOff;')
+      sh.fragmentShader = 'uniform vec4 uBand;\nvarying float vDevY;\n' + sh.fragmentShader.replace('void main() {',
+        'void main() {\n  if (!((vDevY > uBand.x && vDevY < uBand.y) || (vDevY > uBand.z && vDevY < uBand.w))) discard;')
+      m.userData.sh = sh
+    }
+    m.customProgramCacheKey = () => 'om-band'
+    return m
+  }, [bandColour, s, H])
+  const plY = H / 2 - (plH + mm(P.shoulder)) / 2
+  const bandMats = useMemo(() => [0, plY].map(y => {
+    const mat = bandMaterial.clone(); mat.onBeforeCompile = sh => { bandMaterial.onBeforeCompile(sh, null as never); sh.uniforms.uOff.value = y }
+    mat.customProgramCacheKey = () => 'om-band'; return mat
+  }), [bandMaterial, plY])
+  const bandOn = (geo: THREE.BufferGeometry, y: number, z: number) =>
+    <mesh geometry={geo} position={[0, y, z]} renderOrder={1} material={bandMats[y === 0 ? 0 : 1]} />
   return (
     <group>
       <mesh geometry={g.body} castShadow name="ip18-body">{metal}</mesh>
       {/* antenna split bands on both long sides, from the side views */}
-      {s.antennaBands.map(([a, b]) => [1, -1].map(sx => (
-        <mesh key={`${a}${sx}`} geometry={g.band} position={[0, ty((a + b) / 2), 0]} scale={[sx, 1, 1]}>{bandMat}</mesh>)))}
+      {bandOn(g.body, 0, 0)}
       {/* front cover glass and display */}
       <mesh geometry={g.glass} position={[0, 0, zf + E]} name="ip18-cover">{black}</mesh>
       <mesh geometry={g.screen} position={[0, 0, zf + E * 2]} name="screen">
@@ -357,6 +379,8 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* camera plateau: a full-width raised bar of the same aluminium unibody, lenses, flash and sensor sit directly on it */}
       <mesh geometry={g.plateau} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{metal}</mesh>
       <mesh geometry={g.fillet} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{metal}</mesh>
+      {bandOn(g.plateau, H / 2 - (plH + mm(P.shoulder)) / 2, zb)}
+      {bandOn(g.fillet, H / 2 - (plH + mm(P.shoulder)) / 2, zb)}
       {s.lens.at.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}><RearLens d={lensD} rise={lensRise} frame={f.frame} /></group>))}
       <mesh position={[bx(s.flash.bx), ty(s.flash.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.flash.d / 2), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>
