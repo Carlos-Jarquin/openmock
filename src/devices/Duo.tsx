@@ -34,15 +34,15 @@ function panel(w: number, h: number, r: [number, number, number, number], u0: nu
 
 function Screen({ geo, tex, pos, rotY = 0 }: { geo: THREE.BufferGeometry; tex: THREE.Texture | null; pos: [number, number, number]; rotY?: number }) {
   return <mesh geometry={geo} position={pos} rotation={[0, rotY, 0]}>
-    {tex ? <meshBasicMaterial map={tex} toneMapped={false} /> : <meshBasicMaterial color="#14161c" />}
+    {tex ? <meshBasicMaterial key="tex" color="#ffffff" map={tex} toneMapped={false} /> : <meshBasicMaterial color="#14161c" />}
   </mesh>
 }
 
 export default function Duo({ texture, mediaAspect, opts }: DeviceProps) {
   const f = FINISHES[opts.finish]
   const g = useMemo(() => ({
-    left: panel(SW, SH, [0.06, 0, 0, 0.06], 0, 0.5),
-    right: panel(SW, SH, [0, 0.06, 0.06, 0], 0.5, 1),
+    left: panel(SW, SH, [0.06, 0.001, 0.001, 0.06], 0, 0.5),
+    right: panel(SW, SH, [0.001, 0.06, 0.06, 0.001], 0.5, 1),
     outer: panel(OW, OH, [0.07, 0.07, 0.07, 0.07], 0, 1),
   }), [])
   // Media goes to one screen; the other shows a dark idle screen.
@@ -75,7 +75,7 @@ export default function Duo({ texture, mediaAspect, opts }: DeviceProps) {
           <cylinderGeometry args={[0.042, 0.042, 0.01, 32]} /><meshStandardMaterial color="#0b0c10" metalness={0.6} roughness={0.15} />
         </mesh>))}
       {/* hinge spine */}
-      <mesh position={[0, 0, T / 2 - 0.002]}><cylinderGeometry args={[T / 2 + 0.003, T / 2 + 0.003, H - 0.02, 24]} /><meshStandardMaterial color={f.frame} metalness={0.9} roughness={0.3} /></mesh>
+      <mesh position={[0, 0, 0]}><cylinderGeometry args={[T / 2, T / 2, H - 0.02, 24]} /><meshStandardMaterial color={f.frame} metalness={0.9} roughness={0.3} /></mesh>
       {/* left half swings about the hinge axis at front face */}
       <group position={[0, 0, T / 2 + GAP]} rotation={[0, swing, 0]}>
         <group position={[0, 0, -T / 2 - GAP]}>

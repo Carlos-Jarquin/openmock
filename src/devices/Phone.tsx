@@ -18,7 +18,7 @@ export default function Phone({ texture, mediaAspect }: DeviceProps) {
         <meshStandardMaterial color="#050506" roughness={0.2} />
       </mesh>
       <mesh geometry={geo} position={[0, 0, D / 2 + 0.001]}>
-        {texture ? <meshBasicMaterial map={texture} toneMapped={false} /> : <meshBasicMaterial color="#1c1d22" />}
+        {texture ? <meshBasicMaterial key="tex" color="#ffffff" map={texture} toneMapped={false} /> : <meshBasicMaterial color="#1c1d22" />}
       </mesh>
       <RoundedBox args={[0.2, 0.058, 0.004]} radius={0.0019} position={[0, SH / 2 - 0.06, D / 2 + 0.003]}>
         <meshBasicMaterial color="#000" />

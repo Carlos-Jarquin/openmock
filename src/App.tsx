@@ -7,7 +7,7 @@ import type { DeviceId, DeviceOptions } from './types'
 import { FINISHES, INNER_PX, OUTER_PX } from './devices/Duo'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
-const POSE = { tiltX: -12, tiltY: 22, rotZ: 0, zoom: 1, panX: 0, panY: 0 }
+const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0 }
 const LIGHT = { intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45 }
 
 function GLGrab({ onReady }: { onReady: (s: { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera }) => void }) {
@@ -24,7 +24,7 @@ function Rig({ zoom }: { zoom: number }) {
 
 export default function App() {
   const [device, setDevice] = useState<DeviceId>('duo')
-  const [opts, setOpts] = useState<DeviceOptions>({ fold: 120, screen: 'inner', finish: 'night' })
+  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'night' })
   const [media, setMedia] = useState<Media | null>(null)
   const [pose, setPose] = useState(POSE)
   const [light, setLight] = useState(LIGHT)

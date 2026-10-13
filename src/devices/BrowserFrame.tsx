@@ -26,7 +26,7 @@ export default function BrowserFrame({ texture, mediaAspect }: DeviceProps) {
         <meshBasicMaterial color="#e2e2e6" />
       </RoundedBox>
       <mesh geometry={geo} position={[0, -BAR / 2, D / 2 + 0.002]}>
-        {texture ? <meshBasicMaterial map={texture} toneMapped={false} /> : <meshBasicMaterial color="#ffffff" />}
+        {texture ? <meshBasicMaterial key="tex" color="#ffffff" map={texture} toneMapped={false} /> : <meshBasicMaterial color="#ffffff" />}
       </mesh>
     </group>
   )
