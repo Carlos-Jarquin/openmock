@@ -16,7 +16,7 @@ import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type
 import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
 import { GestureControls, GESTURE_DEFAULT, isGesture, rescale, screenOf, type Gesture } from './hands/gestures'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
-import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER } from './sketch/Sketch'
+import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER, SKETCH_SHADOW } from './sketch/Sketch'
 import { SB_DEFAULT, type SbCfg } from './statusbar/config'
 import { StatusBarControls } from './statusbar/Panel'
 import { useStatusComposite } from './statusbar/composite'
@@ -476,7 +476,8 @@ export default function App() {
               </HandRig>
             </Centred>
           </group>
-          {light.shadow > 0 && <ContactShadows position={[pose.panX, pose.panY - 0.95, 0]} opacity={light.shadow} scale={6} blur={2.6} far={2.5} resolution={1024} frames={Infinity} />}
+          {light.shadow > 0 && <ContactShadows position={[pose.panX, pose.panY - 0.95, 0]} opacity={light.shadow} scale={6} blur={2.6} far={2.5} resolution={1024} frames={Infinity}
+            {...(sketch ? { color: SKETCH_SHADOW, opacity: light.shadow * 0.6, blur: 3 } : {})} />}
           {!transparent && <SceneBg mode={bgMode} c1={bg1} c2={bg2} angle={angle} />}
           {(fx.dof || fx.bloom || fx.grain || !transparent) && (
             <EffectComposer multisampling={4}>

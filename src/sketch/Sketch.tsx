@@ -19,6 +19,10 @@ export interface SketchOptions {
 }
 export const SKETCH_DEFAULTS: SketchOptions = { fill: '#f4ecdc', shade1: '#e3dac8', shade2: '#cfc5b2', line: '#77726a', outer: 2.6, inner: 1.1, crease: 32 }
 /** Warm off-white paper for the background in sketch mode. */
+/** Render layer for the sketch crease lines (see SketchStyle). */
+export const LINE_LAYER = 5
+/** Warm grey for the floor contact shadow in sketch mode, multiplied by the Shadow slider. */
+export const SKETCH_SHADOW = '#8f8678'
 export const SKETCH_PAPER = '#f7f3ea'
 
 // ---------- materials ----------
@@ -122,7 +126,12 @@ const matColour = (m: THREE.Material) => (m as THREE.MeshBasicMaterial).color as
  */
 export function SketchStyle({ on, o = SKETCH_DEFAULTS, children }: { on: boolean; o?: SketchOptions; children: ReactNode }) {
   const root = useRef<THREE.Group>(null)
-  const { gl, size } = useThree()
+  const { gl, size, camera } = useThree()
+  // Crease lines live on LINE_LAYER only. ContactShadows renders the scene from below with a MeshDepthMaterial
+  // override; on a LineSegments2 that draws the bare instanced quad (about 2 x 2 units per line object, ignoring the
+  // segment data), which smeared a dark wavy blanket across the whole floor. Its orthographic camera only sees
+  // layer 0, so the lines stay out of the shadow; the view camera opts in here.
+  useEffect(() => { camera.layers.enable(LINE_LAYER) }, [camera])
   const mats = useRef<ReturnType<typeof makeMats> | null>(null)
   useEffect(() => {
     if (!on) return
@@ -215,7 +224,7 @@ function apply(mesh: THREE.Mesh, noEdges: boolean, m: Mats, o: SketchOptions) {
 function addLines(mesh: THREE.Mesh, src: THREE.Material, noEdges: boolean, m: Mats, o: SketchOptions) {
   for (const c of [...mesh.children]) if (c.userData[ADDED]) { mesh.remove(c) }
   if (!mesh.visible && !mesh.userData.sketchLines) return
-  const add = (obj: THREE.Object3D) => { obj.userData[ADDED] = true; obj.raycast = () => {}; mesh.add(obj) }
+  const add = (obj: THREE.Object3D) => { obj.userData[ADDED] = true; if ((obj as LineSegments2).isLineSegments2) obj.layers.set(LINE_LAYER); obj.raycast = () => {}; mesh.add(obj) }
   if (mesh.userData.sketchHull) {
     const h = new THREE.Mesh(mesh.geometry, m.thick); h.renderOrder = -1; add(h)
   }
