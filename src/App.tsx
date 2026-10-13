@@ -169,6 +169,10 @@ export default function App() {
   const [scale, setScale] = useState(2)
   const [dragging, setDragging] = useState(false)
   const [status, setStatus] = useState('Drop, paste or choose an image or video to start.')
+  // brief toast over the stage for paste and drop
+  const [toast, setToast] = useState<{ text: string; error: boolean } | null>(null)
+  const toastTimer = useRef(0)
+  const flash = useCallback((text: string, error = false) => { setToast({ text, error }); setStatus(text); clearTimeout(toastTimer.current); toastTimer.current = window.setTimeout(() => setToast(null), error ? 4000 : 1800) }, [])
   // Photoreal status sits right under its button (the main status line is at the bottom of the panel, often out of view)
   const [aiMsg, setAiMsg] = useState<{ text: string; kind: 'busy' | 'done' | 'error' } | null>(null)
   const say = (text: string, kind: 'busy' | 'done' | 'error') => { setAiMsg({ text, kind }); setStatus(text) }
@@ -190,7 +194,7 @@ export default function App() {
   // status bar on: its island is the single island, so the 3D island mesh and front lens are hidden
   const devOpts = useMemo(() => sbOn && sbSize ? { ...opts, hideIsland: true } : opts, [opts, sbOn, !!sbSize])
 
-  const loadFile = useCallback((file: File) => {
+  const loadFile = useCallback((file: File, done?: string) => {
     const url = URL.createObjectURL(file)
     if (file.type.startsWith('video/')) {
       const v = document.createElement('video')
@@ -199,22 +203,31 @@ export default function App() {
         const t = new THREE.VideoTexture(v); t.colorSpace = THREE.SRGBColorSpace
         v.play().catch(() => {})
         setMedia(m => { m?.video?.pause(); m?.texture.dispose(); return { texture: t, aspect: v.videoWidth / v.videoHeight, kind: 'video', name: file.name, video: v } })
-        setStatus(`Loaded video: ${file.name}`)
+        setStatus(`Loaded video: ${file.name}`); if (done) flash(done)
       }
     } else if (file.type.startsWith('image/')) {
       new THREE.TextureLoader().load(url, t => {
         t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8
         const img = t.image as HTMLImageElement
         setMedia(m => { m?.video?.pause(); m?.texture.dispose(); return { texture: t, aspect: img.width / img.height, kind: 'image', name: file.name } })
-        setStatus(`Loaded image: ${file.name}`)
-      })
-    } else setStatus('That file type is not supported. Use an image or a video.')
-  }, [])
+        setStatus(`Loaded image: ${file.name}`); if (done) flash(done)
+      }, undefined, () => flash(`Couldn't read that image (${file.type || 'unknown type'}).`, true))
+    } else flash('That file type is not supported. Use an image (PNG, JPEG, WebP) or a video.', true)
+  }, [flash])
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      const f = Array.from(e.clipboardData?.files ?? [])[0]
-      if (f) { e.preventDefault(); loadFile(f) }
+      // typing or pasting into a field (hex, seed, activity text...) is left alone
+      const el = document.activeElement as HTMLElement | null
+      if (el && (el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'button', 'color', 'file'].includes((el as HTMLInputElement).type)))) return
+      const dt = e.clipboardData; if (!dt) return
+      // Figma "Copy as PNG" and screenshots arrive as an image item; files cover pasted image files
+      const fromItems = Array.from(dt.items).filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter((f): f is File => !!f)
+      const f = fromItems[0] ?? Array.from(dt.files).find(x => x.type.startsWith('image/') || x.type.startsWith('video/'))
+      e.preventDefault()
+      if (!f) { flash('The clipboard has no image. Copy an image (for example Copy as PNG in Figma), then press Cmd+V.', true); return }
+      const named = f.name && f.name !== 'image.png' ? f : new File([f], `Pasted image.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type })
+      loadFile(named, 'Pasted onto screen')
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
@@ -449,7 +462,7 @@ export default function App() {
       </aside>
       <main className={`stage ${transparent ? 'checker' : ''} ${dragging ? 'drag' : ''}`} style={{ background: bgCss }}
         onDragOver={e => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)}
-        onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) loadFile(f) }}
+        onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) loadFile(f, 'Dropped onto screen'); else flash('That drop had no file. Drag in an image or video file.', true) }}
         onContextMenu={e => e.preventDefault()}
         onPointerDown={e => {
           if (sceneHit.current) { sceneHit.current = false; return }
@@ -526,6 +539,8 @@ export default function App() {
         </ErrorBoundary>
         {ai.url && <img className="ai-overlay" src={ai.url} alt="" />}
         {dragging && <div className="dropnote">Drop to use as the screen</div>}
+        {toast && <div className="toast" role="status" style={{ position: 'absolute', left: '50%', bottom: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8,
+          background: toast.error ? 'rgba(192,57,43,0.92)' : 'rgba(29,29,31,0.85)', color: '#fff', font: '13px -apple-system, system-ui, sans-serif', pointerEvents: 'none', maxWidth: 420, textAlign: 'center' }}>{toast.text}</div>}
       </main>
     </div>
   )
