@@ -96,6 +96,32 @@ function flatUV(shape: THREE.Shape, w: number, h: number) {
   uv.needsUpdate = true; return g
 }
 const E = 0.0003
+/** Concave fillet strip along the lower part of a plateau outline. Built in the outline's plane with height toward -z
+ * (out of the back): at the base it starts f out from the wall, and it meets the wall f up. xMax clips it to the flat back. */
+function plateauFillet(shape: THREE.Shape, h: number, xMax: number, f: number, steps = 8) {
+  const pts = shape.getSpacedPoints(400).slice(0, -1), n = pts.length
+  const keep: { p: THREE.Vector2; nrm: THREE.Vector2 }[] = []
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], a = pts[(i + n - 1) % n], b = pts[(i + 1) % n]
+    if (p.y > -h / 2 + h * 0.45 || Math.abs(p.x) > xMax) continue
+    const t = b.clone().sub(a).normalize(), nrm = new THREE.Vector2(t.y, -t.x) // outward for a counter-clockwise outline
+    keep.push({ p, nrm })
+  }
+  keep.sort((u, v) => u.p.x - v.p.x)
+  const pos: number[] = [], idx: number[] = []
+  keep.forEach(({ p, nrm }) => {
+    for (let k = 0; k <= steps; k++) {
+      const th = (k / steps) * Math.PI / 2, off = f * (1 - Math.sin(th)), up = f * (1 - Math.cos(th))
+      pos.push(p.x + nrm.x * off, p.y + nrm.y * off, -up)
+    }
+  })
+  for (let i = 0; i < keep.length - 1; i++) for (let k = 0; k < steps; k++) {
+    const a = i * (steps + 1) + k, b = a + steps + 1
+    idx.push(a, a + 1, b, a + 1, b + 1, b)
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx)
+  g.computeVertexNormals(); return g
+}
 
 // Interaction. A press runs 120 ms in (ease out) and 180 ms back out with a small spring overshoot.
 const PRESS_IN = 120, PRESS_OUT = 180
@@ -162,10 +188,8 @@ function SimTray({ frame, x, y, len, w }: { frame: string; x: number; y: number;
  * two concentric element edges, a small iris, and a curved additive glass cap that only adds reflections. */
 function LensStack({ r, order = 0 }: { r: number; order?: number }) {
   const off = (k: number) => ({ polygonOffset: true, polygonOffsetFactor: -6 - k, polygonOffsetUnits: -6 - k })
-  const capGeo = geoOnce(`cap${r}`, () => {
-    const g = new THREE.SphereGeometry(r * 3, 48, 8, 0, Math.PI * 2, 0, Math.asin(1 / 3))
-    g.rotateX(Math.PI / 2); g.translate(0, 0, -r * 3 * Math.cos(Math.asin(1 / 3))); g.scale(1, 1, 0.35); return g
-  })
+  // Flat cover glass, as on the real phone: a disc that only adds reflections over the lens.
+  const capGeo = geoOnce(`capflat${r}`, () => new THREE.CircleGeometry(r, 64))
   return (
     <group>
       <mesh renderOrder={order}><ringGeometry args={[r * 0.74, r, 64]} />
@@ -198,10 +222,9 @@ function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }
     const pts = [[0, floor], [ri * 0.97, floor], [ri, floor + mm(0.1)], [ri, rise - c * 0.9]].map(([x, y]) => new THREE.Vector2(x, y))
     return new THREE.LatheGeometry(pts, 96)
   })
-  const dome = geoOnce(`ldome${d}|${rise}`, () => {
-    const rr = ri * 2.6, th = Math.asin(ri / rr)
-    const g = new THREE.SphereGeometry(rr, 96, 12, 0, Math.PI * 2, 0, th)
-    g.translate(0, rise - c - rr * Math.cos(th), 0); return g
+  // Flat sapphire cover sitting just below the inner lip of the ring (Apple's covers are flat, not domed).
+  const dome = geoOnce(`lcover${d}|${rise}`, () => {
+    const g = new THREE.CircleGeometry(ri, 96); g.rotateX(-Math.PI / 2); g.translate(0, rise - c - mm(0.05), 0); return g
   })
   const disc = (r: number, y: number, k: string, mat: ReactNode) => (
     <mesh key={k} position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[r, 96]} />{mat}</mesh>)
@@ -240,13 +263,18 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const screen = flatUV(rrect(mm(s.active.w), mm(s.active.h), all(actR)), mm(s.active.w), mm(s.active.h))
     const island = new THREE.ShapeGeometry(rrect(mm(s.island.w), mm(s.island.h), all(mm(s.island.r))), 24)
     // Camera plateau: full width from the top edge, 2.78 mm proud of the back. Its bottom edge is scaled off the side view.
-    const plateau = slab(rrect(W, plH, [mm(P.bottomR), mm(P.bottomR), mm(P.cornerR), mm(P.cornerR)]), rise * 2, rise * 0.35, 12)
+    // One piece with the body: the plateau reaches deep into the body (inner end at mid-thickness, so its inner rounding
+    // is hidden inside the flat frame) and is grown 0.01 mm so its sides sit just over the frame instead of z-fighting with it.
+    const grow = mm(0.01), plDepth = rise + T / 2
+    const plateau = slab(rrect(W + grow * 2, plH + grow, [mm(P.bottomR), mm(P.bottomR), mm(P.cornerR), mm(P.cornerR)], 0, grow / 2), plDepth, rise * 0.35, 12)
+    // Concave fillet where the plateau's lower edge meets the flat back, so it reads machined from one block.
+    const fillet = plateauFillet(rrect(W, plH, [mm(P.bottomR), mm(P.bottomR), mm(P.cornerR), mm(P.cornerR)]), plH, W / 2 - EDGE, mm(0.8))
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
     const bandH = mm(s.antennaBands[0][1] - s.antennaBands[0][0])
     const band = sideBand(W, T, EDGE, bandH)
-    return { body, glass, screen, island, plateau, backGlass, band }
+    return { body, glass, screen, island, plateau, fillet, backGlass, band }
   })
   useMemo(() => fitTexture(texture, mediaAspect, aspect), [texture, mediaAspect, aspect])
   // Brushed aluminium frame: anisotropic highlight along the band, streaky roughness and faint grooves.
@@ -312,7 +340,8 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* back: aluminium between the plateau and the glass, then the matte glass window */}
       <mesh geometry={g.backGlass} position={[0, ty(s.backGlass.top) - (H - mm(s.backGlass.top) - EDGE * 0.8) / 2, zb - E]} rotation={[0, Math.PI, 0]}>{matte}</mesh>
       {/* camera plateau: a full-width raised bar of the same aluminium unibody, lenses, flash and sensor sit directly on it */}
-      <mesh geometry={g.plateau} position={[0, H / 2 - plH / 2, zb]}>{metal}</mesh>
+      <mesh geometry={g.plateau} position={[0, H / 2 - plH / 2, zb + (T / 2 - rise) / 2]}>{metal}</mesh>
+      <mesh geometry={g.fillet} position={[0, H / 2 - plH / 2, zb]}>{metal}</mesh>
       {s.lens.at.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}><RearLens d={lensD} rise={lensRise} frame={f.frame} /></group>))}
       <mesh position={[bx(s.flash.bx), ty(s.flash.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.flash.d / 2), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>

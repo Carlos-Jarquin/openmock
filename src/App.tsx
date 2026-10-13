@@ -17,9 +17,9 @@ import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const wrap = (v: number) => ((v + 540) % 360) - 180
-const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0 }
+const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
 /** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
-const APPLE_HERO = { tiltX: -13, tiltY: 230, rotZ: -4, zoom: 2.275, panX: 0.31, panY: -0.37 }
+const APPLE_HERO = { tiltX: -18.438, tiltY: 230.375, rotZ: -3.125, zoom: 2.145, panX: 0.315, panY: -0.33, fov: 21.375 }
 const LIGHT = { preset: 'soft' as 'soft' | 'apple', intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
 // Device bodies the hands can grip, in model units (1 = 100 mm).
 const fitOf = (s: typeof IPHONE_18_PRO): HandFit => ({ W: s.body.w / 100, H: s.body.h / 100, T: s.body.t / 100, R: s.body.cornerR / 100, E: s.body.edge / 100 })
@@ -111,9 +111,15 @@ function Centred({ deps, children }: { deps: unknown[]; children: React.ReactNod
   return <group ref={inner}>{children}</group>
 }
 
-function Rig({ zoom }: { zoom: number }) {
+/** Zoom sets the size on screen; field of view only changes perspective, so the camera backs off as the view narrows. */
+function Rig({ zoom, fov }: { zoom: number; fov: number }) {
   const { camera } = useThree()
-  useEffect(() => { camera.position.set(0, 0, 4.2 / zoom); camera.lookAt(0, 0, 0) }, [zoom, camera])
+  useEffect(() => {
+    const cam = camera as THREE.PerspectiveCamera
+    cam.fov = fov; cam.updateProjectionMatrix()
+    const d = 4.2 / zoom * Math.tan(THREE.MathUtils.degToRad(15)) / Math.tan(THREE.MathUtils.degToRad(fov / 2))
+    camera.position.set(0, 0, d); camera.lookAt(0, 0, 0)
+  }, [zoom, fov, camera])
   return null
 }
 
@@ -279,6 +285,7 @@ export default function App() {
           {slider('Tilt Y', pose.tiltY, -180, 180, 1, n => setPose({ ...pose, tiltY: n }), '°')}
           {slider('Rotate', pose.rotZ, -45, 45, 1, n => setPose({ ...pose, rotZ: n }), '°')}
           {slider('Zoom', pose.zoom, 0.5, 2.5, 0.01, n => setPose({ ...pose, zoom: n }))}
+          {slider('Field of view', pose.fov, 8, 60, 1, n => setPose({ ...pose, fov: n }), '°')}
           {slider('Pan X', pose.panX, -1.5, 1.5, 0.01, n => setPose({ ...pose, panX: n }))}
           {slider('Pan Y', pose.panY, -1.5, 1.5, 0.01, n => setPose({ ...pose, panY: n }))}
           <button className="ghost" onClick={() => setPose(POSE)}>Reset camera</button>
@@ -346,7 +353,7 @@ export default function App() {
         <Canvas shadows gl={{ alpha: true, preserveDrawingBuffer: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1 }} camera={{ fov: 30, position: [0, 0, 4.2] }}
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
-          <Rig zoom={pose.zoom} />
+          <Rig zoom={pose.zoom} fov={pose.fov} />
           <Env intensity={apple ? 0.75 * lift : light.env} mode={light.preset} />
           {apple ? <>
             {/* Apple studio: almost no fill, two tall rim strips behind and a narrow key, so edges carry the highlights. */}
