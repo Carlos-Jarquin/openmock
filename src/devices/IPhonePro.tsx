@@ -315,7 +315,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   // Fine satin grain: the brushed roughness map tiled much smaller (shares the uploaded source, so no re-upload).
   const grain = useMemo(() => { if (!bR) return null; const t = bR.clone(); t.repeat.set(bR.repeat.x * 8, bR.repeat.y * 8); return t }, [bR])
   const metal = <meshPhysicalMaterial color={f.frame} metalness={0.3} roughness={0.5} roughnessMap={grain}
-    clearcoat={0.04} clearcoatRoughness={0.4} envMapIntensity={darkF ? 0.45 : 0.32} specularIntensity={darkF ? 0.5 : 0.45} />
+    clearcoat={0.04} clearcoatRoughness={0.4} envMapIntensity={darkF ? 0.4 : 0.32} specularIntensity={darkF ? 0.3 : 0.45} />
   // Plateau: same bead-blasted aluminium but matte, so the wide shoulder rolls off softly with no hot streak.
   const plateauMetal = <meshPhysicalMaterial color={f.frame} metalness={0.25} roughness={0.66}
     envMapIntensity={darkF ? 0.45 : 0.7} specularIntensity={darkF ? 0.5 : 0.75} />
