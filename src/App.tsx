@@ -15,6 +15,7 @@ import { Env, retryEnvironment } from './Env'
 import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type Guide } from './hands/aiHands'
 import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
+import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER } from './sketch/Sketch'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -137,6 +138,9 @@ export default function App() {
   const [pose, setPose] = useState(POSE)
   const [light, setLight] = useState(LIGHT)
   const [fx, setFx] = useState(FX)
+  const [style, setStyle] = useState<'photo' | 'sketch'>('photo')
+  const [sk, setSk] = useState(SKETCH_DEFAULTS)
+  const sketch = style === 'sketch'
   const [hands, setHands] = useState<{ pose: HandPose; tone: string }>({ pose: 'off', tone: 'fair' })
   // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
   const [ai, setAi] = useState<{ guide: Guide; shadows: boolean; busy: boolean; url: string | null }>({ guide: 'depth', shadows: false, busy: false, url: null })
@@ -197,7 +201,7 @@ export default function App() {
 
   // Any change to the scene makes the AI picture stale, so drop it.
   useEffect(() => { setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return a.url ? { ...a, url: null } : a }) },
-    [device, opts, media, pose, light, fx, hands, bgMode, bg1, bg2, angle, transparent])
+    [device, opts, media, pose, light, fx, hands, bgMode, bg1, bg2, angle, transparent, style, sk])
   const makePhotoreal = async () => {
     const t = three.current; if (!t || ai.busy) return
     if (!(await comfyReachable())) { setStatus('ComfyUI is not running. Start it on port 8188, then try again.'); return }
@@ -254,7 +258,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -278,6 +282,18 @@ export default function App() {
         <section><h2>Scenes</h2>
           <button onClick={violetScene}>Violet silhouette</button>
           <p className="hint">A dark hand holds the phone up against a violet backdrop with light streaks. Change the colours under Background.</p>
+        </section>
+        <section><h2>Style</h2>
+          <div className="seg"><button className={!sketch ? 'on' : ''} onClick={() => setStyle('photo')}>Photo</button>
+            <button className={sketch ? 'on' : ''} onClick={() => { setStyle('sketch'); setBgMode('solid'); setBg1(SKETCH_PAPER); setTransparent(false) }}>Sketch</button></div>
+          {sketch && <>
+            <label className="row"><span>Line colour</span><input type="color" value={sk.line} onChange={e => setSk({ ...sk, line: e.target.value })} /><input className="hex" value={sk.line} onChange={e => setSk({ ...sk, line: e.target.value })} /></label>
+            <label className="row"><span>Body colour</span><input type="color" value={sk.fill} onChange={e => setSk({ ...sk, fill: e.target.value })} /><input className="hex" value={sk.fill} onChange={e => setSk({ ...sk, fill: e.target.value })} /></label>
+            {slider('Outer lines', sk.outer, 0, 8, 0.1, n => setSk({ ...sk, outer: n }), ' px')}
+            {slider('Inner lines', sk.inner, 0, 4, 0.1, n => setSk({ ...sk, inner: n }), ' px')}
+            <button className="ghost" onClick={() => setSk(SKETCH_DEFAULTS)}>Reset sketch</button>
+            <p className="hint">A flat illustration: cream body, soft grey shading and grey outlines. Reflections are off. Choosing Sketch sets a warm paper background, which you can change under Background.</p>
+          </>}
         </section>
         <section><h2>Device</h2>
           <div className="seg">{DEVICES.map(d => <button key={d.id} className={d.id === device ? 'on' : ''} onClick={() => { setDevice(d.id); if (d.defaultFinish && !(d.finishes && opts.finish in d.finishes)) setOpts(o => ({ ...o, finish: d.defaultFinish! })) }}>{d.label}</button>)}</div>
@@ -399,7 +415,7 @@ export default function App() {
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
           <Rig zoom={pose.zoom} fov={pose.fov} />
-          <Env intensity={apple ? 0.75 * lift : violet ? 0.35 : light.env} mode={light.preset === 'violet' ? 'apple' : light.preset} />
+          {!sketch && <Env intensity={apple ? 0.75 * lift : violet ? 0.35 : light.env} mode={light.preset === 'violet' ? 'apple' : light.preset} />}
           {violet ? <>
             {/* Violet rim: dim violet fill, a soft key on the screen, two lavender rims behind for the silhouette edge. */}
             <ambientLight color="#6f5bd6" intensity={0.12} />
@@ -427,7 +443,7 @@ export default function App() {
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
             <Centred deps={[device, opts.fold, opts.screen, media?.texture, hands.pose]}>
               <HandRig pose={hands.pose} tone={hands.tone} fit={HAND_FITS[device] ?? null}>
-                <D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} />
+                <SketchStyle on={sketch} o={sk}><D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} /></SketchStyle>
               </HandRig>
             </Centred>
           </group>
@@ -436,7 +452,7 @@ export default function App() {
           {(fx.dof || fx.bloom || fx.grain || !transparent) && (
             <EffectComposer multisampling={4}>
               {/* Ambient occlusion at part junctions (lens rings, buttons, plateau). Radius in scene units, 0.025 = 2.5 mm. */}
-              <>{!transparent && <N8AO halfRes aoRadius={0.025} distanceFalloff={0.3} intensity={2.2} color="#000" />}</>
+              <>{!transparent && !sketch && <N8AO halfRes aoRadius={0.025} distanceFalloff={0.3} intensity={2.2} color="#000" />}</>
               <>{fx.dof && <DepthOfField target={[pose.panX, pose.panY, fx.focus]} focalLength={0.12} bokehScale={fx.blur} />}</>
               <>{fx.bloom && <Bloom intensity={0.2} luminanceThreshold={0.95} mipmapBlur />}</>
               <>{fx.grain && <Noise opacity={0.06} premultiply />}</>

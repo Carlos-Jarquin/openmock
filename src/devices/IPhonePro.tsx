@@ -5,6 +5,7 @@ import type { DeviceProps } from '../types'
 import { fitTexture, DEFAULT_LOGO_TINT, sceneHit } from './shared'
 import { brushedNormal, brushedRoughness, frostRoughness, smudgeRoughness } from './materials'
 import type { IPhoneSpec } from './iphoneSpecs'
+import { sliceY } from '../sketch/Sketch'
 // Parametric iPhone 18 Pro family: unofficial procedural model, not affiliated with Apple.
 // Every measurement comes from a pure data spec (./iphoneSpecs.ts); this file only turns it into geometry.
 // Scale: 1 unit = 100 mm. Origin at the body centre, display faces +z, top of phone is +y.
@@ -26,6 +27,7 @@ const rrC = (w: number, h: number, r: number[], cx = 0, cy = 0) => {
   if (!s) shapeCache.set(k, s = rrect(w, h, r, cx, cy)); return s
 }
 const geoCache = new Map<string, THREE.BufferGeometry>()
+const btnLineCache = new Map<string, Float32Array>()
 const geoOnce = (k: string, f: () => THREE.BufferGeometry) => { let g = geoCache.get(k); if (!g) geoCache.set(k, g = f()); return g }
 /** Smooth shading for extruded parts: ExtrudeGeometry is unindexed, so computeVertexNormals gives one normal per face
  * and every bevel facet shows. Average normals of faces meeting at the same point when they are within creaseDeg. */
@@ -174,7 +176,12 @@ function plateauSurface(o: { W: number; H: number; CR: number; edge: number; ris
   // UVs exactly as ExtrudeGeometry's world UVs (x, y on caps, so the grain map matches the body; without UVs the
   // roughness map samples one texel and the plateau reads as a different finish).
   const uv: number[] = []; for (let i = 0; i < pos.length; i += 3) uv.push(pos[i], pos[i + 1])
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); return g
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+  // Sketch style: the flat top's outline as line segments on the surface (the plateau's edge in an illustration).
+  const loop = rrect(flat.hw * 2, flat.top - flat.bottom, [flat.rb, flat.rb, flat.rt, flat.rt], 0, fcy).getSpacedPoints(360)
+  const seg: number[] = []
+  for (let k = 0; k < loop.length - 1; k++) for (const q of [loop[k], loop[k + 1]]) seg.push(q.x, q.y, -height(q.x, q.y) - 3e-4)
+  g.userData.topLoop = new Float32Array(seg); return g
 }
 
 function plateauFillet(shape: THREE.Shape, h: number, xMax: number, f: number, inset = 0, steps = 8) {
@@ -272,7 +279,7 @@ function LensStack({ r, order = 0 }: { r: number; order?: number }) {
   // Flat cover glass, as on the real phone: a disc that only adds reflections over the lens.
   const capGeo = geoOnce(`capflat${r}`, () => new THREE.CircleGeometry(r, 64))
   return (
-    <group>
+    <group userData={{ sketchNoEdges: true }}>
       <mesh renderOrder={order}><ringGeometry args={[r * 0.74, r, 64]} />
         <meshPhysicalMaterial color="#0c0d11" metalness={0.85} roughness={0.32} {...off(0)} /></mesh>
       <mesh renderOrder={order}><circleGeometry args={[r * 0.74, 64]} />
@@ -295,6 +302,13 @@ function LensStack({ r, order = 0 }: { r: number; order?: number }) {
 function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }) {
   // Ring: outer edge at the drawn 16.58 diameter; width 1.25 mm, measured from Apple's hero photo along the unforeshortened axis (ring/diameter ~0.075).
   const R = d / 2, w = mm(1.25), ri = R - w, c = mm(0.32), floor = mm(0.12)
+  // Sketch style: outer edge, inner lip and the front element as circles, in this group's local space (y is up).
+  const circles = useMemo(() => {
+    const out: number[] = [], circ = (r: number, y: number) => { for (let i = 0; i < 96; i++) { const a = i / 96 * Math.PI * 2, b = (i + 1) / 96 * Math.PI * 2
+      out.push(Math.cos(a) * r, y, Math.sin(a) * r, Math.cos(b) * r, y, Math.sin(b) * r) } }
+    circ(R + mm(0.02), rise - c * 0.3); circ(ri + mm(0.02), rise - c * 0.9 + mm(0.01)); circ(ri * 0.34, rise - c - mm(0.04))
+    return new Float32Array(out)
+  }, [R, ri, rise, c])
   const ring = geoOnce(`lring${d}|${rise}`, () => {
     // Satin body of the ring: outer wall and wide flat top.
     const pts = [[R - c * 0.3, rise - c * 0.3], [R - c, rise],
@@ -323,10 +337,10 @@ function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }
     iridescence={1} iridescenceIOR={1.4} iridescenceThicknessRange={t} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.5} depthWrite={false} />
   const h = rise - c
   return (
-    <group rotation={[-Math.PI / 2, 0, 0]}>
-      <mesh geometry={ring} castShadow><meshPhysicalMaterial color={frame} metalness={0.3} roughness={0.56} roughnessMap={frostRoughness()} envMapIntensity={0.85} side={THREE.DoubleSide} /></mesh>
-      <mesh geometry={wall} castShadow><meshPhysicalMaterial color={frame} metalness={0.3} roughness={0.7} envMapIntensity={0.45} side={THREE.DoubleSide} /></mesh>
-      <mesh geometry={lip}><meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.2} envMapIntensity={1.1} side={THREE.DoubleSide} /></mesh>
+    <group rotation={[-Math.PI / 2, 0, 0]} userData={{ sketchNoEdges: true }}>
+      <mesh geometry={ring} castShadow userData={{ sketchLines: circles, sketchTone: 'fill' }}><meshPhysicalMaterial color={frame} metalness={0.3} roughness={0.56} roughnessMap={frostRoughness()} envMapIntensity={0.85} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={wall} castShadow userData={{ sketchTone: 'fill' }}><meshPhysicalMaterial color={frame} metalness={0.3} roughness={0.7} envMapIntensity={0.45} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={lip} userData={{ sketchTone: 'fill' }}><meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.2} envMapIntensity={1.1} side={THREE.DoubleSide} /></mesh>
       <mesh geometry={barrel}><meshPhysicalMaterial color="#07080b" metalness={0.4} roughness={0.55} side={THREE.DoubleSide} /></mesh>
       {disc(ri * 0.98, floor + E / 3, 'floor', <meshPhysicalMaterial color="#010103" roughness={0.3} clearcoat={0.6} envMapIntensity={0.6} />)}
       {disc(ri * 0.42, floor + h * 0.12, 'e3', ar('#11121c', [300, 480]))}
@@ -408,9 +422,18 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const g = new THREE.ExtrudeGeometry(rrect(wz - bev * 2, len - bev * 2, all(r - bev)), { depth: prot + SINK - bev, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 10, curveSegments: 32 })
     g.translate(0, 0, -SINK); g.rotateY(Math.PI / 2); return smoothNormals(g) // extrusion now runs along +x
   })
+  // Sketch style: the button's footprint on the frame and the edge of its face, as line loops (local +x is outward).
+  const btnLines = (len: number, wz: number, prot: number) => {
+    const k = `${len}|${wz}|${prot}`; let l = btnLineCache.get(k); if (l) return l
+    const bev = Math.min(prot * 0.45, mm(0.2)), out: number[] = []
+    const loop = (w: number, h: number, x: number) => { const p = rrect(w, h, all(w / 2)).getSpacedPoints(96)
+      for (let i = 0; i < p.length - 1; i++) out.push(x, p[i].y, -p[i].x, x, p[i + 1].y, -p[i + 1].x) }
+    loop(wz + mm(0.03), len + mm(0.03), mm(0.01)); loop(wz - bev * 2, len - bev * 2, prot + mm(0.005))
+    btnLineCache.set(k, l = new Float32Array(out)); return l
+  }
   const side = (x: number, b: { cy: number; len: number }, key: string) => (
     <Pressable key={key} depth={mm(0.3)} position={[x, ty(b.cy), 0]} rotation={[0, x < 0 ? Math.PI : 0, 0]}>
-      <mesh geometry={btnGeo(mm(b.len), mm(s.btn.w), mm(s.btn.protrude))} castShadow>{metal}</mesh></Pressable>)
+      <mesh geometry={btnGeo(mm(b.len), mm(s.btn.w), mm(s.btn.protrude))} castShadow userData={{ sketchHull: true, sketchLines: btnLines(mm(b.len), mm(s.btn.w), mm(s.btn.protrude)) }}>{metal}</mesh></Pressable>)
   // Camera Control: flush (0.00 on the drawing). Thin metal surround sized to the 3.40 x 17.50 keepout,
   // and a sapphire inset at the drawn 3.03 x 17.10.
   const cc = s.cameraControl
@@ -452,10 +475,16 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     mat.customProgramCacheKey = () => 'om-band'; return mat
   }), [bandMaterial, plY])
   const bandOn = (geo: THREE.BufferGeometry, y: number, z: number) =>
-    <mesh geometry={geo} position={[0, y, z]} renderOrder={1} material={bandMats[y === 0 ? 0 : 1]} />
+    <mesh geometry={geo} position={[0, y, z]} renderOrder={1} material={bandMats[y === 0 ? 0 : 1]} userData={{ sketchHide: true }} />
+  // Sketch style: thin lines where the antenna bands start and end, on the frame sides and over the plateau shoulder.
+  const sketch = useMemo(() => {
+    const ys = s.antennaBands.flat().map(ty)
+    const cat = (...a: Float32Array[]) => { const o = new Float32Array(a.reduce((n, x) => n + x.length, 0)); let k = 0; for (const x of a) { o.set(x, k); k += x.length } return o }
+    return { body: sliceY(g.body, ys), plateau: cat(sliceY(g.plateau, ys), g.plateau.userData.topLoop as Float32Array) }
+  }, [g, s, H])
   return (
     <group>
-      <mesh geometry={g.body} castShadow name="ip18-body">{metal}</mesh>
+      <mesh geometry={g.body} castShadow name="ip18-body" userData={{ sketchHull: true, sketchLines: sketch.body }}>{metal}</mesh>
       {/* antenna split bands on both long sides, from the side views */}
       {bandOn(g.body, 0, 0)}
       {/* front cover glass and display */}
@@ -476,7 +505,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* back: aluminium between the plateau and the glass, then the matte glass window */}
       <mesh geometry={g.backGlass} position={[0, ty(s.backGlass.top) - (H - mm(s.backGlass.top) - EDGE * 0.8) / 2, zb - E]} rotation={[0, Math.PI, 0]}>{matte}</mesh>
       {/* camera plateau: a full-width raised bar of the same aluminium unibody, lenses, flash and sensor sit directly on it */}
-      <mesh geometry={g.plateau} position={[0, 0, zb]}>{metal}</mesh>
+      <mesh geometry={g.plateau} position={[0, 0, zb]} name="ip18-plateau" userData={{ sketchHull: true, sketchEdges: false, sketchLines: sketch.plateau }}>{metal}</mesh>
       {/* Antenna bands run over the plateau's outer shoulder and stop at the inner edge of the flat top (normal-based cut). */}
       {bandOn(g.plateau, 0, zb)}
       {/* the flat top is part of the swept plateau surface */}

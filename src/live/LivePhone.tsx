@@ -10,6 +10,7 @@ import { IPHONE_18_PRO, IPHONE_18_PRO_MAX, type IPhoneSpec } from '../devices/ip
 import { Env } from '../Env'
 import type { DeviceOptions, LogoArt } from '../types'
 import { loadLocalLogo } from '../localLogo'
+import { SketchStyle, SKETCH_PAPER } from '../sketch/Sketch'
 
 const mm = (v: number) => v / 100 // same unit as IPhonePro
 const PX_PER_UNIT = 40 // drei <Html transform> maps 40 CSS px to 1 world unit (distanceFactor 10)
@@ -25,6 +26,7 @@ const START_YAW = Number(params.get('yaw') ?? 0) * Math.PI / 180, START_PITCH = 
 const HOLD = params.has('hold') // keep the starting angle (for tilted screenshots)
 const SB = (params.get('statusbar') ?? 'auto') as 'auto' | 'dark' | 'light' | 'off'
 const TOP_SAFE = 54 // iOS status bar / top safe area on Dynamic Island iPhones, in points
+const SKETCH = params.get('style') === 'sketch' // ?style=sketch: flat illustration look
 const stay = { on: params.has('stay') } // stay at angle: no ease back, screen usable while tilted
 
 /** iOS status bar: time in the left ear, signal, Wi-Fi and battery in the right, centred on the island. */
@@ -131,7 +133,7 @@ function Rig({ onFaceOn, faceOn }: { onFaceOn: (v: boolean) => void; faceOn: boo
   const opts: DeviceOptions = useMemo(() => ({ fold: 0, screen: 'inner', finish: FINISH, logo, logoSize: 0.2, logoTint: '#8a8f99', simTray: false }), [logo])
   return (
     <group ref={ref}>
-      <IPhonePro spec={SPEC} texture={null} mediaAspect={1} opts={opts} />
+      <SketchStyle on={SKETCH}><IPhonePro spec={SPEC} texture={null} mediaAspect={1} opts={opts} /></SketchStyle>
       <Screen s={SPEC} interactive={faceOn} />
     </group>
   )
@@ -154,10 +156,10 @@ export default function LivePhone() {
     return () => { removeEventListener('pointerup', up); removeEventListener('pointermove', move) }
   }, [])
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'radial-gradient(circle at 50% 40%, #f5f5f7, #d9dae0)', touchAction: 'none', userSelect: 'none' }}
+    <div style={{ position: 'fixed', inset: 0, background: SKETCH ? SKETCH_PAPER : 'radial-gradient(circle at 50% 40%, #f5f5f7, #d9dae0)', touchAction: 'none', userSelect: 'none' }}
       onPointerDown={e => { drag.active = true; drag.x = e.clientX; drag.y = e.clientY; drag.vYaw = 0; setFaceOn(false) }}>
       <Canvas gl={{ antialias: true, alpha: true, toneMapping: THREE.NeutralToneMapping }} camera={{ fov: 30, position: [0, 0, 4.2] }} data-face-on={faceOn ? '1' : '0'}>
-        <Env intensity={1} />
+        {!SKETCH && <Env intensity={1} />}
         <ambientLight intensity={0.4} />
         <directionalLight position={[2, 3, 4]} intensity={1.2} />
         <Rig onFaceOn={setFaceOn} faceOn={faceOn} stayOn={stayOn} />
