@@ -7,7 +7,7 @@
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { useGLTF } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
-import { spectralMaterials, buildSpectral, addHull, removeHull, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
+import { spectralMaterials, buildSpectral, updateSpectral, addHull, removeHull, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
 import { LINE_LAYER } from '../sketch/Sketch'
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
@@ -436,10 +436,12 @@ function Hands({ pose, tone, fit, gesture, sp }: { pose: HandPose; tone: string;
   // live uniforms: tint, transparency and the three effects
   useEffect(() => { if (!spm) return
     spm.tint.set(sp.tint); spm.line.color.set(sp.tint)
-    const u = spm.body.uniforms; u.uAlpha.value = 1 - sp.transparency; u.uGlimmer.value = sp.glimmer ? 1 : 0; u.uShimmer.value = sp.shimmer ? 1 : 0
-  }, [spm, sp.tint, sp.transparency, sp.glimmer, sp.shimmer])
+    const u = spm.body.uniforms; u.uAlpha.value = 1 - sp.transparency; u.uGlimmer.value = sp.glimmer ? 1 : 0; u.uShimmer.value = sp.shimmer ? 1 : 0; u.uStars.value = sp.stars ? 1 : 0
+  }, [spm, sp.tint, sp.transparency, sp.glimmer, sp.shimmer, sp.stars])
   const { size, gl } = useThree()
-  useFrame(({ clock }) => { spm?.frame(size.width, size.height, gl.getPixelRatio(), clock.elapsedTime) })
+  useFrame(({ clock, camera }) => { if (!spm) return
+    spm.frame(size.width, size.height, gl.getPixelRatio(), clock.elapsedTime)
+    for (const side of ['right', 'left'] as const) if (rigs[side].root.parent) updateSpectral(rigs[side].mesh, camera) })
   useEffect(() => { rigs.right.mesh.material = mat; rigs.left.mesh.material = mat }, [rigs, mat])
   // Only the gesture fields the pose uses, so moving a marker re-solves just the touching hand.
   const ges = isGesture(pose) ? gesture : undefined
@@ -467,10 +469,10 @@ function Hands({ pose, tone, fit, gesture, sp }: { pose: HandPose; tone: string;
       for (const m of [r.mesh, arm] as THREE.Mesh[]) { m.layers.set(spm ? LINE_LAYER : 0); m.castShadow = !spm; m.renderOrder = spm ? 10 : 0; if (!spm) removeHull(m) }
       if (!spm) continue
       addHull(r.mesh, spm); addHull(arm, spm)
-      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm, sp.stars)
+      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm)
     }
     if (import.meta.env.DEV) (globalThis as { __omHands?: unknown }).__omHands = { rigs, arms }
-  }, [spm, rigs, arms, pose, fit, ges, sp.stars])
+  }, [spm, rigs, arms, pose, fit, ges])
   useEffect(() => () => { const g = group.current; for (const side of ['right', 'left'] as const) g?.remove(rigs[side].root, arms[side]); solved.current = {} }, [rigs, arms])
   return <group ref={group} userData={{ noBounds: true }} />
 }

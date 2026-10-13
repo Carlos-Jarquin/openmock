@@ -1,6 +1,6 @@
 // Spectral hands: a near-invisible tinted body with Sketch-style outlines (opaque outer silhouette from a skinned inverted
-// hull, thin inner lines for knuckle creases and fingertip fingerprint arcs), plus optional Glimmer (fresnel rim glow),
-// Stars (small four-point sparkles) and Shimmer (an iridescent sweep, animated live). Everything is on the Sketch line
+// hull, thin inner lines for silhouettes, knuckle creases and fingertip arcs), plus optional Glimmer (fresnel rim glow),
+// Stars (tiny twinkling glints on the skin) and Shimmer (an iridescent sweep, animated live). Everything is on the Sketch line
 // layer and inside the hands' noBounds group, so it stays out of the contact shadow and the framing.
 import * as THREE from 'three'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
@@ -10,7 +10,7 @@ import { LINE_LAYER } from '../sketch/Sketch'
 
 export interface SpectralOptions { tint: string; transparency: number; glimmer: boolean; stars: boolean; shimmer: boolean }
 export const SPECTRAL_DEFAULTS: SpectralOptions = { tint: '#206DD0', transparency: 0.98, glimmer: false, stars: false, shimmer: false }
-export const SPECTRAL_OUTER = 2.4, SPECTRAL_INNER = 1.0 // CSS px, like Sketch's outer and inner lines
+export const SPECTRAL_OUTER = 2.4, SPECTRAL_INNER = 0.75 // CSS px, like Sketch's outer and inner lines
 
 const SKIN_PARS = /* glsl */`
 #include <common>
@@ -25,14 +25,33 @@ const SKIN_BODY = /* glsl */`
 #include <project_vertex>
 `
 const bodyVert = `${SKIN_PARS}
-varying vec3 vN; varying vec3 vV; varying vec3 vW;
+varying vec3 vN; varying vec3 vV; varying vec3 vW; varying vec3 vB;
 void main() {
 ${SKIN_BODY}
   vN = normalize(normalMatrix * objectNormal); vV = -mvPosition.xyz; vW = (modelMatrix * vec4(transformed, 1.0)).xyz;
+  vB = position; // bind-pose position: glints stay put on the skin as the hand poses
 }`
 const bodyFrag = /* glsl */`
-uniform vec3 uTint; uniform float uAlpha, uGlimmer, uShimmer, uTime;
-varying vec3 vN; varying vec3 vV; varying vec3 vW;
+uniform vec3 uTint; uniform float uAlpha, uGlimmer, uShimmer, uStars, uTime, uPx;
+varying vec3 vN; varying vec3 vV; varying vec3 vW; varying vec3 vB;
+vec3 hash3(vec3 p) { p = fract(p * vec3(443.897, 441.423, 437.195)); p += dot(p, p.yxz + 19.19); return fract((p.xxy + p.yxx) * p.zyx); }
+/** Stars: sparse glints on a 3D cell grid in bind space (cell ~2.5 mm), each a tiny four-point glint that twinkles on its own clock. */
+float glints(vec3 b) {
+  float cell = 0.003, best = 0.0;
+  vec3 g = floor(b / cell);
+  for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) for (int k = -1; k <= 1; k++) {
+    vec3 c = g + vec3(i, j, k), h = hash3(c);
+    if (h.x > 0.42) continue; // keep about 4 in 10 cells
+    vec3 h2 = hash3(c + 17.3);
+    vec3 pc = (c + h) * cell;
+    // glint radius about 0.5 mm on the skin (bind space is in metres)
+    float d = length(b - pc) / max(uPx, 1e-6);
+    float tw = pow(0.5 + 0.5 * sin(uTime * (1.5 + 2.5 * h2.x) + 6.2831 * h2.y), 3.0);
+    float core = exp(-d * d * 0.9);
+    best = max(best, core * tw * (0.6 + 0.4 * h2.z));
+  }
+  return best;
+}
 vec3 hue(vec3 c, float a) { const vec3 k = vec3(0.57735); float ca = cos(a); return c * ca + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - ca); }
 void main() {
   vec3 n = normalize(vN), v = normalize(vV);
@@ -46,6 +65,8 @@ void main() {
   float band = smoothstep(0.55, 1.0, s);
   col = mix(col, hue(mix(uTint, vec3(1.0), 0.3), 0.6 * sin(dot(vW, vec3(3.0, -2.0, 1.0)) + uTime * 0.4)), uShimmer * (0.35 + 0.65 * band));
   a += uShimmer * (0.05 + 0.18 * band * (0.4 + 0.6 * f));
+  float st = uStars > 0.0 ? glints(vB) : 0.0;
+  col = mix(col, mix(uTint, vec3(1.0), 0.35), min(1.0, st * 1.6)); a = max(a, min(1.0, st * 1.6));
   gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
   #include <colorspace_fragment>
 }`
@@ -60,36 +81,20 @@ ${SKIN_BODY}
 const hullFrag = /* glsl */`uniform vec3 uTint; void main() { gl_FragColor = vec4(uTint, 1.0);
   #include <colorspace_fragment>
 }`
-const starVert = /* glsl */`uniform float uSize; attribute float aScale; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = uSize * aScale; }`
-const starFrag = /* glsl */`uniform vec3 uTint;
-void main() {
-  vec2 p = gl_PointCoord * 2.0 - 1.0; vec2 q = abs(p);
-  // four-point star: two thin tapered rays plus a small core
-  float ray = max(1.0 - smoothstep(0.0, 0.09 * (1.0 - q.x), q.y), 1.0 - smoothstep(0.0, 0.09 * (1.0 - q.y), q.x));
-  ray *= 1.0 - smoothstep(0.6, 1.0, max(q.x, q.y));
-  float core = 1.0 - smoothstep(0.0, 0.22, length(p));
-  float a = max(ray, core);
-  if (a < 0.01) discard;
-  gl_FragColor = vec4(mix(uTint, vec3(1.0), 0.55 * core + 0.25), a * 0.9);
-  #include <colorspace_fragment>
-}`
-
 export function spectralMaterials(o: SpectralOptions) {
   const tint = new THREE.Color(o.tint), res = new THREE.Vector2(1, 1)
   const body = new THREE.ShaderMaterial({ vertexShader: bodyVert, fragmentShader: bodyFrag, transparent: true, depthWrite: true,
-    uniforms: { uTint: { value: tint }, uAlpha: { value: 1 - o.transparency }, uGlimmer: { value: o.glimmer ? 1 : 0 }, uShimmer: { value: o.shimmer ? 1 : 0 }, uTime: { value: 0 } } })
+    uniforms: { uTint: { value: tint }, uAlpha: { value: 1 - o.transparency }, uGlimmer: { value: o.glimmer ? 1 : 0 }, uShimmer: { value: o.shimmer ? 1 : 0 }, uStars: { value: o.stars ? 1 : 0 }, uTime: { value: 0 }, uPx: { value: 0.0005 } } })
   const hull = new THREE.ShaderMaterial({ vertexShader: hullVert, fragmentShader: hullFrag, side: THREE.BackSide, transparent: true, depthWrite: false,
     uniforms: { uTint: { value: tint }, uWidth: { value: SPECTRAL_OUTER }, uRes: { value: res } } })
   const line = new LineMaterial({ color: o.tint, linewidth: SPECTRAL_INNER, worldUnits: false, transparent: true, opacity: 0.85, depthWrite: false })
-  const star = new THREE.ShaderMaterial({ vertexShader: starVert, fragmentShader: starFrag, transparent: true, depthWrite: false, depthTest: false,
-    uniforms: { uTint: { value: tint }, uSize: { value: 18 } } })
-  return { body, hull, line, star, res, tint,
+  return { body, hull, line, res, tint,
     /** per frame: pixel ratio and canvas size for the screen-space widths, and the shimmer clock (frozen when still) */
     frame(w: number, h: number, dpr: number, t: number) {
       res.set(w * dpr, h * dpr); line.resolution.set(w * dpr, h * dpr); line.linewidth = SPECTRAL_INNER * dpr
-      hull.uniforms.uWidth.value = SPECTRAL_OUTER * dpr; star.uniforms.uSize.value = 18 * dpr; body.uniforms.uTime.value = t
+      hull.uniforms.uWidth.value = SPECTRAL_OUTER * dpr; body.uniforms.uTime.value = t
     },
-    dispose() { body.dispose(); hull.dispose(); line.dispose(); star.dispose() } }
+    dispose() { body.dispose(); hull.dispose(); line.dispose() } }
 }
 export type SpectralMats = ReturnType<typeof spectralMaterials>
 
@@ -140,6 +145,10 @@ function prepare(mesh: THREE.SkinnedMesh, owner: string[]): Prepared {
     for (let v = 0; v < N; v++) { const d = B[v].clone().sub(D); f[v] = Math.hypot((d.dot(ax) / len - s0) / 0.42, d.dot(side) / (hw * 0.85)) }
     const pad = (v: number) => { if (!ownD(v)) return false; const d = B[v].clone().sub(D); return d.dot(nrm) > hw * 0.35 && d.dot(ax) / len < s0 + 0.12 }
     for (const L of [0.3, 0.55, 0.8]) contour(geo, f, pad, L, segs)
+    // Nail bed: a rounded outline on the back of the distal segment, from about 40% of its length to just short of the tip.
+    for (let v = 0; v < N; v++) { const d = B[v].clone().sub(D); f[v] = Math.hypot((d.dot(ax) / len - 0.66) / 0.3, d.dot(side) / (hw * 0.68)) }
+    const back = (v: number) => ownD(v) && B[v].clone().sub(D).dot(nrm) < -hw * 0.25
+    contour(geo, f, back, 1, segs)
     // Knuckle creases: a short line across each joint, on both the palm and the back, kept to the middle of the finger.
     for (const jn of creaseJoints) {
       const C = J(jn), nxt = J(jn.replace(/phalanx-(proximal|intermediate|distal)$/, (m) => ({ 'phalanx-proximal': 'phalanx-intermediate', 'phalanx-intermediate': 'phalanx-distal', 'phalanx-distal': 'tip' } as Record<string, string>)[m]))
@@ -161,42 +170,73 @@ function prepare(mesh: THREE.SkinnedMesh, owner: string[]): Prepared {
   const p = { segs, starV }; cache.set(geo, p); return p
 }
 
-const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3()
-/** Rebuilds the inner lines and stars for the current pose (the hands only move when re-solved). */
-export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: SpectralMats, stars: boolean) {
+// ---------- per-frame inner silhouettes ----------
+// Finger separations, overlaps and inner contours are the hand's own silhouette edges seen from the camera: mesh edges
+// between a front- and a back-facing triangle. They are found every frame (the camera or the hand may turn), and every
+// line point is pulled 1.2 mm toward the camera so it wins the depth test against the clear body it lies on. A normal
+// offset alone lost grazing silhouettes to the body's depth, which is what made them drop out.
+interface Edges { tris: Uint32Array; edges: Uint32Array /* a, b, t1, t2 */ }
+const edgeCache = new WeakMap<THREE.BufferGeometry, Edges>()
+function edgesOf(geo: THREE.BufferGeometry): Edges {
+  const hit = edgeCache.get(geo); if (hit) return hit
+  const pos = geo.getAttribute('position'), idx = geo.index!
+  // weld split vertices (UV seams) so neighbouring triangles share edges
+  const key = new Map<string, number>(), weld = new Uint32Array(pos.count)
+  for (let i = 0; i < pos.count; i++) { const k = `${pos.getX(i).toFixed(5)},${pos.getY(i).toFixed(5)},${pos.getZ(i).toFixed(5)}`
+    let w = key.get(k); if (w === undefined) { w = i; key.set(k, i) } weld[i] = w }
+  const tris = new Uint32Array(idx.count); for (let i = 0; i < idx.count; i++) tris[i] = idx.getX(i)
+  const map = new Map<string, number[]>()
+  for (let t = 0; t < idx.count / 3; t++) for (let e = 0; e < 3; e++) {
+    const a = weld[tris[t * 3 + e]], b = weld[tris[t * 3 + (e + 1) % 3]], k = a < b ? `${a}_${b}` : `${b}_${a}`
+    const l = map.get(k); if (l) l.push(t); else map.set(k, [a < b ? a : b, a < b ? b : a, t]) }
+  const out: number[] = []
+  for (const l of map.values()) out.push(l[0], l[1], l[2], l.length > 3 ? l[3] : 0xffffffff)
+  const r = { tris, edges: new Uint32Array(out) }; edgeCache.set(geo, r); return r
+}
+
+interface LineState { skinned: Float32Array; creases: Float32Array; lines: LineSegments2; camKey: string }
+/** Rebuilds the skinned positions and the crease and fingertip lines for the current pose (on each re-solve). */
+export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: SpectralMats) {
   for (const c of [...mesh.children]) if (c.userData.spectral && !c.userData.spectralHull) { mesh.remove(c); (c as THREE.Mesh).geometry?.dispose() }
   const prep = prepare(mesh, owner)
   let top: THREE.Object3D = mesh; while (top.parent) top = top.parent
   top.updateMatrixWorld(true); mesh.skeleton.update()
-  const sk = new Map<number, THREE.Vector3>()
-  const P = (i: number) => { let v = sk.get(i); if (!v) { v = mesh.getVertexPosition(i, new THREE.Vector3()); sk.set(i, v) } return v }
-  // centre of the skinned hand, to push the lines a hair outward so they win the depth test against the body
-  const box = new THREE.Box3(); for (const s of prep.segs) box.expandByPoint(P(s[0]))
-  const out: number[] = []
-  const pt = (i: number, j: number, t: number, nb: THREE.Vector3) => { _a.copy(P(i)).lerp(P(j), t); return _a }
-  for (const s of prep.segs) {
-    const A = pt(s[0], s[1], s[2], _c).clone(), Bp = pt(s[3], s[4], s[5], _c).clone()
-    // outward offset: along the averaged normal estimate from the two edges' skinned positions relative to the segment's local centre
-    const mid = A.clone().add(Bp).multiplyScalar(0.5)
-    const n = mesh.geometry.getAttribute('normal')
-    _b.fromBufferAttribute(n, s[0]).add(_c.fromBufferAttribute(n, s[3])).normalize()
-    // bind-space normal turned by the dominant bone of the first vertex
-    const bi = mesh.geometry.getAttribute('skinIndex').getX(s[0]), bone = mesh.skeleton.bones[bi]
-    const rot = new THREE.Matrix3().setFromMatrix4(bone.matrixWorld.clone().multiply(mesh.skeleton.boneInverses[bi]))
-    const nw = _b.applyMatrix3(rot).normalize().transformDirection(mesh.matrixWorld.clone().invert())
-    const off = nw.multiplyScalar(0.004); void mid
-    out.push(A.x + off.x, A.y + off.y, A.z + off.z, Bp.x + off.x, Bp.y + off.y, Bp.z + off.z)
-  }
-  const g = new LineSegmentsGeometry(); g.setPositions(out)
-  const lines = new LineSegments2(g, m.line); lines.renderOrder = 12
+  const N = mesh.geometry.getAttribute('position').count, sk = new Float32Array(N * 3), v = new THREE.Vector3()
+  for (let i = 0; i < N; i++) { mesh.getVertexPosition(i, v); sk[i * 3] = v.x; sk[i * 3 + 1] = v.y; sk[i * 3 + 2] = v.z }
+  const P = (i: number, j: number, t: number, o: number[]) => { for (let k = 0; k < 3; k++) o.push(sk[i * 3 + k] + (sk[j * 3 + k] - sk[i * 3 + k]) * t) }
+  const cr: number[] = []; for (const s of prep.segs) { P(s[0], s[1], s[2], cr); P(s[3], s[4], s[5], cr) }
+  const lines = new LineSegments2(new LineSegmentsGeometry(), m.line); lines.renderOrder = 12
   lines.userData = { spectral: true, noBounds: true }; lines.layers.set(LINE_LAYER); lines.frustumCulled = false; mesh.add(lines)
-  if (stars) {
-    const sp: number[] = [], sc: number[] = [], ks = [1, 0.7, 0.85, 0.6, 0.9, 0.75, 0.55, 0.65]
-    prep.starV.forEach((v, k) => { const p = P(v); const o = [0.012, -0.008, 0.01][k % 3]; sp.push(p.x + o, p.y + o * 0.7, p.z + 0.01); sc.push(ks[k % ks.length]) })
-    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3)); sg.setAttribute('aScale', new THREE.Float32BufferAttribute(sc, 1))
-    const pts = new THREE.Points(sg, m.star); pts.renderOrder = 14; pts.frustumCulled = false
-    pts.userData = { spectral: true, noBounds: true }; pts.layers.set(LINE_LAYER); mesh.add(pts)
+  mesh.userData.spectralLines = { skinned: sk, creases: new Float32Array(cr), lines, camKey: '' } as LineState
+}
+
+const _cam = new THREE.Vector3(), _inv = new THREE.Matrix4()
+/** Per frame: silhouette edges from the camera's point of view, plus the creases, all nudged toward the camera. */
+export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
+  const st = mesh.userData.spectralLines as LineState | undefined; if (!st || !st.lines.parent) return
+  _inv.copy(mesh.matrixWorld).invert(); _cam.setFromMatrixPosition(camera.matrixWorld).applyMatrix4(_inv)
+  const key = `${_cam.x.toFixed(4)},${_cam.y.toFixed(4)},${_cam.z.toFixed(4)}`; if (key === st.camKey) return
+  st.camKey = key
+  const { tris, edges } = edgesOf(mesh.geometry), sk = st.skinned, T = tris.length / 3
+  const facing = new Int8Array(T)
+  for (let t = 0; t < T; t++) {
+    const a = tris[t * 3] * 3, b = tris[t * 3 + 1] * 3, c = tris[t * 3 + 2] * 3
+    const ux = sk[b] - sk[a], uy = sk[b + 1] - sk[a + 1], uz = sk[b + 2] - sk[a + 2], vx = sk[c] - sk[a], vy = sk[c + 1] - sk[a + 1], vz = sk[c + 2] - sk[a + 2]
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx
+    facing[t] = nx * (_cam.x - sk[a]) + ny * (_cam.y - sk[a + 1]) + nz * (_cam.z - sk[a + 2]) > 0 ? 1 : -1
   }
+  const out: number[] = []
+  // the toward-camera nudge, in mesh-local units (the hand mesh is in metres): 1.2 mm
+  const nudge = (x: number, y: number, z: number) => { const dx = _cam.x - x, dy = _cam.y - y, dz = _cam.z - z, l = Math.hypot(dx, dy, dz) || 1, k = 0.0012 / l
+    out.push(x + dx * k, y + dy * k, z + dz * k) }
+  for (let e = 0; e < edges.length; e += 4) {
+    const t1 = edges[e + 2], t2 = edges[e + 3]
+    if (t2 === 0xffffffff || facing[t1] === facing[t2]) continue
+    const a = edges[e] * 3, b = edges[e + 1] * 3
+    nudge(sk[a], sk[a + 1], sk[a + 2]); nudge(sk[b], sk[b + 1], sk[b + 2])
+  }
+  const cr = st.creases; for (let i = 0; i < cr.length; i += 3) nudge(cr[i], cr[i + 1], cr[i + 2])
+  st.lines.geometry.dispose(); const g = new LineSegmentsGeometry(); g.setPositions(out); st.lines.geometry = g
 }
 
 /** The opaque outer outline: an inverted hull sharing the hand's geometry and skeleton (or a plain mesh for the forearm). */
