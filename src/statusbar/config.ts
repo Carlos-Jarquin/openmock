@@ -11,7 +11,11 @@ export type SbCfg = {
   level: number; pct: boolean
   island: 'compact' | 'activity'; act: string; ring: number
   bubble: boolean
+  islandIcon: SbIcon; bubbleIcon: SbIcon // leading icon of the expanded island / the bubble
 }
+export type SbIcon = 'ring' | 'arrow' | 'none'
+const ICONS = ['ring', 'arrow', 'none'] as const
+const icon = (v: string | null, d: SbIcon): SbIcon => (ICONS as readonly string[]).includes(v ?? '') ? v as SbIcon : d
 
 const clampN = (v: string | null, d: number, lo: number, hi: number) => { const n = Number(v ?? d); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d }
 const MODES = ['auto', 'dark', 'light', 'off'] as const, NETS = ['wifi', 'lte', '5g', 'none'] as const
@@ -29,6 +33,7 @@ export function parseSb(p: URLSearchParams): SbCfg {
     level: Math.round(clampN(q('level'), 88, 0, 100)), pct: q('battery') !== 'plain',
     island: q('island') === 'activity' ? 'activity' : 'compact', act: q('activity') ?? '23m', ring: clampN(q('ring'), 0.9, 0, 1),
     bubble: q('bubble') === 'on',
+    islandIcon: icon(q('islandIcon'), 'ring'), bubbleIcon: icon(q('bubbleIcon'), 'arrow'),
   }
 }
 export const SB_DEFAULT = parseSb(new URLSearchParams())
@@ -50,6 +55,7 @@ export function writeSb(c: SbCfg) {
   set('island', c.island === 'activity' ? 'activity' : null)
   set('activity', c.act !== d.act ? c.act : null); set('ring', c.ring !== d.ring ? String(c.ring) : null)
   set('bubble', c.bubble ? 'on' : null)
+  set('islandIcon', c.islandIcon !== d.islandIcon ? c.islandIcon : null); set('bubbleIcon', c.bubbleIcon !== d.bubbleIcon ? c.bubbleIcon : null)
   const qs = p.toString()
   history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash)
 }

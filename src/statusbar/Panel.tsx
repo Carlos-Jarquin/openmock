@@ -45,8 +45,10 @@ export function StatusBarControls({ sb, onChange, resetKey = 0 }: { sb: SbCfg; o
         <Check id="sb-percent" label="Show percentage" on={sb.pct} set={v => up({ pct: v })} style={{ paddingLeft: 14 }} />
         <div style={row}>Island <Seg id="sb-island" value={sb.island} onChange={v => up({ island: v })} opts={[['compact', 'Compact'], ['activity', 'Activity']]} /></div>
         {sb.island === 'activity' && !sb.bubble && <div style={sub}>Activity text <input id="sb-act" style={field} value={sb.act} onChange={e => up({ act: e.target.value })} /></div>}
-        {(sb.island === 'activity' || sb.bubble) && <div style={sub}>Ring <input id="sb-ring" type="range" min={0} max={100} value={Math.round(sb.ring * 100)} onChange={e => up({ ring: Number(e.target.value) / 100 })} style={{ flex: 1 }} /></div>}
+        {sb.island === 'activity' || sb.bubble ? <div style={sub}>Island icon <Seg id="sb-islandicon" value={sb.islandIcon} onChange={v => up({ islandIcon: v })} opts={[['ring', 'Ring'], ['arrow', 'Arrow'], ['none', 'None']]} /></div> : null}
+        {((sb.island === 'activity' || sb.bubble) && sb.islandIcon === 'ring' || sb.bubble && sb.bubbleIcon === 'ring') && <div style={sub}>Ring <input id="sb-ring" type="range" min={0} max={100} value={Math.round(sb.ring * 100)} onChange={e => up({ ring: Number(e.target.value) / 100 })} style={{ flex: 1 }} /></div>}
         <Check id="sb-bubble" label="Bubble" on={sb.bubble} set={v => up({ bubble: v })} />
+        {sb.bubble && <div style={sub}>Bubble icon <Seg id="sb-bubbleicon" value={sb.bubbleIcon} onChange={v => up({ bubbleIcon: v })} opts={[['ring', 'Ring'], ['arrow', 'Arrow'], ['none', 'None']]} /></div>}
   </div>
 }
 
