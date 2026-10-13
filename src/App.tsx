@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { ContactShadows } from '@react-three/drei'
+import { ContactShadows, Environment } from '@react-three/drei'
+import { EffectComposer, DepthOfField, Bloom, Noise } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { DEVICES } from './devices'
@@ -11,22 +12,41 @@ type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const wrap = (v: number) => ((v + 540) % 360) - 180
 const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0 }
-const LIGHT = { intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45 }
+const LIGHT = { intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
+const FX = { dof: false, focus: 0, blur: 2, bloom: false, grain: false }
 
-function GLGrab({ onReady }: { onReady: (s: { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera }) => void }) {
-  const { gl, scene, camera } = useThree()
-  useEffect(() => onReady({ gl, scene, camera }), [gl, scene, camera, onReady])
+type Grab = { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera; setDpr: (n: number) => void; dpr: number }
+function GLGrab({ onReady }: { onReady: (s: Grab) => void }) {
+  const { gl, scene, camera, setDpr, viewport } = useThree()
+  useEffect(() => onReady({ gl, scene, camera, setDpr, dpr: viewport.dpr }), [gl, scene, camera, setDpr, viewport.dpr, onReady])
   return null
 }
 
-function Env() {
-  const { gl, scene } = useThree()
+/** Studio HDRI (Poly Haven, CC0) for reflections only; the background stays our own. */
+function Env({ intensity }: { intensity: number }) {
+  return <Environment files="/hdri/studio_small_08_1k.hdr" environmentIntensity={intensity} />
+}
+void RoomEnvironment
+
+/** Paints the background into the scene so post effects (which drop canvas transparency) keep it. */
+function SceneBg({ mode, c1, c2, angle }: { mode: 'solid' | 'gradient'; c1: string; c2: string; angle: number }) {
+  const { scene, size } = useThree()
   useEffect(() => {
-    const pm = new THREE.PMREMGenerator(gl)
-    const env = pm.fromScene(new RoomEnvironment(), 0.04).texture
-    scene.environment = env
-    return () => { scene.environment = null; env.dispose(); pm.dispose() }
-  }, [gl, scene])
+    const w = 512, h = Math.max(1, Math.round(512 * size.height / size.width))
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h
+    const ctx = cv.getContext('2d')!
+    if (mode === 'solid') ctx.fillStyle = c1
+    else {
+      const a = (angle - 90) * Math.PI / 180, cx = w / 2, cy = h / 2
+      const len = Math.abs(w * Math.cos(a)) / 2 + Math.abs(h * Math.sin(a)) / 2
+      const g = ctx.createLinearGradient(cx - Math.cos(a) * len, cy - Math.sin(a) * len, cx + Math.cos(a) * len, cy + Math.sin(a) * len)
+      g.addColorStop(0, c1); g.addColorStop(1, c2); ctx.fillStyle = g
+    }
+    ctx.fillRect(0, 0, w, h)
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace
+    scene.background = t
+    return () => { scene.background = null; t.dispose() }
+  }, [scene, size.width, size.height, mode, c1, c2, angle])
   return null
 }
 
@@ -90,6 +110,7 @@ export default function App() {
   const [media, setMedia] = useState<Media | null>(null)
   const [pose, setPose] = useState(POSE)
   const [light, setLight] = useState(LIGHT)
+  const [fx, setFx] = useState(FX)
   const [bgMode, setBgMode] = useState<'solid' | 'gradient'>('gradient')
   const [bg1, setBg1] = useState('#dfe7ff')
   const [bg2, setBg2] = useState('#f7d9e8')
@@ -98,7 +119,7 @@ export default function App() {
   const [scale, setScale] = useState(2)
   const [dragging, setDragging] = useState(false)
   const [status, setStatus] = useState('Drop, paste or choose an image or video to start.')
-  const three = useRef<{ gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera } | null>(null)
+  const three = useRef<Grab | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const drag = useRef<{ x: number; y: number; pan: boolean } | null>(null)
   const def = DEVICES.find(d => d.id === device)!
@@ -136,13 +157,15 @@ export default function App() {
 
   const bgCss = transparent ? undefined : bgMode === 'solid' ? bg1 : `linear-gradient(${angle}deg, ${bg1}, ${bg2})`
 
-  const exportPng = () => {
+  const exportPng = async () => {
     const t = three.current; if (!t) return
-    const { gl, scene, camera } = t
+    const { gl } = t
     const size = gl.getSize(new THREE.Vector2())
-    const prev = gl.getPixelRatio()
+    const prev = t.dpr
     const ratio = Math.min(scale, 4096 / Math.max(size.x, size.y))
-    gl.setPixelRatio(ratio); gl.render(scene, camera)
+    // Render through the effects pipeline at export size, then grab the canvas.
+    t.setDpr(ratio)
+    for (let i = 0; i < 4; i++) await new Promise(r => requestAnimationFrame(r))
     const w = gl.domElement.width, h = gl.domElement.height
     const out = document.createElement('canvas'); out.width = w; out.height = h
     const ctx = out.getContext('2d')!
@@ -157,7 +180,7 @@ export default function App() {
       ctx.fillRect(0, 0, w, h)
     }
     ctx.drawImage(gl.domElement, 0, 0)
-    gl.setPixelRatio(prev); gl.render(scene, camera)
+    t.setDpr(prev)
     const a = document.createElement('a'); a.download = `openmock-${w}x${h}.png`; a.href = out.toDataURL('image/png'); a.click()
     setStatus(`Exported ${w} × ${h} PNG.`)
   }
@@ -224,6 +247,18 @@ export default function App() {
           {slider('Direction', light.azimuth, -180, 180, 1, n => setLight({ ...light, azimuth: n }), '°')}
           {slider('Height', light.elevation, 5, 90, 1, n => setLight({ ...light, elevation: n }), '°')}
           {slider('Shadow', light.shadow, 0, 1, 0.01, n => setLight({ ...light, shadow: n }))}
+          {slider('Reflections', light.env, 0, 2, 0.05, n => setLight({ ...light, env: n }))}
+        </section>
+        <section><h2>Effects</h2>
+          <label className="check"><input type="checkbox" checked={fx.dof} onChange={e => setFx({ ...fx, dof: e.target.checked })} /> Depth of field</label>
+          {fx.dof && <>
+            {slider('Focus', fx.focus, -1.5, 1.5, 0.01, n => setFx({ ...fx, focus: n }))}
+            {slider('Blur', fx.blur, 0, 10, 0.1, n => setFx({ ...fx, blur: n }))}
+            <button className="ghost" onClick={() => setFx({ ...fx, focus: 0 })}>Focus on device</button>
+          </>}
+          <label className="check"><input type="checkbox" checked={fx.bloom} onChange={e => setFx({ ...fx, bloom: e.target.checked })} /> Soft bloom</label>
+          {transparent && (fx.dof || fx.bloom || fx.grain) && <p className="hint">Effects may not keep a transparent background. Turn them off for a clean cut-out.</p>}
+          <label className="check"><input type="checkbox" checked={fx.grain} onChange={e => setFx({ ...fx, grain: e.target.checked })} /> Film grain</label>
         </section>
         <section><h2>Export</h2>
           <div className="seg">{[1, 2, 4].map(s => <button key={s} className={s === scale ? 'on' : ''} onClick={() => setScale(s)}>{s}x</button>)}</div>
@@ -254,7 +289,7 @@ export default function App() {
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
           <Rig zoom={pose.zoom} />
-          <Env />
+          <Env intensity={light.env} />
           <ambientLight intensity={0.35 + light.intensity * 0.15} />
           <directionalLight position={[lx, ly, lz]} intensity={light.intensity} castShadow />
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
@@ -262,7 +297,14 @@ export default function App() {
               <D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} />
             </Centred>
           </group>
-          {light.shadow > 0 && <ContactShadows position={[pose.panX, -1.05, 0]} opacity={light.shadow} scale={6} blur={2.6} far={2.5} />}
+          {light.shadow > 0 && <ContactShadows position={[pose.panX, pose.panY - 0.95, 0]} opacity={light.shadow} scale={6} blur={2.6} far={2.5} resolution={1024} frames={Infinity} />}
+          {(fx.dof || fx.bloom || fx.grain) && !transparent && <SceneBg mode={bgMode} c1={bg1} c2={bg2} angle={angle} />}
+          {(fx.dof || fx.bloom || fx.grain) && (
+            <EffectComposer multisampling={4}>
+              <>{fx.dof && <DepthOfField target={[pose.panX, pose.panY, fx.focus]} focalLength={0.12} bokehScale={fx.blur} />}</>
+              <>{fx.bloom && <Bloom intensity={0.2} luminanceThreshold={0.95} mipmapBlur />}</>
+              <>{fx.grain && <Noise opacity={0.06} premultiply />}</>
+            </EffectComposer>)}
         </Canvas>
         {dragging && <div className="dropnote">Drop to use as the screen</div>}
       </main>
