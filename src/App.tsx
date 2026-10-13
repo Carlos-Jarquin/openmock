@@ -30,7 +30,7 @@ const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 
 const APPLE_HERO = { tiltX: -18.438, tiltY: 230.375, rotZ: -3.125, zoom: 1.937, panX: 0.347, panY: -0.307, fov: 21.375 }
 type LightPreset = 'soft' | 'apple' | 'violet'
 type BgMode = 'solid' | 'gradient' | 'streaks'
-const LIGHT = { preset: 'soft' as LightPreset, intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
+const LIGHT = { preset: 'soft' as LightPreset, intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6, shadowOn: true, floor: 1.5 }
 // Device bodies the hands can grip, in model units (1 = 100 mm).
 const fitOf = (s: typeof IPHONE_18_PRO): HandFit => ({ W: s.body.w / 100, H: s.body.h / 100, T: s.body.t / 100, R: s.body.cornerR / 100, E: s.body.edge / 100,
   SW: s.active.w / 100, SH: s.active.h / 100, PW: Math.round(s.px.w / 3), PH: Math.round(s.px.h / 3) })
@@ -399,7 +399,11 @@ export default function App() {
           {slider('Intensity', light.intensity, 0, 4, 0.05, n => setLight({ ...light, intensity: n }))}
           {slider('Direction', light.azimuth, -180, 180, 1, n => setLight({ ...light, azimuth: n }), '°')}
           {slider('Height', light.elevation, 5, 90, 1, n => setLight({ ...light, elevation: n }), '°')}
-          {slider('Shadow', light.shadow, 0, 1, 0.01, n => setLight({ ...light, shadow: n }))}
+          <label className="check"><input type="checkbox" checked={light.shadowOn} onChange={e => setLight({ ...light, shadowOn: e.target.checked })} /> Floor shadow</label>
+          {light.shadowOn && <>
+            {slider('Shadow', light.shadow, 0, 1, 0.01, n => setLight({ ...light, shadow: n }))}
+            {slider('Distance to floor', light.floor, 0, 20, 0.5, n => setLight({ ...light, floor: n }), ' cm')}
+          </>}
           {slider('Reflections', light.env, 0, 2, 0.05, n => setLight({ ...light, env: n }))}
         </section>
         <section><h2>Effects</h2>
@@ -476,8 +480,15 @@ export default function App() {
               </HandRig>
             </Centred>
           </group>
-          {light.shadow > 0 && <ContactShadows position={[pose.panX, pose.panY - 0.95, 0]} opacity={light.shadow} scale={6} blur={2.6} far={2.5} resolution={1024} frames={Infinity}
-            {...(sketch ? { color: SKETCH_SHADOW, opacity: light.shadow * 0.6, blur: 3 } : {})} />}
+          {light.shadowOn && light.shadow > 0 && (() => {
+            // light.floor is the phone's height above the floor in cm (0.1 units per cm, phone about 1.6 units tall).
+            // The floor plane stays where it is so it stays in frame at any height; the shadow is shaped as if the
+            // phone were that high: softer, larger and fainter as it rises. 1.5 cm gives the original look.
+            const d = 0.95, k = (0.8 + light.floor / 10) / 0.95
+            const base = sketch ? { color: SKETCH_SHADOW, opacity: light.shadow * 0.6, blur: 3 } : { color: '#000000', opacity: light.shadow, blur: 2.6 }
+            return <ContactShadows position={[pose.panX, pose.panY - d, 0]} color={base.color} opacity={base.opacity / k}
+              scale={6 * (1 + (k - 1) * 0.6)} blur={base.blur * Math.pow(k, 1.2)} far={2.5} resolution={1024} frames={Infinity} />
+          })()}
           {!transparent && <SceneBg mode={bgMode} c1={bg1} c2={bg2} angle={angle} />}
           {(fx.dof || fx.bloom || fx.grain || !transparent) && (
             <EffectComposer multisampling={4}>
