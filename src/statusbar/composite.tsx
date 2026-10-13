@@ -5,14 +5,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import * as THREE from 'three'
 import { type SbCfg } from './config'
-import { Island, StatusBar, STATUS_H, clockText } from './StatusBar'
+import { Island, StatusBar, STATUS_H, clockText, type IslandLook } from './StatusBar'
 
 const PX = 3
 
 /** The island and bar as an SVG image, W pt wide and STATUS_H pt tall, rendered at 3x. */
-function barImage(sb: SbCfg, tone: 'dark' | 'light', W: number, time: string): Promise<HTMLImageElement> {
+function barImage(sb: SbCfg, tone: 'dark' | 'light', W: number, time: string, look?: IslandLook): Promise<HTMLImageElement> {
   const html = renderToStaticMarkup(<div {...({ xmlns: "http://www.w3.org/1999/xhtml" } as object)} style={{ position: 'relative', width: W, height: STATUS_H, overflow: 'hidden' }}>
-    <Island sb={sb} w={W} />{sb.mode !== 'off' && <StatusBar tone={tone} sb={sb} w={W} time={time} />}</div>)
+    <Island sb={sb} w={W} look={look} />{sb.mode !== 'off' && <StatusBar tone={tone} sb={sb} w={W} time={time} />}</div>)
     .replace(/<svg /g, '<svg xmlns="http://www.w3.org/2000/svg" ') // inline SVG needs its namespace inside XHTML
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W * PX}" height="${STATUS_H * PX}" viewBox="0 0 ${W} ${STATUS_H}"><foreignObject x="0" y="0" width="${W}" height="${STATUS_H}">${html}</foreignObject></svg>`
   return new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg) })
@@ -30,7 +30,7 @@ function topLuma(src: HTMLCanvasElement, probe: HTMLCanvasElement) {
 type Src = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; video?: HTMLVideoElement } | null
 
 /** Returns a texture with the status bar on top when on, otherwise the media texture unchanged. size: screen in pt. */
-export function useStatusComposite(media: Src, on: boolean, sb: SbCfg, size: { w: number; h: number } | null) {
+export function useStatusComposite(media: Src, on: boolean, sb: SbCfg, size: { w: number; h: number } | null, look?: IslandLook) {
   const active = on && !!size
   const W = size?.w ?? 402, H = size?.h ?? 874
   const [minute, setMinute] = useState(() => clockText(new Date()))
@@ -40,9 +40,9 @@ export function useStatusComposite(media: Src, on: boolean, sb: SbCfg, size: { w
   useEffect(() => {
     if (!active) { setBars(null); return }
     let live = true
-    Promise.all([barImage(sb, 'dark', W, time), barImage(sb, 'light', W, time)]).then(([dark, light]) => { if (live) setBars({ dark, light }) })
+    Promise.all([barImage(sb, 'dark', W, time, look), barImage(sb, 'light', W, time, look)]).then(([dark, light]) => { if (live) setBars({ dark, light }) })
     return () => { live = false }
-  }, [active, sb, W, time])
+  }, [active, sb, W, time, look])
   // A new canvas and texture per screen size: three allocates GPU storage once, so a resized canvas would not upload.
   const canvas = useMemo(() => Object.assign(document.createElement('canvas'), { width: W * PX, height: H * PX }), [W, H])
   const probe = useMemo(() => Object.assign(document.createElement('canvas'), { width: 32, height: 4 }), [])

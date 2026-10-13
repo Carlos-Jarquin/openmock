@@ -43,6 +43,8 @@ export const TIME_CMP = `500 16.85px ${'-apple-system, system-ui, "SF Pro Text",
 export const COLON_DY = -1.8, TIME_BASE = 6.4, CARRIER_BASE = 6.35
 // With an expanded island iOS draws the whole leading group and the right cluster ~5% smaller (time 35 vs 37 px tall, battery 71 vs 75 px wide).
 export const EXP_K = 0.947, GLYPH_GAP = 3.7, GLYPH_GAP_EXP = 5.4, BAT_FONT = '520 11.75', BAT_LS = 0
+/** Inferred minimum clear space either side of the right cluster beside an expanded island (pt). */
+export const RC_MIN_PAD = 5
 export const SB_CY = 32.3, DIM = 0.35, DIM2 = 0.22, DIM2_LIGHT = 0.195, ORANGE = '#ff9f0a'
 export const SB_FONT = '-apple-system, system-ui, "SF Pro Text", "Helvetica Neue", sans-serif'
 /** Expanded layouts: ink-centre corrections (pt) for the leading group, measured per layout against the screenshots,
@@ -65,9 +67,9 @@ export function islandLayout(sb: SbCfg, CSS_W: number) {
 
 const RING_R = 9.2, RING_C = 2 * Math.PI * RING_R
 /** Orange timer ring in a 22x22 box. */
-const Ring = ({ p }: { p: number }) => <>
-  <circle cx="11" cy="11" r={RING_R} fill="none" stroke={ORANGE} strokeOpacity="0.3" strokeWidth="2.3" />
-  <circle cx="11" cy="11" r={RING_R} fill="none" stroke={ORANGE} strokeWidth="2.3" strokeLinecap="round" strokeDasharray={`${RING_C * p} ${RING_C}`} transform="rotate(-90 11 11)" /></>
+const Ring = ({ p, c = ORANGE }: { p: number; c?: string }) => <>
+  <circle cx="11" cy="11" r={RING_R} fill="none" stroke={c} strokeOpacity="0.3" strokeWidth="2.3" />
+  <circle cx="11" cy="11" r={RING_R} fill="none" stroke={c} strokeWidth="2.3" strokeLinecap="round" strokeDasharray={`${RING_C * p} ${RING_C}`} transform="rotate(-90 11 11)" /></>
 // Maps navigation arrow in the expanded island, traced from two 3x screenshots (Maps live activity): ink 12.78 x 13.94 pt,
 // tip at y 24.57, base at 38.51, notch apex at 34.33, centred at x 128.84 (Pro); colour #5096f3. Island-independent position.
 export const BUBBLE_ARROW_DX = 128.84 + 161 - 271.7 // arrow centre from the bubble's left edge
@@ -81,29 +83,37 @@ const NavArrow = ({ cx, cy }: { cx: number; cy: number }) => { const hw = NAV.w 
 // shackle stroke 1.35 on a 3.5 pt centre radius (outer top y 24.87, outer legs 128.17-136.53), centred x 132.33, flat grey #d5d5d5.
 // Positioned from the island's left edge (body 12.52 pt in).
 export const LOCK = { islandL: 114.26, dx: 12.52, bw: 11.13, by: 31.35, bh: 8.2, br: 1.5, sr: 3.5, sw: 1.35, top: 25.0, color: '#d5d5d5' }
-const Padlock = ({ l }: { l: number }) => { const x0 = l + LOCK.dx, cx = LOCK.bw / 2, ay = LOCK.top + LOCK.sw / 2 + LOCK.sr
+const Padlock = ({ l, c = LOCK.color }: { l: number; c?: string }) => { const x0 = l + LOCK.dx, cx = LOCK.bw / 2, ay = LOCK.top + LOCK.sw / 2 + LOCK.sr
   return <svg {...snapBox(x0 - 1, LOCK.top - 1, 1, -1, LOCK.top - 1, LOCK.bw + 2, LOCK.by + LOCK.bh - LOCK.top + 2)}>
-    <path d={`M${cx - LOCK.sr} ${LOCK.by + 0.5}V${ay}a${LOCK.sr} ${LOCK.sr} 0 0 1 ${2 * LOCK.sr} 0V${LOCK.by + 0.5}`} fill="none" stroke={LOCK.color} strokeWidth={LOCK.sw} />
-    <rect x="0" y={LOCK.by} width={LOCK.bw} height={LOCK.bh} rx={LOCK.br} fill={LOCK.color} /></svg> }
+    <path d={`M${cx - LOCK.sr} ${LOCK.by + 0.5}V${ay}a${LOCK.sr} ${LOCK.sr} 0 0 1 ${2 * LOCK.sr} 0V${LOCK.by + 0.5}`} fill="none" stroke={c} strokeWidth={LOCK.sw} />
+    <rect x="0" y={LOCK.by} width={LOCK.bw} height={LOCK.bh} rx={LOCK.br} fill={c} /></svg> }
+
+/** Island look. Photo: black. Sketch: the 3D island's sketch tone with a thin sketch-line outline, so the status-bar island is
+ *  the single island on screen (the 3D island mesh is hidden whenever this one is drawn). */
+export type IslandLook = { fill: string; line: string; lw: number; accent: string; lock: string }
+export const ISLAND_PHOTO: IslandLook = { fill: '#000', line: 'none', lw: 0, accent: ORANGE, lock: LOCK.color }
+/** Sketch: fill = Sketch's dark tone (#bdb5a6), outline in the sketch line colour; orange deepened and padlock in the line colour
+ *  so they stay legible on the light pill. */
+export const islandSketch = (line: string): IslandLook => ({ fill: '#bdb5a6', line, lw: 0.6, accent: '#c96f00', lock: line })
 
 /** The Dynamic Island with an optional timer-style live activity and a minimal bubble. */
-export function Island({ sb, w }: { sb: SbCfg; w: number }) {
-  const L = islandLayout(sb, w)
+export function Island({ sb, w, look = ISLAND_PHOTO }: { sb: SbCfg; w: number; look?: IslandLook }) {
+  const L = islandLayout(sb, w), i = look.lw / 2
   return <>
     {/* pill drawn as an SVG at a whole-point origin with the fractional offset inside, since a div's box snaps to whole points */}
     <svg width={Math.ceil(L.r) - Math.floor(L.l) + 1} height={L.h + 1} style={{ position: 'absolute', left: Math.floor(L.l), top: L.top, pointerEvents: 'none', overflow: 'visible' }}>
-      <rect x={L.l - Math.floor(L.l)} y={0} width={L.r - L.l} height={L.h} rx={L.h / 2} fill="#000" />
+      <rect x={L.l - Math.floor(L.l) + i} y={i} width={L.r - L.l - 2 * i} height={L.h - 2 * i} rx={L.h / 2 - i} fill={look.fill} stroke={look.line} strokeWidth={look.lw} />
     </svg>
     <div style={{ position: 'absolute', left: L.l, top: L.top, width: L.r - L.l, height: L.h, pointerEvents: 'none' }}>
-      {sbAct(sb) && sb.islandIcon === 'ring' && <svg width="22" height="22" viewBox="0 0 22 22" style={{ position: 'absolute', left: 8.05, top: 7.2 }}><Ring p={sb.ring} /></svg>}
-      {sbAct(sb) && !sb.bubble && <div style={{ position: 'absolute', right: 9, top: 0, height: L.h, display: 'flex', alignItems: 'center', color: ORANGE,
+      {sbAct(sb) && sb.islandIcon === 'ring' && <svg width="22" height="22" viewBox="0 0 22 22" style={{ position: 'absolute', left: 8.05, top: 7.2 }}><Ring p={sb.ring} c={look.accent} /></svg>}
+      {sbAct(sb) && !sb.bubble && <div style={{ position: 'absolute', right: 9, top: 0, height: L.h, display: 'flex', alignItems: 'center', color: look.accent,
         font: `500 15.5px/1 ${SB_FONT}`, letterSpacing: -0.2, fontVariantNumeric: 'tabular-nums' }}>{sb.act}</div>}
     </div>
     {/* drawn in page coordinates, outside the island div, so its sub-pixel position is exact */}
     {sbAct(sb) && sb.islandIcon === 'arrow' && <NavArrow cx={NAV.cx + L.dx} cy={NAV.cy} />}
-    {sb.islandIcon === 'lock' && <Padlock l={L.l} />}
-    {L.bubble && <div style={{ position: 'absolute', left: L.bubble.l, top: L.top, width: L.bubble.d, height: L.bubble.d, borderRadius: '50%', background: '#000', pointerEvents: 'none' }}>
-      {sb.bubbleIcon === 'ring' && <svg width="22" height="22" viewBox="0 0 22 22" style={{ position: 'absolute', left: (L.bubble.d - 22) / 2, top: (L.bubble.d - 22) / 2 }}><Ring p={sb.ring} /></svg>}
+    {sb.islandIcon === 'lock' && <Padlock l={L.l} c={look.lock} />}
+    {L.bubble && <div style={{ position: 'absolute', left: L.bubble.l, top: L.top, width: L.bubble.d, height: L.bubble.d, borderRadius: '50%', background: look.fill, boxSizing: 'border-box', border: look.lw ? `${look.lw}px solid ${look.line}` : undefined, pointerEvents: 'none' }}>
+      {sb.bubbleIcon === 'ring' && <svg width="22" height="22" viewBox="0 0 22 22" style={{ position: 'absolute', left: (L.bubble.d - 22) / 2 - (look.lw || 0), top: (L.bubble.d - 22) / 2 - (look.lw || 0) }}><Ring p={sb.ring} c={look.accent} /></svg>}
     </div>}
     {/* bubble arrow: the 3x screenshots show the same Maps glyph as the island arrow (pixel-identical, same #5096f3 tint, upright),
         exactly 161.00 pt right of it (ink centroid 289.68, 32.30; bbox 283.67-296.00 x 24.67-38.33), i.e. 18.14 pt into the 36.7 pt bubble.
@@ -143,25 +153,26 @@ export function StatusBar({ tone, sb, w: CSS_W, time }: { tone: 'dark' | 'light'
   const groupW = tw + (GW ? GAP + GW : 0)
   const timeL = sb.carrier ? 37.8 : !sbAct(sb) ? 64.9 - tw / 2 : (12 + L.ear) / 2 - groupW / 2 + leadOff(sb)
   // right cluster pieces (x in a local svg, y relative to top = SB_CY - 8)
-  const items: { w: number; gap: number; el: (x: number) => React.ReactNode }[] = []
+  const items: { w: number; gap: number; net?: boolean; el: (x: number) => React.ReactNode }[] = []
   // Dual SIM. Compact: bars 3.36 wide on a 5.333 pitch. Expanded island: iOS redraws them narrower rather than just scaling by
   // EXP_K, measured on three 3x screenshots as exactly 3.00 pt wide (9 px) on a 5.00 pt pitch, top row 4.13/4.94/6.55/8.21 pt,
   // second row 35.30-39.11 pt, and 6.2 pt of clear space before LTE / 5G (vs 5.1 with the cluster gap). Units here are pre-K.
+  let netDropped = false
   const dimS = tone === 'light' ? DIM2_LIGHT : DIM2
   if (sb.sig >= 0) items.push(sb.dual ? { w: 18.33, gap: 0, el: x => { const e = K !== 1, bw = e ? 3 / K : 3.36, pitch = e ? 5 / K : 5.333
       // ink-centre corrections measured per layout: LTE / 5G next (location + LTE), timer text in the island (time alone)
-      const x0 = x + 0.4 + (e ? ((sb.net === 'lte' || sb.net === '5g') ? -1.07 : !sb.bubble && sb.act ? 0.3 : 0) / K : 0)
+      const x0 = x + 0.4 + (e ? ((sb.net === 'lte' || sb.net === '5g') && !netDropped ? -1.07 : !sb.bubble && sb.act ? 0.3 : 0) / K : 0)
       const hs = e ? [3.925, 4.76, 6.526, 8.27] : [4.02, 5.06, 6.69, 8.29], y2 = e ? 11.765 : 11.68, h2 = e ? 3.605 : 3.69
       return <g key="sig" fill={c}>
       {hs.map((h, i) => <rect key={i} x={x0 + i * pitch} y={10.04 - h} width={bw} height={h} rx="1" fillOpacity={i < sb.sig ? 1 : dimS} />)}
       {[0, 1, 2, 3].map(i => <rect key={'b' + i} x={x0 + i * pitch} y={y2} width={bw} height={h2} rx="1" fillOpacity={i < sb.sig2 ? 1 : dimS} />)}</g> } }
     : { w: 19, gap: 0, el: x => <g key="sig" fill={c}>{[4.3, 3.3, 1.6, 0].map((t, i) => <rect key={i} x={x + i * 5.33} y={t + 1.4} width="3.33" height={13 - t} rx="1" fillOpacity={i < sb.sig ? 1 : DIM} />)}</g> })
-  if (sb.net === 'wifi') items.push({ w: 16.85, gap: sbAct(sb) ? 2.22 : 8, el: x => <g key="wifi" transform={`translate(${x} 8.4)`} fill={c} stroke={c} strokeWidth="0.76" strokeLinejoin="round">
+  if (sb.net === 'wifi') items.push({ net: true, w: 16.85, gap: sbAct(sb) ? 2.22 : 8, el: x => <g key="wifi" transform={`translate(${x} 8.4)`} fill={c} stroke={c} strokeWidth="0.76" strokeLinejoin="round">
       <path fillOpacity={sb.wifi >= 3 ? 1 : WDIM} strokeOpacity={sb.wifi >= 3 ? 1 : WDIM} d="M0.54 -2.41L1.66 -1.23L3.16 -2.32L4.82 -3.12L6.59 -3.61L8.42 -3.78L10.25 -3.61L12.03 -3.12L13.68 -2.32L15.18 -1.23L16.31 -2.41L15.49 -3.07L14.52 -3.72L13.67 -4.18L12.6 -4.65L11.49 -5L10.55 -5.22L9.39 -5.37L8.42 -5.41L7.45 -5.37L6.3 -5.22L5.17 -4.95L4.24 -4.65L3.18 -4.18L2.32 -3.72L1.36 -3.07z" />
       <path fillOpacity={sb.wifi >= 2 ? 1 : WDIM} strokeOpacity={sb.wifi >= 2 ? 1 : WDIM} d="M3.4 0.61L4.59 1.86L5.43 1.27L6.41 0.82L7.45 0.55L8.42 0.47L9.4 0.55L10.44 0.82L11.42 1.27L12.26 1.86L13.44 0.61L12.38 -0.15L11.14 -0.75L9.8 -1.12L8.42 -1.25L7.04 -1.12L5.71 -0.75L4.46 -0.15z" />
       <path fillOpacity={sb.wifi >= 1 ? 1 : WDIM} strokeOpacity={sb.wifi >= 1 ? 1 : WDIM} d="M6.34 3.7L8.42 5.9L10.51 3.7L10.05 3.41L9.53 3.18L8.99 3.05L8.42 3L7.86 3.05L7.31 3.18L6.79 3.41z" /></g> })
   if (sb.net === 'lte' || sb.net === '5g') { const t = sb.net === 'lte' ? 'LTE' : '5G', w = sb.net === 'lte' ? 18.7 : 13.5
-    items.push({ w, gap: sbAct(sb) ? 6 : 9.67, el: x => <text key="net" x={x + w / 2} y={14.02} textAnchor="middle" textLength={w * 1.09} lengthAdjust="spacingAndGlyphs" fill={c} style={{ font: `600 13.7px ${SB_FONT}` }}>{t}</text> }) }
+    items.push({ net: true, w, gap: sbAct(sb) ? 6 : 9.67, el: x => <text key="net" x={x + w / 2} y={14.02} textAnchor="middle" textLength={w * 1.09} lengthAdjust="spacingAndGlyphs" fill={c} style={{ font: `600 13.7px ${SB_FONT}` }}>{t}</text> }) }
   const BW = sbAct(sb) ? 25.12 : 24.28
   items.push({ w: 27.0 + BW - 24.28, gap: sbAct(sb) ? (sb.net === 'wifi' ? 5.23 : 6.77) : 8, el: x => <g key="bat">
       <defs><mask id="sb-pct" maskUnits="userSpaceOnUse"><rect x={x} y="0" width="30" height="17" fill="#fff" />
@@ -173,10 +184,16 @@ export function StatusBar({ tone, sb, w: CSS_W, time }: { tone: 'dark' | 'light'
       : <g><rect x={x + 0.5} y="1.85" width="23.7" height="12.3" rx="3.8" fill="none" stroke={c} strokeOpacity="0.35" />
         <rect x={x + 2} y="3.35" width={20.7 * lvl} height="9.3" rx="2.4" fill={c} /></g>}
       <path d={`M${x + 2.02 + BW - (sbAct(sb) ? 0.7 : 0)} 6.33h0.3a1.03 2 0 0 1 0 4h-0.3z`} fill={c} fillOpacity={BDIM} /></g> })
-  items[0].gap = 0
-  if (K !== 1) items.forEach(it => { it.gap /= K })
-  const W = items.reduce((s, it) => s + it.gap + it.w, 0)
   const rightEdge = L.bubble ? L.bubble.l + L.bubble.d : L.rc
+  if (K !== 1) items.forEach(it => { it.gap /= K })
+  // INFERRED (no screenshot shows it): with an expanded island the cluster is centred between the island's right edge and
+  // x 384.4 (+dx). If it would leave less than RC_MIN_PAD pt either side, iOS-style, the network item (LTE / 5G / Wi-Fi) is
+  // dropped first. Measured layouts all keep >= 6.0 pt (Wi-Fi + bubble), timer + signal + battery leaves 14.3; adding LTE
+  // to the timer island would leave 2.4, which is what looked cramped.
+  if (sbAct(sb)) { const span = 384.4 + 2 * L.dx - rightEdge, pad = () => (span - items.reduce((s, it, j) => s + (j ? it.gap : 0) + it.w, 0) * K) / 2
+    while (pad() < RC_MIN_PAD && items.some(it => it.net)) { items.splice(items.findIndex(it => it.net), 1); netDropped = true } }
+  items[0].gap = 0
+  const W = items.reduce((s, it) => s + it.gap + it.w, 0)
   const rcx = sbAct(sb) ? (rightEdge + 384.4 + 2 * L.dx) / 2 + (L.bubble ? 0.45 : sb.act ? 0.4 : 1.1) : CSS_W - (402 - 326.85)
   let x = 0
   const els = items.map(it => { x += it.gap; const e = it.el(x); x += it.w; return e })

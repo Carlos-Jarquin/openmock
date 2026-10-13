@@ -531,9 +531,10 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       <mesh geometry={g.screen} position={[0, 0, zf + E * 2]} name="screen">
         {texture ? <meshBasicMaterial key="tex" map={texture} toneMapped={false} /> : <meshBasicMaterial key="idle" color="#07080b" />}
       </mesh>
-      <mesh geometry={g.island} position={[0, isl, zf + E * 4]} renderOrder={3} userData={ISLAND_TONE}>
+      {/* with the status bar on, its 126 x 37 pt island (drawn in the screen plane) is the only island, so edges align at any angle */}
+      {!opts.hideIsland && <><mesh geometry={g.island} position={[0, isl, zf + E * 4]} renderOrder={3} userData={ISLAND_TONE}>
         <meshBasicMaterial color="#010101" polygonOffset polygonOffsetFactor={-3} polygonOffsetUnits={-3} /></mesh>
-      <group position={[fcamX, isl, zf + E * 5]}><LensStack r={mm(s.frontCam.r)} order={4} /></group>
+      <group position={[fcamX, isl, zf + E * 5]}><LensStack r={mm(s.frontCam.r)} order={4} /></group></>}
       {/* receiver slot along the top glass edge */}
       <mesh position={[0, ty(s.receiver.cy), zf + E * 3]}><shapeGeometry args={[rrC(mm(s.receiver.w), mm(s.receiver.h), all(mm(s.receiver.h / 2))), 16]} />
         <meshBasicMaterial color="#0b0b0d" polygonOffset polygonOffsetFactor={-3} /></mesh>

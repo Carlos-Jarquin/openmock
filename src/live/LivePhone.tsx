@@ -12,8 +12,8 @@ import type { DeviceOptions, LogoArt } from '../types'
 import { loadLocalLogo } from '../localLogo'
 import { type SbCfg, parseSb, writeSb } from '../statusbar/config'
 import { StatusPanel } from '../statusbar/Panel'
-import { Island, StatusBar, useClock, ISL } from '../statusbar/StatusBar'
-import { SketchStyle, SKETCH_PAPER } from '../sketch/Sketch'
+import { Island, StatusBar, useClock, ISL, islandSketch } from '../statusbar/StatusBar'
+import { SketchStyle, SKETCH_PAPER, SKETCH_DEFAULTS } from '../sketch/Sketch'
 
 const mm = (v: number) => v / 100 // same unit as IPhonePro
 const PX_PER_UNIT = 40 // drei <Html transform> maps 40 CSS px to 1 world unit (distanceFactor 10)
@@ -31,6 +31,7 @@ const HOLD = params.has('hold') // keep the starting angle (for tilted screensho
 // The software Dynamic Island is drawn larger than the glass cut-out: 126 x 37 pt, 14 pt from the top (Apple UI Kit / simulator).
 const TOP_SAFE = 62
 const SKETCH = params.get('style') === 'sketch' // ?style=sketch: flat illustration look
+const ISLAND_LOOK = islandSketch(SKETCH_DEFAULTS.line)
 const stay = { on: params.has('stay') } // stay at angle: no ease back, screen usable while tilted
 
 /** Light or dark status bar for 'auto': reads the app's top background when it is same-origin, otherwise dark text. */
@@ -75,7 +76,7 @@ function Screen({ s, interactive, sb }: { s: IPhoneSpec; interactive: boolean; s
           backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
           <iframe ref={frame} src={SRC} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', pointerEvents: interactive ? 'auto' : 'none' }} />
           {/* Dynamic Island, drawn over the page */}
-          <Island sb={sb} w={CSS_W} />
+          <Island sb={sb} w={CSS_W} look={SKETCH ? ISLAND_LOOK : undefined} />
           {sb.mode !== 'off' && <StatusBar tone={tone} sb={sb} w={CSS_W} time={clock} />}
           {/* faint cover-glass sheen */}
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 40%)' }} />
@@ -105,7 +106,7 @@ function Rig({ onFaceOn, faceOn, sb }: { onFaceOn: (v: boolean) => void; faceOn:
     const face = stay.on ? !drag.active && n.z > Math.cos(80 * Math.PI / 180) : !drag.active && d < 0.02
     if (face !== last.current) { last.current = face; onFaceOn(face) }
   })
-  const opts: DeviceOptions = useMemo(() => ({ fold: 0, screen: 'inner', finish: FINISH, logo, logoSize: 0.2, logoTint: '#8a8f99', simTray: false }), [logo])
+  const opts: DeviceOptions = useMemo(() => ({ fold: 0, screen: 'inner', finish: FINISH, logo, logoSize: 0.2, logoTint: '#8a8f99', simTray: false, hideIsland: true }), [logo]) // the page's status-bar island is the only island
   return (
     <group ref={ref}>
       <SketchStyle on={SKETCH}><IPhonePro spec={SPEC} texture={null} mediaAspect={1} opts={opts} /></SketchStyle>

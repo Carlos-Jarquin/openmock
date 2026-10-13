@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { ContactShadows } from '@react-three/drei'
 import { EffectComposer, DepthOfField, Bloom, Noise, N8AO } from '@react-three/postprocessing'
@@ -20,6 +20,7 @@ import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER } from './sketch/Sketch'
 import { SB_DEFAULT, type SbCfg } from './statusbar/config'
 import { StatusBarControls } from './statusbar/Panel'
 import { useStatusComposite } from './statusbar/composite'
+import { islandSketch } from './statusbar/StatusBar'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -179,7 +180,10 @@ export default function App() {
   const screenAspect = typeof def.screenAspect === 'function' ? def.screenAspect(opts) : def.screenAspect
   // Screen in iPhone points for the status bar: Pro 402x874, Pro Max 440x956
   const sbSize = device === 'ip18' ? { w: 402, h: 874 } : device === 'ip18max' ? { w: 440, h: 956 } : null
-  const screenTex = useStatusComposite(media, sbOn, sb, sbSize)
+  const islandLook = useMemo(() => sketch ? islandSketch(sk.line) : undefined, [sketch, sk.line])
+  const screenTex = useStatusComposite(media, sbOn, sb, sbSize, islandLook)
+  // status bar on: its island is the single island, so the 3D island mesh and front lens are hidden
+  const devOpts = useMemo(() => sbOn && sbSize ? { ...opts, hideIsland: true } : opts, [opts, sbOn, !!sbSize])
 
   const loadFile = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
@@ -468,7 +472,7 @@ export default function App() {
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
             <Centred deps={[device, opts.fold, opts.screen, screenTex.texture, hands.pose]}>
               <HandRig pose={hands.pose} tone={hands.tone} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture}>
-                <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={opts} /></SketchStyle>
+                <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts} /></SketchStyle>
               </HandRig>
             </Centred>
           </group>
