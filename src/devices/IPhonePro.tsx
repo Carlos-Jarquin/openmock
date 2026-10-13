@@ -381,8 +381,8 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   const grain = useMemo(() => { if (!bR) return null; const t = bR.clone(); t.repeat.set(bR.repeat.x * 8, bR.repeat.y * 8); return t }, [bR])
   // ONE aluminium material instance for the whole unibody: frame, plateau, shoulder, back band and buttons.
   // Per-finish values depend only on the finish, so every part gets the same colour, roughness, grain and reflection.
-  const alu = useMemo(() => new THREE.MeshPhysicalMaterial({ color: f.frame, metalness: 0.3, roughness: 0.5, roughnessMap: grain,
-    clearcoat: 0.04, clearcoatRoughness: 0.4, envMapIntensity: darkF ? 0.4 : 0.32, specularIntensity: darkF ? 0.3 : 0.45 }), [f.frame, darkF, grain])
+  const alu = useMemo(() => new THREE.MeshPhysicalMaterial({ color: f.frame, metalness: 0.3, roughness: 0.6, roughnessMap: grain,
+    clearcoat: 0, envMapIntensity: darkF ? 0.4 : 0.26, specularIntensity: darkF ? 0.3 : 0.35 }), [f.frame, darkF, grain])
   useEffect(() => () => alu.dispose(), [alu])
   const metal = <primitive object={alu} attach="material" />
   // Frosted back glass: textured roughness under a thin, slightly glossy coat so highlights spread but stay soft.

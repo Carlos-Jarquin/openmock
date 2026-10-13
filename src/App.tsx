@@ -20,7 +20,7 @@ const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const wrap = (v: number) => ((v + 540) % 360) - 180
 const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
 /** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
-const APPLE_HERO = { tiltX: -18.438, tiltY: 230.375, rotZ: -3.125, zoom: 2.145, panX: 0.315, panY: -0.33, fov: 21.375 }
+const APPLE_HERO = { tiltX: -18.438, tiltY: 230.375, rotZ: -3.125, zoom: 1.937, panX: 0.347, panY: -0.307, fov: 21.375 }
 const LIGHT = { preset: 'soft' as 'soft' | 'apple', intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
 // Device bodies the hands can grip, in model units (1 = 100 mm).
 const fitOf = (s: typeof IPHONE_18_PRO): HandFit => ({ W: s.body.w / 100, H: s.body.h / 100, T: s.body.t / 100, R: s.body.cornerR / 100, E: s.body.edge / 100 })
@@ -260,7 +260,7 @@ export default function App() {
 
   const apple = light.preset === 'apple'
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
-  const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.9 : 1
+  const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
   if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
