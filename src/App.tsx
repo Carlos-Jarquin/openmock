@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
 import { ContactShadows } from '@react-three/drei'
 import * as THREE from 'three'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
 import { FINISHES, INNER_PX, OUTER_PX } from './devices/Duo'
@@ -16,6 +17,44 @@ function GLGrab({ onReady }: { onReady: (s: { gl: THREE.WebGLRenderer; scene: TH
   return null
 }
 
+function Env() {
+  const { gl, scene } = useThree()
+  useEffect(() => {
+    const pm = new THREE.PMREMGenerator(gl)
+    const env = pm.fromScene(new RoomEnvironment(), 0.04).texture
+    scene.environment = env
+    return () => { scene.environment = null; env.dispose(); pm.dispose() }
+  }, [gl, scene])
+  return null
+}
+
+/** Turn an uploaded SVG or PNG into a greyscale mask (white = artwork) for the embossed logo. */
+function loadLogo(file: File): Promise<{ mask: THREE.Texture; aspect: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const iw = img.naturalWidth || 512, ih = img.naturalHeight || 512
+      const k = 1024 / Math.max(iw, ih), w = Math.round(iw * k), h = Math.round(ih * k)
+      const c = document.createElement('canvas'); c.width = w; c.height = h
+      const ctx = c.getContext('2d')!; ctx.drawImage(img, 0, 0, w, h)
+      const d = ctx.getImageData(0, 0, w, h)
+      let opaque = 0
+      for (let i = 3; i < d.data.length; i += 4) if (d.data[i] > 250) opaque++
+      const hasAlpha = opaque < (w * h) * 0.98
+      for (let i = 0; i < d.data.length; i += 4) {
+        const lum = (d.data[i] * 0.3 + d.data[i + 1] * 0.59 + d.data[i + 2] * 0.11)
+        const v = hasAlpha ? d.data[i + 3] : 255 - lum   // no alpha: dark art on light background
+        d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255
+      }
+      ctx.putImageData(d, 0, 0)
+      const t = new THREE.CanvasTexture(c); t.anisotropy = 8
+      resolve({ mask: t, aspect: w / h })
+    }
+    img.onerror = reject
+    img.src = URL.createObjectURL(file)
+  })
+}
+
 function Rig({ zoom }: { zoom: number }) {
   const { camera } = useThree()
   useEffect(() => { camera.position.set(0, 0, 4.2 / zoom); camera.lookAt(0, 0, 0) }, [zoom, camera])
@@ -24,7 +63,7 @@ function Rig({ zoom }: { zoom: number }) {
 
 export default function App() {
   const [device, setDevice] = useState<DeviceId>('duo')
-  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'night' })
+  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'night', logo: null, logoSize: 0.16, logoTint: '#8a8f99' })
   const [media, setMedia] = useState<Media | null>(null)
   const [pose, setPose] = useState(POSE)
   const [light, setLight] = useState(LIGHT)
@@ -127,11 +166,18 @@ export default function App() {
           <p className="hint">180 is open flat, 0 is closed.</p>
           <div className="seg"><button className={opts.screen === 'inner' ? 'on' : ''} onClick={() => setOpts({ ...opts, screen: 'inner', fold: opts.fold < 60 ? 120 : opts.fold })}>Inner screen</button><button className={opts.screen === 'outer' ? 'on' : ''} onClick={() => setOpts({ ...opts, screen: 'outer', fold: 0 })}>Outer screen</button></div>
           <div className="seg">{(['night', 'star'] as const).map(k => <button key={k} className={opts.finish === k ? 'on' : ''} onClick={() => setOpts({ ...opts, finish: k })}>{FINISHES[k].label}</button>)}</div>
+          <label className="row"><span>Logo</span>
+            <input type="file" accept="image/svg+xml,image/png" style={{ gridColumn: 'span 2', fontSize: 11 }} onChange={async e => { const fl = e.target.files?.[0]; if (fl) setOpts({ ...opts, logo: await loadLogo(fl) }) }} /></label>
+          {opts.logo && <>
+            {slider('Logo size', opts.logoSize, 0.05, 0.4, 0.01, n => setOpts({ ...opts, logoSize: n }))}
+            <label className="row"><span>Logo tint</span><input type="color" value={opts.logoTint} onChange={e => setOpts({ ...opts, logoTint: e.target.value })} /><button className="ghost" onClick={() => setOpts({ ...opts, logo: null })}>Clear</button></label>
+          </>}
+          <p className="hint">The logo sits centred on the back. Use your own SVG or PNG.</p>
           <p className="hint">Native size: {opts.screen === 'inner' ? `${INNER_PX.w} × ${INNER_PX.h}` : `${OUTER_PX.w} × ${OUTER_PX.h}`} px. Screenshots at this size fit exactly.</p>
         </section>}
         <section><h2>Camera</h2>
           {slider('Tilt X', pose.tiltX, -60, 60, 1, n => setPose({ ...pose, tiltX: n }), '°')}
-          {slider('Tilt Y', pose.tiltY, -60, 60, 1, n => setPose({ ...pose, tiltY: n }), '°')}
+          {slider('Tilt Y', pose.tiltY, -180, 180, 1, n => setPose({ ...pose, tiltY: n }), '°')}
           {slider('Rotate', pose.rotZ, -45, 45, 1, n => setPose({ ...pose, rotZ: n }), '°')}
           {slider('Zoom', pose.zoom, 0.5, 2.5, 0.01, n => setPose({ ...pose, zoom: n }))}
           {slider('Pan X', pose.panX, -1.5, 1.5, 0.01, n => setPose({ ...pose, panX: n }))}
@@ -169,6 +215,7 @@ export default function App() {
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
           <Rig zoom={pose.zoom} />
+          <Env />
           <ambientLight intensity={0.35 + light.intensity * 0.15} />
           <directionalLight position={[lx, ly, lz]} intensity={light.intensity} castShadow />
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
