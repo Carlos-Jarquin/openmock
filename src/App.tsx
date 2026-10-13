@@ -105,7 +105,7 @@ function Rig({ zoom }: { zoom: number }) {
 
 export default function App() {
   const [device, setDevice] = useState<DeviceId>('ip18')
-  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'silver', logo: null, logoSize: 0.15, logoTint: '#8a8f99', simTray: true })
+  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'silver', logo: null, logoSize: 0.16, logoTint: '#8a8f99', simTray: true })
   const [media, setMedia] = useState<Media | null>(null)
   const [pose, setPose] = useState(POSE)
   const [light, setLight] = useState(LIGHT)
@@ -233,7 +233,7 @@ export default function App() {
             <label className="row"><span>Logo tint</span><input type="color" value={opts.logoTint} onChange={e => setOpts({ ...opts, logoTint: e.target.value })} /><button className="ghost" onClick={() => setOpts({ ...opts, logo: null })}>Clear</button></label>
           </>}
           <p className="hint">The logo sits centred on the back. Use your own SVG or PNG.</p>
-          {device === 'ip18' && <>
+          {(device === 'ip18' || device === 'ip18max') && <>
             <label className="check"><input type="checkbox" checked={opts.simTray} onChange={e => setOpts({ ...opts, simTray: e.target.checked })} /> SIM tray</label>
             <p className="hint">Click a button to press it. Click the SIM tray or its pinhole to eject it, and again to put it back.</p>
           </>}

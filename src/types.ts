@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 import type * as THREE from 'three'
-export type DeviceId = 'ip18' | 'duo' | 'phone' | 'browser'
+export type DeviceId = 'ip18' | 'ip18max' | 'duo' | 'phone' | 'browser'
 export type Finish = string
 export interface LogoArt { mask: THREE.Texture; aspect: number }
 export interface DeviceOptions { fold: number; screen: 'inner' | 'outer'; finish: Finish; logo: LogoArt | null; logoSize: number; logoTint: string; simTray: boolean }
