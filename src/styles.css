@@ -19,3 +19,4 @@ button.ghost { background: #fff; color: #1d1d22; }
 .stage.drag { outline: 3px dashed #4b6bff; outline-offset: -10px; }
 .dropnote { position: absolute; inset: 0; display: grid; place-items: center; font-size: 18px; pointer-events: none; color: #4b6bff; }
 .stage { touch-action: none; cursor: grab; } .stage:active { cursor: grabbing; }
+.seg.wrap { flex-wrap: wrap; } .seg.wrap button { flex: 1 0 30%; } .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; box-shadow: 0 0 0 1px rgba(0,0,0,.15); }

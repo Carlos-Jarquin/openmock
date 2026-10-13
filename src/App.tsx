@@ -11,6 +11,8 @@ import { INNER_PX, OUTER_PX } from './devices/Duo'
 import { sceneHit } from './devices/shared'
 import { ErrorBoundary } from './ErrorBoundary'
 import { Env, retryEnvironment } from './Env'
+import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
+import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -19,6 +21,9 @@ const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0 }
 /** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
 const APPLE_HERO = { tiltX: -13, tiltY: 230, rotZ: -4, zoom: 2.275, panX: 0.31, panY: -0.37 }
 const LIGHT = { preset: 'soft' as 'soft' | 'apple', intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
+// Device bodies the hands can grip, in model units (1 = 100 mm).
+const fitOf = (s: typeof IPHONE_18_PRO): HandFit => ({ W: s.body.w / 100, H: s.body.h / 100, T: s.body.t / 100, R: s.body.cornerR / 100, E: s.body.edge / 100 })
+const HAND_FITS: Partial<Record<DeviceId, HandFit>> = { ip18: fitOf(IPHONE_18_PRO), ip18max: fitOf(IPHONE_18_PRO_MAX) }
 const FX = { dof: false, focus: 0, blur: 2, bloom: false, grain: false }
 
 type Grab = { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera; setDpr: (n: number) => void; dpr: number }
@@ -93,7 +98,12 @@ function Centred({ deps, children }: { deps: unknown[]; children: React.ReactNod
     parent.matrixWorld.identity()
     g.position.set(0, 0, 0); g.updateMatrixWorld(true)
     for (const c of g.children) c.updateMatrixWorld(true)
+    // Leave out anything marked noBounds (the hands), so the view still orbits the device itself.
+    const skip: [THREE.Object3D, THREE.Object3D][] = []
+    g.traverse(o => { if (o.userData.noBounds && o.parent) skip.push([o, o.parent]) })
+    for (const [o] of skip) o.removeFromParent()
     const box = new THREE.Box3().setFromObject(g, true)
+    for (const [o, p] of skip) p.add(o)
     parent.matrixWorld.copy(saved)
     if (!box.isEmpty()) { const c = box.getCenter(new THREE.Vector3()); g.position.set(-c.x, -c.y, -c.z) }
     dirty.current = false
@@ -114,6 +124,7 @@ export default function App() {
   const [pose, setPose] = useState(POSE)
   const [light, setLight] = useState(LIGHT)
   const [fx, setFx] = useState(FX)
+  const [hands, setHands] = useState<{ pose: HandPose; tone: string }>({ pose: 'off', tone: 'fair' })
   const [bgMode, setBgMode] = useState<'solid' | 'gradient'>('gradient')
   const [bg1, setBg1] = useState('#dfe7ff')
   const [bg2, setBg2] = useState('#f7d9e8')
@@ -253,6 +264,16 @@ export default function App() {
           <div className="seg"><button className={opts.screen === 'inner' ? 'on' : ''} onClick={() => setOpts({ ...opts, screen: 'inner', fold: opts.fold < 60 ? 120 : opts.fold })}>Inner screen</button><button className={opts.screen === 'outer' ? 'on' : ''} onClick={() => setOpts({ ...opts, screen: 'outer', fold: 0 })}>Outer screen</button></div>
           <p className="hint">Native size: {opts.screen === 'inner' ? `${INNER_PX.w} × ${INNER_PX.h}` : `${OUTER_PX.w} × ${OUTER_PX.h}`} px. Screenshots at this size fit exactly.</p>
         </section>}
+        <section><h2>Hands</h2>
+          {HAND_FITS[device] ? <>
+            <div className="seg wrap">{HAND_POSES.map(([k, l]) => <button key={k} className={hands.pose === k ? 'on' : ''} onClick={() => setHands({ ...hands, pose: k })}>{l}</button>)}</div>
+            {hands.pose !== 'off' && <>
+              <div className="seg wrap">{Object.entries(SKIN_TONES).map(([k, t]) => <button key={k} className={hands.tone === k ? 'on' : ''} title={t.label} onClick={() => setHands({ ...hands, tone: k })}>
+                <span className="swatch" style={{ background: t.color }} />{t.label}</button>)}</div>
+              <p className="hint">The hands move with the phone, so set any camera angle. Two hands turns the phone sideways.</p>
+            </>}
+          </> : <p className="hint">Hands are available for the iPhone 18 Pro and 18 Pro Max.</p>}
+        </section>
         <section><h2>Camera</h2>
           {slider('Tilt X', pose.tiltX, -90, 90, 1, n => setPose({ ...pose, tiltX: n }), '°')}
           {slider('Tilt Y', pose.tiltY, -180, 180, 1, n => setPose({ ...pose, tiltY: n }), '°')}
@@ -344,8 +365,10 @@ export default function App() {
             <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
           </>}
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
-            <Centred deps={[device, opts.fold, opts.screen, media?.texture]}>
-              <D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} />
+            <Centred deps={[device, opts.fold, opts.screen, media?.texture, hands.pose]}>
+              <HandRig pose={hands.pose} tone={hands.tone} fit={HAND_FITS[device] ?? null}>
+                <D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} />
+              </HandRig>
             </Centred>
           </group>
           {light.shadow > 0 && <ContactShadows position={[pose.panX, pose.panY - 0.95, 0]} opacity={light.shadow} scale={6} blur={2.6} far={2.5} resolution={1024} frames={Infinity} />}

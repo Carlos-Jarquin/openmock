@@ -33,3 +33,11 @@ MIT. See `LICENSE` and `CREDITS.md`.
 ## Your own logo
 
 Put your own logo at public/local/logo.svg; it is never committed. A logo.png works too. It loads into the logo spot on the iPhone 18 Pro and iPhone Duo, and the Logo control can still replace or clear it.
+
+## Hands
+
+The Hands section adds 3D hands holding the iPhone 18 Pro or 18 Pro Max: right hand, left hand, two hands (turns the phone sideways) and Present (held at the corner). Pick a skin tone, or Off to hide them. The hands move with the phone, so any camera angle works.
+
+Each pose places the hand next to the phone, rests the palm on it, then bends each finger joint by joint until the skin touches the phone body, which is built from the phone's real measurements. That way the grip fits both sizes. Pose data lives in `src/hands/Hands.tsx`.
+
+The hand models are the MIT-licensed WebXR "generic-hand" assets (see CREDITS.md), so they ship in `public/hands/`. They are fairly low detail, so close-ups show some faceting.
