@@ -6,7 +6,7 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
-import { FINISHES, INNER_PX, OUTER_PX } from './devices/Duo'
+import { INNER_PX, OUTER_PX } from './devices/Duo'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -105,8 +105,8 @@ function Rig({ zoom }: { zoom: number }) {
 }
 
 export default function App() {
-  const [device, setDevice] = useState<DeviceId>('duo')
-  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'night', logo: null, logoSize: 0.15, logoTint: '#8a8f99' })
+  const [device, setDevice] = useState<DeviceId>('ip18')
+  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'silver', logo: null, logoSize: 0.15, logoTint: '#8a8f99' })
   const [media, setMedia] = useState<Media | null>(null)
   const [pose, setPose] = useState(POSE)
   const [light, setLight] = useState(LIGHT)
@@ -206,13 +206,10 @@ export default function App() {
           <p className="hint">{media ? media.name : 'You can also drag a file in or paste with Cmd+V.'}</p>
         </section>
         <section><h2>Device</h2>
-          <div className="seg">{DEVICES.map(d => <button key={d.id} className={d.id === device ? 'on' : ''} onClick={() => setDevice(d.id)}>{d.label}</button>)}</div>
+          <div className="seg">{DEVICES.map(d => <button key={d.id} className={d.id === device ? 'on' : ''} onClick={() => { setDevice(d.id); if (d.defaultFinish && !(d.finishes && opts.finish in d.finishes)) setOpts(o => ({ ...o, finish: d.defaultFinish! })) }}>{d.label}</button>)}</div>
         </section>
-        {def.foldable && <section><h2>iPhone Duo</h2>
-          {slider('Fold', opts.fold, 0, 180, 1, n => setOpts({ ...opts, fold: n }), '°')}
-          <p className="hint">180 is open flat, 0 is closed.</p>
-          <div className="seg"><button className={opts.screen === 'inner' ? 'on' : ''} onClick={() => setOpts({ ...opts, screen: 'inner', fold: opts.fold < 60 ? 120 : opts.fold })}>Inner screen</button><button className={opts.screen === 'outer' ? 'on' : ''} onClick={() => setOpts({ ...opts, screen: 'outer', fold: 0 })}>Outer screen</button></div>
-          <div className="seg">{(['night', 'star'] as const).map(k => <button key={k} className={opts.finish === k ? 'on' : ''} onClick={() => setOpts({ ...opts, finish: k })}>{FINISHES[k].label}</button>)}</div>
+        {def.finishes && <section><h2>Finish</h2>
+          <div className="seg">{Object.entries(def.finishes!).map(([k, v]) => <button key={k} className={opts.finish === k ? 'on' : ''} onClick={() => setOpts({ ...opts, finish: k })}>{v.label}</button>)}</div>
           <label className="row"><span>Logo</span>
             <input type="file" accept="image/svg+xml,image/png" style={{ gridColumn: 'span 2', fontSize: 11 }} onChange={async e => { const fl = e.target.files?.[0]; if (fl) setOpts({ ...opts, logo: await loadLogo(fl) }) }} /></label>
           {opts.logo && <>
@@ -220,6 +217,12 @@ export default function App() {
             <label className="row"><span>Logo tint</span><input type="color" value={opts.logoTint} onChange={e => setOpts({ ...opts, logoTint: e.target.value })} /><button className="ghost" onClick={() => setOpts({ ...opts, logo: null })}>Clear</button></label>
           </>}
           <p className="hint">The logo sits centred on the back. Use your own SVG or PNG.</p>
+          {def.nativePx && <p className="hint">Native size: {def.nativePx.w} × {def.nativePx.h} px. Screenshots at this size fit exactly.</p>}
+        </section>}
+        {def.foldable && <section><h2>iPhone Duo</h2>
+          {slider('Fold', opts.fold, 0, 180, 1, n => setOpts({ ...opts, fold: n }), '°')}
+          <p className="hint">180 is open flat, 0 is closed.</p>
+          <div className="seg"><button className={opts.screen === 'inner' ? 'on' : ''} onClick={() => setOpts({ ...opts, screen: 'inner', fold: opts.fold < 60 ? 120 : opts.fold })}>Inner screen</button><button className={opts.screen === 'outer' ? 'on' : ''} onClick={() => setOpts({ ...opts, screen: 'outer', fold: 0 })}>Outer screen</button></div>
           <p className="hint">Native size: {opts.screen === 'inner' ? `${INNER_PX.w} × ${INNER_PX.h}` : `${OUTER_PX.w} × ${OUTER_PX.h}`} px. Screenshots at this size fit exactly.</p>
         </section>}
         <section><h2>Camera</h2>

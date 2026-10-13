@@ -7,3 +7,4 @@
 - Logo spot: Openmock ships no logos. Any logo shown on the back is artwork the user uploads.
 - Studio HDRI: "Studio Small 08" by Poly Haven (polyhaven.com/a/studio_small_08), CC0. File: `public/hdri/studio_small_08_1k.hdr`.
 - Effects: postprocessing and @react-three/postprocessing (MIT).
+- iPhone 18 Pro: an unofficial, procedural model built in code for this project (`src/devices/IPhone18Pro.tsx`). Measurements come from Apple's "iPhone 18 Pro Dimensional Drawings" (2026-09-09, developer.apple.com/accessories/dimensional-drawings) and finishes and the 1206 × 2622 px display size from apple.com/iphone-18-pro/specs. It is not an official Apple model and not affiliated with or endorsed by Apple. No Apple artwork or logo is included. iPhone is a trademark of Apple Inc.

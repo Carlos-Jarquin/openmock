@@ -53,7 +53,7 @@ function Overlay({ geo, z, color = '#000', order = 2 }: { geo: THREE.BufferGeome
 }
 
 export default function Duo({ texture, mediaAspect, opts }: DeviceProps) {
-  const f = FINISHES[opts.finish]
+  const f = FINISHES[opts.finish as keyof typeof FINISHES] ?? FINISHES.night
   const g = useMemo(() => {
     // Right half spans x 0..W, left half spans -W..0 (in its own frame before swinging).
     const rightBody = slab(rrect(W, H, [HR, CR, CR, HR], W / 2), T, 0.006)
