@@ -59,3 +59,11 @@ export const smudgeRoughness = () => once('smudge', () => {
   for (let k = 0; k < 220; k++) { ctx.fillStyle = `rgba(90,90,90,${r() * 0.25})`; ctx.fillRect(r() * 512, r() * 512, 1.2, 1.2) }
   const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.NoColorSpace; return t
 })
+
+// Hot reload: free the previous copy's generated maps when this module is re-run, so edits don't stack copies on the GPU.
+if (import.meta.hot) {
+  const w = globalThis as unknown as { __omMatFree?: () => void }
+  // Wait until the new copy has rendered, or the old meshes draw one more frame and re-upload what was freed.
+  const prev = w.__omMatFree; if (prev) setTimeout(prev, 1000)
+  w.__omMatFree = () => { for (const k in cache) { cache[k].dispose(); delete cache[k] } }
+}

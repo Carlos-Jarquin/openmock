@@ -1,11 +1,11 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { RoundedBox } from '@react-three/drei'
 import type { DeviceProps } from '../types'
 import { fitTexture, screenGeometry } from './shared'
 // Procedural phone, original geometry (no third-party model).
 const W = 0.78, H = 1.62, D = 0.085, SW = 0.73, SH = 1.57
 export const PHONE_ASPECT = SW / SH
-export default function Phone({ texture, mediaAspect }: DeviceProps) {
+function Phone({ texture, mediaAspect }: DeviceProps) {
   const geo = useMemo(() => screenGeometry(SW, SH, 0.1), [])
   useMemo(() => fitTexture(texture, mediaAspect, PHONE_ASPECT), [texture, mediaAspect])
   return (
@@ -31,3 +31,4 @@ export default function Phone({ texture, mediaAspect }: DeviceProps) {
     </group>
   )
 }
+export default memo(Phone)

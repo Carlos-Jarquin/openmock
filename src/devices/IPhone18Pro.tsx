@@ -1,4 +1,4 @@
-import { useMemo, useRef, type ReactNode } from 'react'
+import { memo, useMemo, useRef, type ReactNode } from 'react'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { DeviceProps } from '../types'
@@ -38,6 +38,27 @@ const LENS_D = mm(16.58), LENS_RISE = mm(2.11)
 const LENSES = [[14.37, 14.37], [14.37, 33.61], [32.49, 23.99]]
 const FLASH = [58.03, 13.82], SENSOR = [58.03, 34.16], MIC = [58.03, 23.99]
 
+const NORMAL_SCALE = new THREE.Vector2(0.06, 0.06)
+// Shapes and geometries built inline in JSX are cached by their parameters, so a re-render (every drag frame)
+// reuses them instead of building and uploading new GPU buffers that never get freed.
+const shapeCache = new Map<string, THREE.Shape>()
+const rrC = (w: number, h: number, r: number[], cx = 0, cy = 0) => {
+  const k = [w, h, ...r, cx, cy].join('|'); let s = shapeCache.get(k)
+  if (!s) shapeCache.set(k, s = rrect(w, h, r, cx, cy)); return s
+}
+const geoCache = new Map<string, THREE.BufferGeometry>()
+const geoOnce = (k: string, f: () => THREE.BufferGeometry) => { let g = geoCache.get(k); if (!g) geoCache.set(k, g = f()); return g }
+// The body geometry set, built once per module load (geometry is the same for every finish).
+let bodySet: Record<string, THREE.BufferGeometry> | null = null
+function geoSet<T extends Record<string, THREE.BufferGeometry>>(f: () => T): T { return (bodySet ??= f()) as T }
+// Hot reload: Vite re-runs this module without calling dispose here (it isn't the accepting boundary),
+// so each new copy frees the previous copy's GPU geometry itself.
+if (import.meta.hot) {
+  const w = globalThis as unknown as { __omIp18Free?: () => void }
+  // Wait until the new copy has rendered, or the old meshes draw one more frame and re-upload what was freed.
+  const prev = w.__omIp18Free; if (prev) setTimeout(prev, 1000)
+  w.__omIp18Free = () => { geoCache.forEach(g => g.dispose()); geoCache.clear(); shapeCache.clear(); if (bodySet) Object.values(bodySet).forEach(g => g.dispose()); bodySet = null }
+}
 function rrect(w: number, h: number, [bl, br, tr, tl]: number[], cx = 0, cy = 0) {
   const s = new THREE.Shape(), x = cx - w / 2, y = cy - h / 2
   const arc = (px: number, py: number, r: number, a0: number) => s.absarc(px, py, r, a0, a0 + Math.PI / 2, false)
@@ -99,11 +120,11 @@ function SimTray({ frame }: { frame: string }) {
   return (
     <group position={[-W / 2, ty(SIM.cy), 0]}>
       {/* the slot opening, only seen once the tray is out */}
-      <mesh rotation={[0, -Math.PI / 2, 0]} position={[-E / 3, 0, 0]}><shapeGeometry args={[rrect(SIM.w, SIM.len, all(SIM.w / 2)), 24]} />
+      <mesh rotation={[0, -Math.PI / 2, 0]} position={[-E / 3, 0, 0]}><shapeGeometry args={[rrC(SIM.w, SIM.len, all(SIM.w / 2)), 24]} />
         <meshBasicMaterial color="#030303" polygonOffset polygonOffsetFactor={-1} /></mesh>
       <group ref={slide} {...h}>
         {/* flush face plate with a hairline seam */}
-        <mesh rotation={[0, -Math.PI / 2, 0]} position={[-E * 0.8, 0, 0]}><shapeGeometry args={[rrect(SIM.w - mm(0.12), SIM.len - mm(0.12), all(SIM.w / 2 - mm(0.06))), 24]} />
+        <mesh rotation={[0, -Math.PI / 2, 0]} position={[-E * 0.8, 0, 0]}><shapeGeometry args={[rrC(SIM.w - mm(0.12), SIM.len - mm(0.12), all(SIM.w / 2 - mm(0.06))), 24]} />
           <meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.3} polygonOffset polygonOffsetFactor={-3} /></mesh>
         <mesh rotation={[0, -Math.PI / 2, 0]} position={[-E * 1.2, SIM.pinFromCentre, 0]}><circleGeometry args={[SIM.pinD / 2, 20]} />
           <meshBasicMaterial color="#060606" polygonOffset polygonOffsetFactor={-5} /></mesh>
@@ -126,10 +147,10 @@ function SimTray({ frame }: { frame: string }) {
  * two concentric element edges, a small iris, and a curved additive glass cap that only adds reflections. */
 function LensStack({ r, order = 0 }: { r: number; order?: number }) {
   const off = (k: number) => ({ polygonOffset: true, polygonOffsetFactor: -6 - k, polygonOffsetUnits: -6 - k })
-  const capGeo = useMemo(() => {
+  const capGeo = geoOnce(`cap${r}`, () => {
     const g = new THREE.SphereGeometry(r * 3, 48, 8, 0, Math.PI * 2, 0, Math.asin(1 / 3))
     g.rotateX(Math.PI / 2); g.translate(0, 0, -r * 3 * Math.cos(Math.asin(1 / 3))); g.scale(1, 1, 0.35); return g
-  }, [r])
+  })
   return (
     <group>
       <mesh renderOrder={order}><ringGeometry args={[r * 0.74, r, 64]} />
@@ -148,9 +169,9 @@ function LensStack({ r, order = 0 }: { r: number; order?: number }) {
     </group>)
 }
 
-export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps) {
+function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps) {
   const f = IP18_FINISHES[opts.finish] ?? IP18_FINISHES.silver
-  const g = useMemo(() => {
+  const g = geoSet(() => {
     const body = slab(rrect(W, H, all(CR)), T, EDGE)
     const glass = new THREE.ShapeGeometry(rrect(GLASS.w, GLASS.h, all(CR - mm(1.2))), 48)
     const screen = flatUV(rrect(ACT.w, ACT.h, all(ACT_R)), ACT.w, ACT.h)
@@ -162,11 +183,11 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
     // Camera glass window on the plateau, enclosing the three lenses, flash, mic and sensor.
     const window = new THREE.ShapeGeometry(rrect(mm(63), mm(39.5), all(mm(9.5))), 48)
     return { body, glass, screen, island, plateau, backGlass, window }
-  }, [])
+  })
   useMemo(() => fitTexture(texture, mediaAspect, IP18_ASPECT), [texture, mediaAspect])
   // Brushed aluminium frame: anisotropic highlight along the band, streaky roughness and faint grooves.
   const bR = brushedRoughness(), bN = brushedNormal(), fR = frostRoughness(), sR = smudgeRoughness()
-  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.9} roughness={0.55} roughnessMap={bR} normalMap={bN} normalScale={new THREE.Vector2(0.06, 0.06)}
+  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.9} roughness={0.55} roughnessMap={bR} normalMap={bN} normalScale={NORMAL_SCALE}
     anisotropy={0.55} clearcoat={0.08} clearcoatRoughness={0.3} envMapIntensity={1.15} />
   // Frosted back glass: textured roughness under a thin, slightly glossy coat so highlights spread but stay soft.
   const matte = <meshPhysicalMaterial color={f.back} metalness={0} roughness={0.8} roughnessMap={fR} clearcoat={0.35} clearcoatRoughness={0.38}
@@ -177,21 +198,21 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
   // Buttons: pill (fully rounded ends) in side view, 2.66 wide, extruded 0.45 out of the flat side band
   // with a rounded bevel where the face meets the sides. 0.3 mm is sunk into the frame so no gap shows.
   const SINK = mm(0.3)
-  const btnGeo = (len: number, wz: number, prot: number) => {
+  const btnGeo = (len: number, wz: number, prot: number) => geoOnce(`btn${len}|${wz}|${prot}`, () => {
     const bev = Math.min(prot * 0.45, mm(0.2))
     const r = wz / 2
     const g = new THREE.ExtrudeGeometry(rrect(wz - bev * 2, len - bev * 2, all(r - bev)), { depth: prot + SINK - bev, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 4, curveSegments: 24 })
     g.translate(0, 0, -SINK); g.rotateY(Math.PI / 2); return g // extrusion now runs along +x
-  }
+  })
   const side = (x: number, cy: number, len: number, key: string) => (
     <Pressable key={key} depth={mm(0.3)} position={[x, ty(cy), 0]} rotation={[0, x < 0 ? Math.PI : 0, 0]}>
       <mesh geometry={btnGeo(len, mm(2.66), mm(0.45))} castShadow>{metal}</mesh></Pressable>)
   // Camera Control: flush. Thin metal surround plus a sapphire glass inset, both within 0.05 mm of the frame surface.
   const cameraControl = (cy: number) => (
     <Pressable depth={mm(0.1)} position={[W / 2, ty(cy), 0]}>
-      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.01), 0, 0]}><shapeGeometry args={[rrect(mm(3.43), mm(17.5), all(mm(1.715))), 32]} />
+      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.01), 0, 0]}><shapeGeometry args={[rrC(mm(3.43), mm(17.5), all(mm(1.715))), 32]} />
         <meshPhysicalMaterial color={f.frame} metalness={0.95} roughness={0.18} polygonOffset polygonOffsetFactor={-2} /></mesh>
-      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.03), 0, 0]}><shapeGeometry args={[rrect(mm(3.03), mm(17.1), all(mm(1.515))), 32]} />
+      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.03), 0, 0]}><shapeGeometry args={[rrC(mm(3.03), mm(17.1), all(mm(1.515))), 32]} />
         <meshPhysicalMaterial color="#5e6672" metalness={0.1} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} ior={1.77} polygonOffset polygonOffsetFactor={-4} /></mesh>
     </Pressable>)
   const lensX = (x: number) => bx(x), lensY = (y: number) => ty(y)
@@ -209,7 +230,7 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
       {/* front camera in the island's right-hand cap */}
       <group position={[FCAM.x, ISL.cy, zf + E * 5]}><LensStack r={FCAM.r} order={4} /></group>
       {/* receiver slot along the top glass edge */}
-      <mesh position={[0, RECEIVER.cy, zf + E * 3]}><shapeGeometry args={[rrect(RECEIVER.w, RECEIVER.h, all(RECEIVER.h / 2)), 16]} />
+      <mesh position={[0, RECEIVER.cy, zf + E * 3]}><shapeGeometry args={[rrC(RECEIVER.w, RECEIVER.h, all(RECEIVER.h / 2)), 16]} />
         <meshBasicMaterial color="#0b0b0d" polygonOffset polygonOffsetFactor={-3} /></mesh>
       {/* cover glass reflection over the display: black base, additive, so only the fresnel reflection and faint smudges show */}
       <mesh geometry={g.screen} position={[0, 0, zf + E * 4.5]} renderOrder={10}>
@@ -239,7 +260,7 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
       {opts.simTray && <SimTray frame={f.frame} />}
       {/* bottom: USB-C centred at 35.92 mm, speaker and mic holes Ø1.53, screws Ø1.50 */}
       <group position={[0, -H / 2 - E, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <mesh><shapeGeometry args={[rrect(mm(8.9), mm(3.2), all(mm(1.6))), 24]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>
+        <mesh><shapeGeometry args={[rrC(mm(8.9), mm(3.2), all(mm(1.6))), 24]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>
         {[15.40, 17.65, 19.91, 22.16, 24.42, 47.43, 49.69, 51.94, 54.20, 56.45].map(x => (
           <mesh key={x} position={[-W / 2 + mm(x), 0, 0]}><circleGeometry args={[mm(0.765), 16]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
         {[29.0, 42.85].map(x => (
@@ -255,3 +276,4 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
     </group>
   )
 }
+export default memo(IPhone18Pro)

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import type { DeviceProps } from '../types'
 import { fitTexture, DEFAULT_LOGO_TINT } from './shared'
@@ -52,7 +52,7 @@ function Overlay({ geo, z, color = '#000', order = 2 }: { geo: THREE.BufferGeome
   </mesh>
 }
 
-export default function Duo({ texture, mediaAspect, opts }: DeviceProps) {
+function Duo({ texture, mediaAspect, opts }: DeviceProps) {
   const f = FINISHES[opts.finish as keyof typeof FINISHES] ?? FINISHES.night
   const g = useMemo(() => {
     // Right half spans x 0..W, left half spans -W..0 (in its own frame before swinging).
@@ -67,6 +67,7 @@ export default function Duo({ texture, mediaAspect, opts }: DeviceProps) {
     const udc = new THREE.CircleGeometry(0.014, 24)
     return { rightBody, leftBody, bezelR, bezelL, scrR, scrL, outer, island, udc }
   }, [])
+  useEffect(() => () => Object.values(g).forEach(x => x.dispose()), [g])
   const innerTex = opts.screen === 'inner' ? texture : null
   const outerTex = opts.screen === 'outer' ? texture : null
   useMemo(() => fitTexture(texture, mediaAspect, opts.screen === 'inner' ? INNER_ASPECT : OUTER_ASPECT), [texture, mediaAspect, opts.screen])
@@ -95,12 +96,12 @@ export default function Duo({ texture, mediaAspect, opts }: DeviceProps) {
         <meshBasicMaterial color="#000" transparent opacity={0.45} polygonOffset polygonOffsetFactor={-2} /></mesh>
       {/* back glass */}
       <mesh position={[0, 0, -T / 2 - E]} rotation={[0, Math.PI, 0]}>
-        <shapeGeometry args={[rrect(W - 0.004, H - 0.004, [CR - 0.004, HR, HR, CR - 0.004], -W / 2), 24]} />{glassBack}
+        <shapeGeometry args={[rrC(W - 0.004, H - 0.004, [CR - 0.004, HR, HR, CR - 0.004], -W / 2), 24]} />{glassBack}
       </mesh>
       {/* camera plateau: horizontal rounded block near the top free corner, two lenses side by side + flash.
           About 38 x 23.6 mm, 4 mm from the top and free edge (seen from the back, lenses sit next to the free edge). */}
       <group position={[W - 0.23, H / 2 - 0.158, -T / 2]}>
-        <mesh rotation={[Math.PI, 0, 0]}><extrudeGeometry args={[rrect(0.38, 0.236, [0.1, 0.1, 0.1, 0.1]), { depth: 0.01, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.004, bevelSegments: 4, curveSegments: 32 }]} />{glassBack}</mesh>
+        <mesh rotation={[Math.PI, 0, 0]}><extrudeGeometry args={[rrC(0.38, 0.236, [0.1, 0.1, 0.1, 0.1]), { depth: 0.01, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.004, bevelSegments: 4, curveSegments: 32 }]} />{glassBack}</mesh>
         {[0.075, -0.06].map(x => (
           <group key={x} position={[x, 0, -0.012]}>
             <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.0625, 0.066, 0.01, 48]} />{frameMat}</mesh>
@@ -138,7 +139,7 @@ export default function Duo({ texture, mediaAspect, opts }: DeviceProps) {
           <mesh geometry={g.leftBody} castShadow>{frameMat}</mesh>
           {/* USB-C on the bottom edge, about 43 mm from the hinge */}
           <mesh position={[-0.43, -H / 2 - 0.0005, 0]} rotation={[Math.PI / 2, 0, 0]}>
-            <shapeGeometry args={[pill(0.09, 0.028)]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>
+            <shapeGeometry args={[USB_SHAPE]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>
           {/* top edge speaker grille, 36 to 51 mm from the hinge */}
           {[0, 1, 2, 3, 4, 5].map(i => (
             <mesh key={i} position={[-0.365 - i * 0.028, H / 2 + 0.0005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -147,7 +148,7 @@ export default function Duo({ texture, mediaAspect, opts }: DeviceProps) {
           <mesh geometry={g.scrL} position={[0, 0, zf + E]}>{screenMat(innerTex)}</mesh>
           {/* outer display on the back, cover glass then screen */}
           <group position={[-W / 2, 0, -T / 2]} rotation={[0, Math.PI, 0]}>
-            <mesh position={[0, 0, E]}><shapeGeometry args={[rrect(W - 0.03, H - 0.03, [HR, CR - 0.012, CR - 0.012, HR]), 24]} />
+            <mesh position={[0, 0, E]}><shapeGeometry args={[rrC(W - 0.03, H - 0.03, [HR, CR - 0.012, CR - 0.012, HR]), 24]} />
               <meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
             <mesh geometry={g.outer} position={[0, 0, E * 2]}>{screenMat(outerTex)}</mesh>
             <group position={[W / 2 - 0.105, H / 2 - 0.103, 0]}><Overlay geo={g.island} z={E * 4} /></group>
@@ -157,3 +158,11 @@ export default function Duo({ texture, mediaAspect, opts }: DeviceProps) {
     </group>
   )
 }
+// Inline JSX shapes cached by parameters so re-renders don't rebuild geometry.
+const shapeCache = new Map<string, THREE.Shape>()
+function rrC(w: number, h: number, r: number[], cx = 0) {
+  const k = [w, h, ...r, cx].join('|'); let s = shapeCache.get(k)
+  if (!s) shapeCache.set(k, s = rrect(w, h, r, cx)); return s
+}
+const USB_SHAPE = pill(0.09, 0.028)
+export default memo(Duo)

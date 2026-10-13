@@ -1,10 +1,10 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { RoundedBox } from '@react-three/drei'
 import type { DeviceProps } from '../types'
 import { fitTexture, screenGeometry } from './shared'
 const W = 2.4, BAR = 0.12, SH = 1.4, D = 0.03
 export const BROWSER_ASPECT = W / SH
-export default function BrowserFrame({ texture, mediaAspect }: DeviceProps) {
+function BrowserFrame({ texture, mediaAspect }: DeviceProps) {
   const geo = useMemo(() => screenGeometry(W - 0.002, SH, 0.0005), [])
   useMemo(() => fitTexture(texture, mediaAspect, BROWSER_ASPECT), [texture, mediaAspect])
   const H = SH + BAR
@@ -31,3 +31,4 @@ export default function BrowserFrame({ texture, mediaAspect }: DeviceProps) {
     </group>
   )
 }
+export default memo(BrowserFrame)

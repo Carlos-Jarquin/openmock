@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { ContactShadows, Environment } from '@react-three/drei'
+import { ContactShadows } from '@react-three/drei'
 import { EffectComposer, DepthOfField, Bloom, Noise } from '@react-three/postprocessing'
 import * as THREE from 'three'
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
 import { INNER_PX, OUTER_PX } from './devices/Duo'
 import { sceneHit } from './devices/shared'
 import { ErrorBoundary } from './ErrorBoundary'
+import { Env, retryEnvironment } from './Env'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -21,14 +21,11 @@ type Grab = { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera;
 function GLGrab({ onReady }: { onReady: (s: Grab) => void }) {
   const { gl, scene, camera, setDpr, viewport } = useThree()
   useEffect(() => onReady({ gl, scene, camera, setDpr, dpr: viewport.dpr }), [gl, scene, camera, setDpr, viewport.dpr, onReady])
+  // Dev only: lets the leak test read renderer.info.
+  useEffect(() => { if (import.meta.env.DEV) (window as unknown as { __om: unknown }).__om = { gl, scene } }, [gl, scene])
   return null
 }
 
-/** Studio HDRI (Poly Haven, CC0) for reflections only; the background stays our own. */
-function Env({ intensity }: { intensity: number }) {
-  return <Environment files="/hdri/studio_small_08_1k.hdr" environmentIntensity={intensity} />
-}
-void RoomEnvironment
 
 /** Paints the background into the scene so post effects (which drop canvas transparency) keep it. */
 function SceneBg({ mode, c1, c2, angle }: { mode: 'solid' | 'gradient'; c1: string; c2: string; angle: number }) {
@@ -312,7 +309,7 @@ export default function App() {
         }}
         onPointerUp={e => { drag.current = null; (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId) }}
         onWheel={e => { const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)); setPose(p => ({ ...p, zoom: clamp(p.zoom * k, 0.5, 2.5) })) }}>
-        <ErrorBoundary label="3D preview">
+        <ErrorBoundary label="3D preview" onRetry={retryEnvironment}>
         <Canvas shadows gl={{ alpha: true, preserveDrawingBuffer: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1 }} camera={{ fov: 30, position: [0, 0, 4.2] }}
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
