@@ -121,6 +121,7 @@ function makeRig(src: THREE.Object3D): Rig {
   })
   const m = mesh! as THREE.SkinnedMesh
   m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false
+  m.userData.hand = true   // the AI hands pass finds hand meshes by this
   // owner[v] = name of the bone with the largest weight on vertex v
   const si = m.geometry.getAttribute('skinIndex'), sw = m.geometry.getAttribute('skinWeight'), owner: string[] = []
   for (let v = 0; v < si.count; v++) {
@@ -228,7 +229,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
 export function HandRig({ pose, tone, fit, children }: { pose: HandPose; tone: string; fit: HandFit | null; children: React.ReactNode }) {
   const on = pose !== 'off' && !!fit
   return (
-    <group rotation={[0, 0, on && pose === 'landscape' ? Math.PI / 2 : 0]}>
+    <group rotation={[0, 0, on && pose === 'landscape' ? Math.PI / 2 : 0]} userData={{ handRig: true }}>
       {children}
       {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} /></Suspense>}
     </group>)

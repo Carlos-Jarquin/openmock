@@ -11,6 +11,7 @@ import { INNER_PX, OUTER_PX } from './devices/Duo'
 import { sceneHit } from './devices/shared'
 import { ErrorBoundary } from './ErrorBoundary'
 import { Env, retryEnvironment } from './Env'
+import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type Guide } from './hands/aiHands'
 import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 
@@ -131,6 +132,9 @@ export default function App() {
   const [light, setLight] = useState(LIGHT)
   const [fx, setFx] = useState(FX)
   const [hands, setHands] = useState<{ pose: HandPose; tone: string }>({ pose: 'off', tone: 'fair' })
+  // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
+  const [ai, setAi] = useState<{ guide: Guide; shadows: boolean; busy: boolean; url: string | null }>({ guide: 'depth', shadows: false, busy: false, url: null })
+  const aiAbort = useRef<AbortController | null>(null)
   const [bgMode, setBgMode] = useState<'solid' | 'gradient'>('gradient')
   const [bg1, setBg1] = useState('#dfe7ff')
   const [bg2, setBg2] = useState('#f7d9e8')
@@ -194,7 +198,35 @@ export default function App() {
 
   const bgCss = transparent ? undefined : bgMode === 'solid' ? bg1 : `linear-gradient(${angle}deg, ${bg1}, ${bg2})`
 
+  // Any change to the scene makes the AI picture stale, so drop it.
+  useEffect(() => { setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return a.url ? { ...a, url: null } : a }) },
+    [device, opts, media, pose, light, fx, hands, bgMode, bg1, bg2, angle, transparent])
+  const makePhotoreal = async () => {
+    const t = three.current; if (!t || ai.busy) return
+    if (!(await comfyReachable())) { setStatus('ComfyUI is not running. Start it on port 8188, then try again.'); return }
+    const ctl = new AbortController(); aiAbort.current = ctl
+    setAi(a => ({ ...a, busy: true }))
+    try {
+      await new Promise(r => requestAnimationFrame(r))
+      const passes = await renderPasses(t, hands.tone)
+      const res = await runComfy(passes, { guide: ai.guide, seed: Math.floor(Math.random() * 1e9), onStatus: setStatus, signal: ctl.signal })
+      const out = composite(passes, res, { shadows: ai.shadows })
+      const url = URL.createObjectURL(await new Promise<Blob>(r => out.toBlob(b => r(b!), 'image/png')))
+      setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return { ...a, busy: false, url } })
+      setStatus(`Photoreal hands ready at ${passes.w} × ${passes.h}. Export PNG saves this picture. Change anything to go back to 3D.`)
+    } catch (e) {
+      setAi(a => ({ ...a, busy: false })); setStatus(e instanceof Error ? e.message : 'Something went wrong with ComfyUI.')
+    }
+  }
+  const exportAiPasses = async () => {
+    const t = three.current; if (!t) return
+    await new Promise(r => requestAnimationFrame(r))
+    await downloadPasses(await renderPasses(t, hands.tone))
+    setStatus('Saved the AI hands passes and prompt. Load them into comfy/hands.json in ComfyUI.')
+  }
+
   const exportPng = async () => {
+    if (ai.url) { const a = document.createElement('a'); a.download = 'openmock-ai-hands.png'; a.href = ai.url; a.click(); setStatus('Exported the photoreal hands picture.'); return }
     const t = three.current; if (!t) return
     const { gl } = t
     const size = gl.getSize(new THREE.Vector2())
@@ -277,6 +309,14 @@ export default function App() {
               <div className="seg wrap">{Object.entries(SKIN_TONES).map(([k, t]) => <button key={k} className={hands.tone === k ? 'on' : ''} title={t.label} onClick={() => setHands({ ...hands, tone: k })}>
                 <span className="swatch" style={{ background: t.color }} />{t.label}</button>)}</div>
               <p className="hint">The hands move with the phone, so set any camera angle. Two hands turns the phone sideways.</p>
+              <h3>Photoreal hands</h3>
+              <div className="seg"><button className={ai.guide === 'depth' ? 'on' : ''} onClick={() => setAi({ ...ai, guide: 'depth' })}>Guide by depth</button>
+                <button className={ai.guide === 'pose' ? 'on' : ''} onClick={() => setAi({ ...ai, guide: 'pose' })}>Guide by pose</button></div>
+              <label className="check"><input type="checkbox" checked={ai.shadows} onChange={e => setAi({ ...ai, shadows: e.target.checked })} /> Contact shadows (darkens the phone slightly)</label>
+              {ai.busy ? <button onClick={() => aiAbort.current?.abort()}>Cancel</button> : <button onClick={makePhotoreal}>Make hands photoreal</button>}
+              {ai.url && <button className="ghost" onClick={() => setAi(a => { URL.revokeObjectURL(a.url!); return { ...a, url: null } })}>Back to 3D hands</button>}
+              <button className="ghost" onClick={exportAiPasses}>Export for AI hands</button>
+              <p className="hint">Uses ComfyUI on this Mac to repaint only the hands. The phone stays exactly as rendered.</p>
             </>}
           </> : <p className="hint">Hands are available for the iPhone 18 Pro and 18 Pro Max.</p>}
         </section>
@@ -390,6 +430,7 @@ export default function App() {
             </EffectComposer>)}
         </Canvas>
         </ErrorBoundary>
+        {ai.url && <img className="ai-overlay" src={ai.url} alt="" />}
         {dragging && <div className="dropnote">Drop to use as the screen</div>}
       </main>
     </div>

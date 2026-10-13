@@ -41,3 +41,11 @@ The Hands section adds 3D hands holding the iPhone 18 Pro or 18 Pro Max: right h
 Each pose places the hand next to the phone, rests the palm on it, then bends each finger joint by joint until the skin touches the phone body, which is built from the phone's real measurements. That way the grip fits both sizes. Pose data lives in `src/hands/Hands.tsx`.
 
 The hand models are the MIT-licensed WebXR "generic-hand" assets (see CREDITS.md), so they ship in `public/hands/`. They are fairly low detail, so close-ups show some faceting.
+
+### Photoreal hands (ComfyUI)
+
+"Make hands photoreal" sends the current view to a ComfyUI running on this Mac (port 8188, reached through the dev server at `/comfyui-api`; set `COMFY_URL` to use another address). ComfyUI repaints only the hands with `comfy/hands.json`: Z-Image Turbo (`z_image_turbo_bf16.safetensors`, `qwen_3_4b.safetensors` text encoder, `ae.safetensors` VAE) with the Z-Image Turbo Fun ControlNet Union 2.1 (`model_patches/`), guided by the hand depth map or the OpenPose hand skeleton, inpainting the hand mask only. About 100 s per picture on an M3 Max after the first load.
+
+Openmock then lays the AI hands over the live render. Every pixel outside the hand mask is the original render. Under the old 3D hand it uses a clean plate (the same frame with the hands hidden), and over the phone it only accepts pixels that differ from the plate and read as skin, so the AI can't redraw the screen or the phone. Where the phone sits in front of a finger, the phone wins. "Contact shadows" is optional and is the only setting that darkens phone pixels. Export PNG saves the photoreal picture. Changing anything goes back to the 3D hands.
+
+"Export for AI hands" downloads every pass (beauty, clean plate, hand mask, soft alpha, occlusion, phone silhouette, depth, normals, OpenPose skeleton) and the prompt, to run the workflow by hand.
