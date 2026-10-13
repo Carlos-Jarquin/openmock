@@ -14,6 +14,7 @@ import { loadLogo, loadLocalLogo } from './localLogo'
 import { Env, retryEnvironment } from './Env'
 import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type Guide } from './hands/aiHands'
 import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
+import { GestureControls, GESTURE_DEFAULT, isGesture, rescale, screenOf, type Gesture } from './hands/gestures'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER } from './sketch/Sketch'
 
@@ -27,7 +28,8 @@ type LightPreset = 'soft' | 'apple' | 'violet'
 type BgMode = 'solid' | 'gradient' | 'streaks'
 const LIGHT = { preset: 'soft' as LightPreset, intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6 }
 // Device bodies the hands can grip, in model units (1 = 100 mm).
-const fitOf = (s: typeof IPHONE_18_PRO): HandFit => ({ W: s.body.w / 100, H: s.body.h / 100, T: s.body.t / 100, R: s.body.cornerR / 100, E: s.body.edge / 100 })
+const fitOf = (s: typeof IPHONE_18_PRO): HandFit => ({ W: s.body.w / 100, H: s.body.h / 100, T: s.body.t / 100, R: s.body.cornerR / 100, E: s.body.edge / 100,
+  SW: s.active.w / 100, SH: s.active.h / 100, PW: Math.round(s.px.w / 3), PH: Math.round(s.px.h / 3) })
 const HAND_FITS: Partial<Record<DeviceId, HandFit>> = { ip18: fitOf(IPHONE_18_PRO), ip18max: fitOf(IPHONE_18_PRO_MAX) }
 /** Violet silhouette scene: a hand held up from the lower right against a violet backdrop with light streaks. */
 const VIOLET_CAMERA = { tiltX: 4, tiltY: -16, rotZ: -11, zoom: 1.1, panX: -0.11, panY: 0.1, fov: 26 }
@@ -142,6 +144,9 @@ export default function App() {
   const [sk, setSk] = useState(SKETCH_DEFAULTS)
   const sketch = style === 'sketch'
   const [hands, setHands] = useState<{ pose: HandPose; tone: string }>({ pose: 'off', tone: 'fair' })
+  const [gesture, setGesture] = useState<Gesture>(GESTURE_DEFAULT)
+  const gestureFit = useRef(HAND_FITS.ip18!)
+  useEffect(() => { const f = HAND_FITS[device]; if (f && f !== gestureFit.current) { setGesture(g => rescale(g, screenOf(gestureFit.current), screenOf(f))); gestureFit.current = f } }, [device])
   // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
   const [ai, setAi] = useState<{ guide: Guide; shadows: boolean; busy: boolean; url: string | null }>({ guide: 'depth', shadows: false, busy: false, url: null })
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
@@ -201,7 +206,7 @@ export default function App() {
 
   // Any change to the scene makes the AI picture stale, so drop it.
   useEffect(() => { setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return a.url ? { ...a, url: null } : a }) },
-    [device, opts, media, pose, light, fx, hands, bgMode, bg1, bg2, angle, transparent, style, sk])
+    [device, opts, media, pose, light, fx, hands, gesture, bgMode, bg1, bg2, angle, transparent, style, sk])
   const makePhotoreal = async () => {
     const t = three.current; if (!t || ai.busy) return
     if (!(await comfyReachable())) { setStatus('ComfyUI is not running. Start it on port 8188, then try again.'); return }
@@ -258,7 +263,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -326,6 +331,7 @@ export default function App() {
               <div className="seg wrap">{Object.entries(SKIN_TONES).map(([k, t]) => <button key={k} className={hands.tone === k ? 'on' : ''} title={t.label} onClick={() => setHands({ ...hands, tone: k })}>
                 <span className="swatch" style={{ background: t.color }} />{t.label}</button>)}</div>
               <p className="hint">The hands move with the phone, so set any camera angle. Two hands turns the phone sideways.</p>
+              {isGesture(hands.pose) && <GestureControls pose={hands.pose} fit={HAND_FITS[device]!} g={gesture} set={setGesture} />}
               <h3>Photoreal hands</h3>
               <div className="seg"><button className={ai.guide === 'depth' ? 'on' : ''} onClick={() => setAi({ ...ai, guide: 'depth' })}>Guide by depth</button>
                 <button className={ai.guide === 'pose' ? 'on' : ''} onClick={() => setAi({ ...ai, guide: 'pose' })}>Guide by pose</button></div>
@@ -442,7 +448,7 @@ export default function App() {
           </>}
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
             <Centred deps={[device, opts.fold, opts.screen, media?.texture, hands.pose]}>
-              <HandRig pose={hands.pose} tone={hands.tone} fit={HAND_FITS[device] ?? null}>
+              <HandRig pose={hands.pose} tone={hands.tone} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture}>
                 <SketchStyle on={sketch} o={sk}><D texture={media?.texture ?? null} mediaAspect={media?.aspect ?? screenAspect} opts={opts} /></SketchStyle>
               </HandRig>
             </Centred>

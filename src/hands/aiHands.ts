@@ -48,6 +48,13 @@ function readTarget(gl: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget) {
 /** Renders every guide pass at the canvas's own pixel size, so the masks line up with the live render exactly. */
 const frames = (n: number) => new Promise<void>(r => { const f = () => (--n <= 0 ? r() : requestAnimationFrame(f)); requestAnimationFrame(f) })
 export async function renderPasses(g: Grab, tone: string): Promise<Passes> {
+  // Gesture markers are for placing the touch point only, so leave them out of every pass.
+  const gizmos: THREE.Object3D[] = []
+  g.scene.traverse(o => { if (o.userData.gizmo && o.visible) gizmos.push(o) })
+  for (const o of gizmos) o.visible = false
+  try { return await passes(g, tone) } finally { for (const o of gizmos) o.visible = true }
+}
+async function passes(g: Grab, tone: string): Promise<Passes> {
   const { gl, scene, camera } = g
   const w = gl.domElement.width, h = gl.domElement.height
   // Clean plate: the live render (with effects) once with the hands hidden, then the normal beauty frame.

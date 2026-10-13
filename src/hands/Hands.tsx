@@ -8,9 +8,11 @@ import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
+import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, type Gesture } from './gestures'
 
-export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold'
-export const HAND_POSES: [HandPose, string][] = [['off', 'Off'], ['right', 'Right hand'], ['left', 'Left hand'], ['landscape', 'Two hands'], ['pinch', 'Present'], ['hold', 'Hold up']]
+export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'holdtap'
+export const HAND_POSES: [HandPose, string][] = [['off', 'Off'], ['right', 'Right hand'], ['left', 'Left hand'], ['landscape', 'Two hands'], ['pinch', 'Present'], ['hold', 'Hold up'],
+  ['tap', 'Tap'], ['swipe', 'Swipe'], ['zoom', 'Pinch to zoom'], ['thumb', 'Thumb scroll'], ['holdtap', 'Hold and tap']]
 export const SKIN_TONES: Record<string, { label: string; color: string; sheen: string }> = {
   light: { label: 'Light', color: '#f0c8ae', sheen: '#ffd9cf' },
   fair: { label: 'Fair', color: '#dfa98a', sheen: '#ffcbb8' },
@@ -21,7 +23,7 @@ export const SKIN_TONES: Record<string, { label: string; color: string; sheen: s
   silhouette: { label: 'Silhouette', color: '#2b2346', sheen: '#a894ff' },
 }
 /** Device body in model units (1 = 100 mm): width, height, thickness, corner radius, edge fillet. */
-export interface HandFit { W: number; H: number; T: number; R: number; E: number }
+export interface HandFit { W: number; H: number; T: number; R: number; E: number; SW?: number; SH?: number; PW?: number; PH?: number }
 
 const URL_R = '/hands/right.glb', URL_L = '/hands/left.glb'
 const HAND_SCALE = 10 * 1.05   // asset is in metres; 1.05 gives an average adult hand, about 180 mm wrist to fingertip
@@ -42,17 +44,19 @@ function sdf(p: THREE.Vector3, f: HandFit) {
 /** Finger joint plan: fixed angles in degrees for [metacarpal, proximal, intermediate, distal], and whether the
  * proximal to distal joints keep closing past those angles until contact (up to max). spread turns the finger about the palm normal. */
 /** tip: where the fingertip pad should rest (device space). When set, the finger's spread and curls are solved to reach it. */
-interface FingerPlan { curl: [number, number, number, number]; close?: boolean; max?: [number, number, number]; spread?: number; tip?: THREE.Vector3 }
-interface ThumbPlan { oppose: number; abduct: number; curl: [number, number, number]; close?: boolean; max?: [number, number]; tip?: THREE.Vector3 }
+/** touch: tip is a point on the glass; the solver lands the fingertip pad there, resting on the surface. */
+interface FingerPlan { curl: [number, number, number, number]; close?: boolean; max?: [number, number, number]; spread?: number; tip?: THREE.Vector3; touch?: boolean }
+interface ThumbPlan { oppose: number; abduct: number; curl: [number, number, number]; close?: boolean; max?: [number, number]; tip?: THREE.Vector3; touch?: boolean }
+/** follow: the whole hand (wrist and arm) moves so its touching digits reach their points without strain. */
 /** knuckle: where the middle finger's knuckle (MCP joint) goes. F: palm direction, wrist to knuckles. N: out of the palm. */
-interface HandPlan { side: 'right' | 'left'; knuckle: THREE.Vector3; F: THREE.Vector3; N: THREE.Vector3; roll?: number; seat?: number; fingers: FingerPlan[]; thumb: ThumbPlan }
+interface HandPlan { side: 'right' | 'left'; knuckle: THREE.Vector3; F: THREE.Vector3; N: THREE.Vector3; roll?: number; seat?: number; follow?: boolean; fingers: FingerPlan[]; thumb: ThumbPlan }
 
 const mx = (v: THREE.Vector3) => v3(-v.x, v.y, v.z)
 const mt = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && mx(o.tip) })
 const mirror = (p: HandPlan): HandPlan => ({ ...p, side: p.side === 'right' ? 'left' : 'right', knuckle: mx(p.knuckle), F: mx(p.F), N: mx(p.N), fingers: p.fingers.map(mt), thumb: mt(p.thumb) })
 
 /** Poses in device space: x right and y up seen from the front, z out of the screen. Sizes scale with the device. */
-function plans(pose: HandPose, f: HandFit): HandPlan[] {
+function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT): HandPlan[] {
   // Dev only: a test harness can override the plan to tune poses.
   const dbg = import.meta.env.DEV ? (globalThis as { __handPlan?: (f: HandFit, v: typeof v3) => HandPlan[] | undefined }).__handPlan?.(f, v3) : undefined
   if (dbg) return dbg
@@ -72,6 +76,35 @@ function plans(pose: HandPose, f: HandFit): HandPlan[] {
     thumb: { oppose: 0, abduct: 0, curl: [0, 0, 0], tip: v3(hw + 0.055, -hh * 0.05, ht * 0.2) },
   }
   if (pose === 'right') return [grip]
+  if (isGesture(pose)) {
+    const P = (x: number, y: number) => ptToDevice(f, x, y), u = screenOf(f).unit
+    // Middle, ring and little finger loosely closed into the palm, clear of the glass.
+    const fist: FingerPlan[] = [{ curl: [0, 62, 80, 45], spread: -1 }, { curl: [0, 70, 85, 45], spread: -4 }, { curl: [0, 76, 85, 45], spread: -8 }]
+    // Pointing: the right hand comes in from the lower right, palm towards the glass, index angled down onto the
+    // point and the thumb resting against the side of the middle finger. The wrist sits a fixed reach behind the point.
+    const pointer = (t: THREE.Vector3): HandPlan => ({ side: 'right', knuckle: t.clone().add(v3(0.35, -0.55, 0.7)), F: v3(-0.3, 0.72, -0.55), N: v3(0.15, 0.5, -1), follow: true,
+      fingers: [{ curl: [0, 18, 22, 12], tip: t, touch: true }, ...fist], thumb: { oppose: -20, abduct: -10, curl: [10, 30, 30] } })
+    const tw = import.meta.env.DEV ? (globalThis as { __gestTweak?: (p: HandPlan[], v: typeof v3) => HandPlan[] }).__gestTweak : undefined
+    if (tw) return tw(gesturePlans(), v3)
+    return gesturePlans()
+    function gesturePlans(): HandPlan[] {
+    if (pose === 'tap') return [pointer(P(ges.x, ges.y))]
+    if (pose === 'swipe') { const a = swipeAt(ges); return [pointer(P(a.x, a.y))] }
+    if (pose === 'holdtap') return [mirror(grip), pointer(P(ges.x, ges.y))]
+    if (pose === 'zoom') {
+      // Thumb and index spread on the glass about the centre, along the pinch axis (the thumb on the lower left end).
+      const a = deg(ges.angle), dx = Math.cos(a) * ges.spread / 2, dy = -Math.sin(a) * ges.spread / 2
+      const ti = P(ges.x + dx, ges.y + dy), tt = P(ges.x - dx, ges.y - dy), c = ti.clone().add(tt).multiplyScalar(0.5)
+      return [{ side: 'right', knuckle: c.clone().add(v3(0.3, -0.75, 0.55)), F: v3(-0.35, 0.7, -0.55), N: v3(0.1, 0.45, -1), follow: true,
+        fingers: [{ curl: [0, 20, 20, 10], spread: 4, tip: ti, touch: true }, ...fist],
+        thumb: { oppose: 20, abduct: 40, curl: [0, 10, 10], tip: tt, touch: true } }]
+    }
+    // Thumb scroll: the one-handed grip slides up or down the frame to follow the point, and the thumb reaches across.
+    const t = P(ges.x, ges.y), dy = Math.min(hh * 0.5, Math.max(-hh * 0.5, t.y + hh * 0.05 + 0.35 * (hw - t.x))) - (-hh * 0.05), sh = (v?: THREE.Vector3) => v && v.clone().setY(v.y + dy)
+    return [{ ...grip, knuckle: sh(grip.knuckle)!, fingers: grip.fingers.map(fp => ({ ...fp, tip: sh(fp.tip) })),
+      thumb: { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: t, touch: true } }]
+    }
+  }
   if (pose === 'hold') {
     const hold = (y: number, spread: number): FingerPlan => ({ curl: [0, 20, 6, 4], spread, tip: v3(-hw - 0.075, y, ht * 0.1) })
     // Held up from the lower right: palm behind the lower right of the phone, the wrist dropping out of frame,
@@ -235,12 +268,13 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
   }
   /** Reach: coordinate descent on a digit's angles (degrees) so its tip lands on a target, while keeping the
    * finger out of the device (spheres along the bones) and staying near the starting pose. */
-  const reach = (names: string[], target: THREE.Vector3, x0: number[], lo: number[], hi: number[], apply: (x: number[]) => void, radius: number) => {
+  const reach = (names: string[], target: THREE.Vector3, x0: number[], lo: number[], hi: number[], apply: (x: number[]) => void, radius: number, free = false) => {
     const tipB = rig.bones[names[names.length - 1]], wp = new THREE.Vector3(), wq = new THREE.Vector3()
     const cost = (x: number[]) => {
       apply(x); update()
       let c = tipB.getWorldPosition(wp).distanceToSquared(target)
       for (let k = 1; k < names.length; k++) {
+        if (free && k === names.length - 1) continue   // a touching pad is placed on the glass by the contact pass below
         rig.bones[names[k]].getWorldPosition(wp); rig.bones[names[k - 1]].getWorldPosition(wq)
         for (const t of [0, 0.33, 0.66]) {
           if (k === 1 && t > 0.5) continue   // the knuckle itself may rest on the edge
@@ -263,11 +297,21 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
     }
     apply(x); update()
   }
+  // Touching digits, placed after the rest of the hand by the contact pass.
+  const touches: { owners: Set<string>; surf: THREE.Vector3; aim: THREE.Vector3; run: (aim: THREE.Vector3) => void }[] = []
   FINGERS.forEach((fn, i) => {
     const fp = plan.fingers[i], names = JOINTS.map(j => `${fn}-${j}`)
     const axes = names.slice(0, 4).map((n, k) => curlAxis(n, names[k + 1]))
     const angles = fp.curl.map(deg)
     const pre0 = fp.spread ? (M: THREE.Matrix4) => hinge(M, P(names[1]), N0, deg(fp.spread!) * h) : undefined
+    if (fp.tip && fp.touch) {
+      chainPose(names, axes, angles, pre0); update()
+      touches.push({ owners: new Set([names[3], names[4]]), surf: fp.tip.clone(), aim: fp.tip.clone(), run: aim => {
+        const apply = (x: number[]) => chainPose(names, axes, [0, x[1], x[2], x[3]].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h))
+        reach(names.slice(1), aim, [fp.spread ?? 0, ...fp.curl.slice(1)], [-25, -15, 0, 0], [25, 95, 105, 80], apply, 0.07, true)
+      } })
+      return
+    }
     if (fp.tip) {
       // Start from a contact wrap (so the finger begins outside the phone), then reach for the target.
       chainPose(names, axes, angles, pre0); update(); close(names, axes, angles, 1, fp.max ?? [95, 95, 70], pre0)
@@ -283,41 +327,126 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
   const tp = plan.thumb, axesT = THUMB.slice(0, 3).map((n, k) => curlAxis(n, THUMB[k + 1]))
   const preT = (M: THREE.Matrix4) => { hinge(M, P(THUMB[0]), F0, deg(tp.oppose) * -h); hinge(M, P(THUMB[0]), N0, deg(tp.abduct) * h) }
   const angT = tp.curl.map(deg)
-  if (tp.tip) {
+  if (tp.tip && tp.touch) {
+    const apply = (x: number[]) => chainPose(THUMB, axesT, [x[2], x[3], x[4]].map(deg), M => { hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h) })
+    touches.push({ owners: new Set([THUMB[2], THUMB[3]]), surf: tp.tip.clone(), aim: tp.tip.clone(), run: aim =>
+      reach(THUMB, aim, [tp.oppose, tp.abduct, ...tp.curl], [-60, -60, -30, -30, -20], [100, 80, 70, 80, 90], apply, 0.08, true) })
+  } else if (tp.tip) {
     const apply = (x: number[]) => chainPose(THUMB, axesT, [x[2], x[3], x[4]].map(deg), M => { hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h) })
     reach(THUMB, tp.tip, [tp.oppose, tp.abduct, ...tp.curl], [-60, -60, -20, -20, -10], [90, 70, 60, 70, 80], apply, 0.08)
-    update(); return
+    update()
+  } else {
+    chainPose(THUMB, axesT, angT, preT); update()
+    if (tp.close) close(THUMB, axesT, angT, 1, tp.max ?? [50, 45], preT)
+    update()
   }
-  chainPose(THUMB, axesT, angT, preT); update()
-  if (tp.close) close(THUMB, axesT, angT, 1, tp.max ?? [50, 45], preT)
-  update()
+  // Contact pass: reach each touching digit, find the skin point of its pad nearest the phone, and correct the aim
+  // (and, with follow, the whole hand) until that point sits on the glass at the target, just touching.
+  if (!touches.length) { armFrame(rig, F1, N1); return }
+  const GAP = 0.0003   // 0.03 mm
+  // The glass is the plane z = T / 2, so the contact is the pad's lowest skin point.
+  const contact = (owners: Set<string>, glass: number) => {
+    let best = Infinity; const c = new THREE.Vector3()
+    for (let i = 0; i < pos.count; i++) {
+      if (!owners.has(rig.owner[i])) continue
+      _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); _v.applyMatrix4(rig.mesh.matrixWorld)
+      if (_v.z < best) { best = _v.z; c.copy(_v) }
+    }
+    return { c, d: best - glass }
+  }
+  let worst = Infinity
+  const iters = import.meta.env.DEV ? (globalThis as { __touchIters?: number }).__touchIters ?? 10 : 10
+  for (let it = 0; it < iters; it++) {
+    const errs = touches.map(t => { t.run(t.aim); update(); const { c, d } = contact(t.owners, t.surf.z); return v3(t.surf.x - c.x, t.surf.y - c.y, GAP - d) })
+    worst = Math.max(...errs.map(e => e.length()))
+    if (worst < 0.0005) break
+    const mean = errs.reduce((a, e) => a.add(e), v3(0, 0, 0)).multiplyScalar(1 / errs.length)
+    // Damped, and kept within 15 mm of the point, so a digit that cannot reach does not wander off.
+    touches.forEach((t, k) => { t.aim.addScaledVector(errs[k], 0.7); const off = t.aim.clone().sub(t.surf); if (off.length() > 0.15) t.aim.copy(t.surf).add(off.setLength(0.15)) })
+    if (plan.follow) {
+      // Lift the hand if any skin other than the touching pads dips below the glass, else just slide it across.
+      const pads = new Set(touches.flatMap(t => [...t.owners])), hw = fit.W / 2, hh = fit.H / 2
+      let low = Infinity
+      for (let i = 0; i < pos.count; i += 2) {
+        if (pads.has(rig.owner[i])) continue
+        _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); _v.applyMatrix4(rig.mesh.matrixWorld)
+        if (Math.abs(_v.x) < hw && Math.abs(_v.y) < hh && _v.z < low) low = _v.z
+      }
+      const lift = Math.max(0, fit.T / 2 + 0.03 - low)
+      rig.root.position.add(v3(mean.x, mean.y, lift).clampLength(0, 0.3)); update()
+    }
+  }
+  rig.root.userData.touchError = worst   // model units; 0.001 is 0.1 mm
+  armFrame(rig, F1, N1)
+}
+
+/** Where the forearm joins: the wrist joint, the arm's direction (back from the palm) and the palm normal. */
+function armFrame(rig: Rig, F: THREE.Vector3, N: THREE.Vector3) {
+  rig.root.updateMatrixWorld(true)
+  rig.root.userData.arm = { at: rig.bones.wrist.getWorldPosition(new THREE.Vector3()), dir: F.clone().negate(), n: N.clone() }
+}
+
+// ---------- forearm ----------
+// The hand models stop at the wrist, which shows as a flat cut whenever the arm points at the camera. A tapered,
+// slightly flattened tube continues the wrist back along the arm, out of frame. It shares the skin material and is
+// tagged as hand, so the AI hands mask covers it too.
+let armGeo: THREE.BufferGeometry | null = null
+function forearmGeometry() {
+  if (armGeo) return armGeo
+  // Along +y from the wrist: 26 cm long, 2.1 cm radius inside the wrist widening to 3.2 cm, rounded at the wrist end.
+  const pts: THREE.Vector2[] = []
+  for (let i = 0; i <= 6; i++) { const a = (i / 6) * Math.PI / 2; pts.push(new THREE.Vector2(0.21 * Math.sin(a), 0.1 - 0.12 * Math.cos(a))) }
+  for (let i = 1; i <= 12; i++) { const t = i / 12; pts.push(new THREE.Vector2(0.21 + 0.13 * Math.min(1, t * 2.5) - 0.02 * t, 0.1 + 2.5 * t)) }
+  armGeo = new THREE.LatheGeometry(pts, 32)
+  armGeo.scale(1, 1, 0.78)   // flatter front to back, like a wrist
+  return armGeo
+}
+const _ax = new THREE.Vector3(), _ay = new THREE.Vector3(), _az = new THREE.Vector3(), _mb = new THREE.Matrix4()
+function placeArm(mesh: THREE.Mesh, rig: Rig) {
+  const a = rig.root.userData.arm as { at: THREE.Vector3; dir: THREE.Vector3; n: THREE.Vector3 } | undefined
+  if (!a) { mesh.visible = false; return }
+  _ay.copy(a.dir).normalize(); _az.copy(a.n).addScaledVector(_ay, -a.n.dot(_ay)).normalize(); _ax.crossVectors(_ay, _az)
+  _mb.makeBasis(_ax, _ay, _az); mesh.quaternion.setFromRotationMatrix(_mb); mesh.position.copy(a.at); mesh.visible = true
 }
 
 /** Wraps the device: turns it for landscape and adds the posed hands, which Centred leaves out of its bounds. */
-export function HandRig({ pose, tone, fit, children }: { pose: HandPose; tone: string; fit: HandFit | null; children: React.ReactNode }) {
+export function HandRig({ pose, tone, fit, gesture, onGesture, children }: { pose: HandPose; tone: string; fit: HandFit | null; gesture?: Gesture; onGesture?: (g: Gesture) => void; children: React.ReactNode }) {
   const on = pose !== 'off' && !!fit
   return (
     <group rotation={[0, 0, on && pose === 'landscape' ? Math.PI / 2 : 0]} userData={{ handRig: true }}>
       {children}
-      {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} /></Suspense>}
+      {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} gesture={gesture} /></Suspense>}
+      {on && isGesture(pose) && gesture && onGesture && <ScreenTarget pose={pose} fit={fit!} g={gesture} onChange={onGesture} />}
     </group>)
 }
 
-function Hands({ pose, tone, fit }: { pose: HandPose; tone: string; fit: HandFit }) {
+function Hands({ pose, tone, fit, gesture }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture }) {
   const right = useGLTF(URL_R), left = useGLTF(URL_L)
   const group = useRef<THREE.Group>(null)
   const rigs = useMemo(() => ({ right: makeRig(right.scene), left: makeRig(left.scene) }), [right.scene, left.scene])
   const mat = useMemo(() => skinMaterial(tone), [tone])
   useEffect(() => () => mat.dispose(), [mat])
   useEffect(() => { rigs.right.mesh.material = mat; rigs.left.mesh.material = mat }, [rigs, mat])
+  // Only the gesture fields the pose uses, so moving a marker re-solves just the touching hand.
+  const ges = isGesture(pose) ? gesture : undefined
+  const solved = useRef<Record<string, string>>({})
+  const arms = useMemo(() => ({ right: new THREE.Mesh(forearmGeometry()), left: new THREE.Mesh(forearmGeometry()) }), [])
+  useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = m.receiveShadow = true; m.userData.hand = true } }, [arms, mat])
   useEffect(() => {
     const g = group.current; if (!g) return
-    const list = plans(pose, fit)
-    for (const pl of list) { const r = rigs[pl.side]; solve(r, pl, fit); g.add(r.root) }
-    return () => { for (const r of [rigs.right, rigs.left]) g.remove(r.root) }
-  }, [pose, fit, rigs])
+    const list = plans(pose, fit, ges)
+    const used = new Set<THREE.Object3D>()
+    for (const pl of list) {
+      const r = rigs[pl.side], key = JSON.stringify([pl, fit])
+      if (solved.current[pl.side] !== key || r.root.parent !== g) { g.remove(r.root); solve(r, pl, fit); solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); g.add(arms[pl.side]) }
+      used.add(r.root)
+      if (import.meta.env.DEV) (globalThis as { __touchErr?: Record<string, number> }).__touchErr = { ...(globalThis as { __touchErr?: Record<string, number> }).__touchErr, [pl.side]: r.root.userData.touchError ?? 0 }
+    }
+    for (const side of ['right', 'left'] as const) if (!used.has(rigs[side].root)) { g.remove(rigs[side].root, arms[side]); delete solved.current[side] }
+  }, [pose, fit, rigs, ges, arms])
+  useEffect(() => () => { const g = group.current; for (const side of ['right', 'left'] as const) g?.remove(rigs[side].root, arms[side]); solved.current = {} }, [rigs, arms])
   return <group ref={group} userData={{ noBounds: true }} />
 }
 useGLTF.preload(URL_R); useGLTF.preload(URL_L)
 
-if (import.meta.hot) import.meta.hot.dispose(() => { poreTex?.dispose(); poreTex = null })
+if (import.meta.hot) import.meta.hot.dispose(() => { poreTex?.dispose(); poreTex = null; armGeo?.dispose(); armGeo = null })
