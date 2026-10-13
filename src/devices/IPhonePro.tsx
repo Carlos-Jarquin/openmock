@@ -330,7 +330,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
   const isl = ty(s.island.cy)
   // Antenna bands are a moulded resin: the frame colour pulled toward a neutral grey, matte, non-metallic.
   const bandColour = useMemo(() => new THREE.Color(f.frame).lerp(new THREE.Color('#77797e'), 0.45), [f.frame])
-  // The bands are drawn as an overlay on the same body, plateau and fillet meshes, kept only inside the band heights, so they wrap
+  // Frame sides only (faces whose normal points mostly sideways), never the back or the plateau. The bands are drawn as an overlay on the same body, plateau and fillet meshes, kept only inside the band heights, so they wrap
   // the frame sides and run up over the plateau shoulder exactly on the surface (same geometry, LessEqual depth, no z-fighting).
   const bandMaterial = useMemo(() => {
     const m = new THREE.MeshPhysicalMaterial({ color: bandColour, metalness: 0.05, roughness: 0.62, clearcoat: 0.25, clearcoatRoughness: 0.4,
@@ -339,9 +339,9 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const yb = new THREE.Vector4(ty(b1), ty(a1), ty(b2), ty(a2))
     m.onBeforeCompile = sh => {
       sh.uniforms.uBand = { value: yb }; sh.uniforms.uOff = { value: 0 }
-      sh.vertexShader = 'uniform float uOff;\nvarying float vDevY;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvDevY = position.y + uOff;')
-      sh.fragmentShader = 'uniform vec4 uBand;\nvarying float vDevY;\n' + sh.fragmentShader.replace('void main() {',
-        'void main() {\n  if (!((vDevY > uBand.x && vDevY < uBand.y) || (vDevY > uBand.z && vDevY < uBand.w))) discard;')
+      sh.vertexShader = 'uniform float uOff;\nvarying float vDevY;\nvarying float vNz;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvDevY = position.y + uOff; vNz = objectNormal.z;')
+      sh.fragmentShader = 'uniform vec4 uBand;\nvarying float vDevY;\nvarying float vNz;\n' + sh.fragmentShader.replace('void main() {',
+        'void main() {\n  if (!((vDevY > uBand.x && vDevY < uBand.y) || (vDevY > uBand.z && vDevY < uBand.w)) || abs(vNz) > 0.97) discard;')
       m.userData.sh = sh
     }
     m.customProgramCacheKey = () => 'om-band'
@@ -379,8 +379,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* camera plateau: a full-width raised bar of the same aluminium unibody, lenses, flash and sensor sit directly on it */}
       <mesh geometry={g.plateau} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{metal}</mesh>
       <mesh geometry={g.fillet} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{metal}</mesh>
-      {bandOn(g.plateau, H / 2 - (plH + mm(P.shoulder)) / 2, zb)}
-      {bandOn(g.fillet, H / 2 - (plH + mm(P.shoulder)) / 2, zb)}
+      {/* Antenna bands stop at the plateau: none on its fillet, shoulder or top, as in Apple's photos. */}
       {s.lens.at.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}><RearLens d={lensD} rise={lensRise} frame={f.frame} /></group>))}
       <mesh position={[bx(s.flash.bx), ty(s.flash.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.flash.d / 2), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>
