@@ -98,6 +98,58 @@ function flatUV(shape: THREE.Shape, w: number, h: number) {
 const E = 0.0003
 /** Concave fillet strip along the lower part of a plateau outline. Built in the outline's plane with height toward -z
  * (out of the back): at the base it starts f out from the wall, and it meets the wall f up. xMax clips it to the flat back. */
+/** Signed distance to a rounded rectangle centred at (cx, cy), negative inside; radius rb for the lower half, rt for the upper. */
+function sdRRect(x: number, y: number, hw: number, hh: number, cx: number, cy: number, rb: number, rt: number) {
+  const r = y < cy ? rb : rt, qx = Math.abs(x - cx) - (hw - r), qy = Math.abs(y - cy) - (hh - r)
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r
+}
+/**
+ * Camera plateau as ONE swept height field over the top of the back, fused with the frame.
+ * Height above the back = plateau profile minus the frame's back roundover:
+ *  - plateau profile: flat top at `rise`, then a single cosine S-curve over the shoulder width D down to 0 (convex at the top,
+ *    concave fillet at the foot, zero slope at both ends), so there is no stacked lip or separate fillet band;
+ *  - roundover: the same quarter-round (radius `edge`) the frame uses, applied to the whole surface near the body outline,
+ *    so at the outline the surface turns vertical and continues straight down the frame side (tangent-continuous, no kink).
+ * A vertical skirt along the outline closes the gap down to where the frame's flat side starts. Built in body coordinates,
+ * back plane at z = 0, outward (towards the back) is -z.
+ */
+function plateauSurface(o: { W: number; H: number; CR: number; edge: number; rise: number; D: number; flat: { top: number; bottom: number; hw: number; rb: number; rt: number } }) {
+  const { W, H, CR, edge, rise, D, flat } = o
+  const yFoot = flat.bottom - D - edge * 0.2, nx = 320, ny = Math.ceil(320 * (H / 2 - yFoot) / W)
+  const fcy = (flat.top + flat.bottom) / 2, fhh = (flat.top - flat.bottom) / 2
+  const prof = (x: number, y: number) => {
+    const d = sdRRect(x, y, flat.hw, fhh, 0, fcy, flat.rb, flat.rt)
+    return d <= 0 ? rise : d >= D ? 0 : rise * (1 + Math.cos(Math.PI * d / D)) / 2
+  }
+  const roll = (e: number) => e >= edge ? 0 : edge - Math.sqrt(Math.max(0, edge * edge - (edge - e) ** 2))
+  const sdBody = (x: number, y: number) => sdRRect(x, y, W / 2, H / 2, 0, 0, CR, CR)
+  const height = (x: number, y: number) => prof(x, y) - roll(Math.max(0, -sdBody(x, y)))
+  const pos: number[] = [], idx: number[] = []
+  for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
+    let x = -W / 2 + W * i / nx, y = yFoot + (H / 2 - yFoot) * j / ny
+    // Top corners: map the grid's corner square onto the quarter disc of the body's corner radius (square-to-disc),
+    // so the grid follows the rounded outline without collapsed cells.
+    const ccx = W / 2 - CR, ccy = H / 2 - CR, vx = Math.abs(x) - ccx, vy = y - ccy
+    if (vx > 0 && vy > 0) { const k = Math.max(vx, vy) / Math.hypot(vx, vy); x = Math.sign(x) * (ccx + vx * k); y = ccy + vy * k }
+    pos.push(x, y, -height(x, y) - 1e-4) // 0.01 mm proud so the foot never z-fights the body's back
+  }
+  const row = nx + 1
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const a = j * row + i, b = a + 1, c = a + row, d = c + 1
+    idx.push(a, c, b, b, c, d)
+  }
+  // Skirt: along the outline above the foot, from the surface edge straight down to the top of the frame's flat side.
+  const base = pos.length / 3, outline = rrect(W, H, all(CR)).getSpacedPoints(1600).filter(p => p.y > yFoot)
+  outline.sort((p, q) => Math.atan2(p.y, p.x) - Math.atan2(q.y, q.x))
+  outline.forEach(p => { pos.push(p.x, p.y, -height(p.x, p.y) - 1e-5, p.x, p.y, edge) })
+  for (let k = 0; k < outline.length - 1; k++) {
+    const a = base + k * 2, b = a + 2
+    idx.push(a, a + 1, b, b, a + 1, b + 1)
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx)
+  g.computeVertexNormals(); return g
+}
+
 function plateauFillet(shape: THREE.Shape, h: number, xMax: number, f: number, inset = 0, steps = 8) {
   const pts = shape.getSpacedPoints(400).slice(0, -1), n = pts.length
   const keep: { p: THREE.Vector2; nrm: THREE.Vector2 }[] = []
@@ -288,24 +340,15 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     // The base outline is exactly the body outline at the sides and top. The shoulder bevel starts where the frame's flat side
     // starts (EDGE below the back) and rolls in over rise + EDGE to the flat top, so the frame side flows into the shoulder as
     // one surface, replacing the frame's back roundover under the plateau. The straight wall and lower bevel hide in the body.
-    const sh = mm(P.shoulder), grow = 0, baseH = plH + sh
-    const flatR = mm(P.topR), baseShape = rrect(W + grow * 2, baseH + grow, [flatR + sh, flatR + sh, CR + grow, CR + grow], 0, grow / 2)
-    const plateau = smoothNormals(new THREE.ExtrudeGeometry(baseShape, { depth: mm(0.01), bevelEnabled: true, bevelThickness: rise + EDGE,
-      bevelSize: sh, bevelOffset: -sh, bevelSegments: 24, curveSegments: 64 }), 60)
-    // Inner edge: the flat top stands a crisp 0.15 mm step proud of the shoulder, giving Apple's visible inner edge line.
-    const stepH = mm(0.15), topIn = Math.max(mm(P.cornerR) - sh, mm(0.5))
-    const step = new THREE.ExtrudeGeometry(rrect(W + grow * 2 - sh * 2, baseH + grow - sh * 2, [flatR, flatR, topIn, topIn], 0, grow / 2),
-      { depth: stepH - mm(0.04), bevelEnabled: true, bevelThickness: mm(0.02), bevelSize: mm(0.03), bevelOffset: -mm(0.03), bevelSegments: 2, curveSegments: 64 })
-    // Concave fillet where the shoulder meets the flat back below the plateau.
-    const fillet = plateauFillet(rrect(W, baseH, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)]), baseH, W / 2 - EDGE, mm(1.6),
-      // where the shoulder bevel crosses the back plane it is already inset from the base outline
-      sh * (1 - Math.sqrt(1 - (EDGE / (rise + EDGE)) ** 2)))
+    const sh = mm(P.shoulder), flatR = mm(P.topR), topIn = Math.max(mm(P.cornerR) - sh, mm(0.5))
+    const plateau = plateauSurface({ W, H, CR, edge: EDGE, rise, D: sh,
+      flat: { top: H / 2 - sh, bottom: H / 2 - plH, hw: W / 2 - sh, rb: flatR, rt: topIn } })
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
     const bandH = mm(s.antennaBands[0][1] - s.antennaBands[0][0])
     const band = sideBand(W, T, EDGE, bandH)
-    return { body, glass, screen, island, plateau, fillet, step, backGlass, band }
+    return { body, glass, screen, island, plateau, backGlass, band }
   })
   useMemo(() => fitTexture(texture, mediaAspect, aspect), [texture, mediaAspect, aspect])
   // Brushed aluminium frame: anisotropic highlight along the band, streaky roughness and faint grooves.
@@ -347,7 +390,7 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
         <meshPhysicalMaterial color="#5e6672" metalness={0.1} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} ior={1.77} polygonOffset polygonOffsetFactor={-4} /></mesh>
     </Pressable>)
   // Parts on the plateau sit on the flat top, which stands 0.13 mm proud of the shoulder (the inner edge step).
-  const zPlat = zb - rise - mm(0.13)
+  const zPlat = zb - rise
   const lensD = mm(s.lens.d), lensRise = mm(s.lens.rise)
   // Front camera: the drawing gives only the island (front camera keepout); the lens sits in the right-hand cap (assumed).
   const fcamX = mm(s.island.w / 2 - s.island.h / 2)
@@ -401,13 +444,10 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* back: aluminium between the plateau and the glass, then the matte glass window */}
       <mesh geometry={g.backGlass} position={[0, ty(s.backGlass.top) - (H - mm(s.backGlass.top) - EDGE * 0.8) / 2, zb - E]} rotation={[0, Math.PI, 0]}>{matte}</mesh>
       {/* camera plateau: a full-width raised bar of the same aluminium unibody, lenses, flash and sensor sit directly on it */}
-      <mesh geometry={g.plateau} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb + EDGE]}>{metal}</mesh>
-      <mesh geometry={g.fillet} position={[0, H / 2 - (plH + mm(P.shoulder)) / 2, zb]}>{metal}</mesh>
+      <mesh geometry={g.plateau} position={[0, 0, zb]}>{metal}</mesh>
       {/* Antenna bands run over the plateau's outer shoulder and stop at the inner edge of the flat top (normal-based cut). */}
-      {bandOn(g.plateau, plY, zb + EDGE)}
-      {bandOn(g.fillet, plY, zb)}
-      <mesh geometry={g.step} position={[0, plY, zb - rise - mm(0.15) + mm(0.02)]}>
-        <meshPhysicalMaterial color={f.frame} metalness={0.25} roughness={0.75} envMapIntensity={darkF ? 0.2 : 0.55} specularIntensity={darkF ? 0.25 : 0.6} /></mesh>
+      {bandOn(g.plateau, 0, zb)}
+      {/* the flat top is part of the swept plateau surface */}
       {s.lens.at.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}><RearLens d={lensD} rise={lensRise} frame={f.frame} /></group>))}
       <mesh position={[bx(s.flash.bx), ty(s.flash.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.flash.d / 2), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>
