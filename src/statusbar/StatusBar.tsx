@@ -37,8 +37,18 @@ export const clockText = (d: Date) => `${d.getHours() % 12 || 12}:${String(d.get
 // (the time does not move). With an expanded island (activity or bubble) the time, plus any glyph, is centred in the left ear
 // between x 12 and the island's left edge; the right cluster is centred between the island's (or bubble's) right edge and x 386.7, with 6 pt gaps (8, or 9.7 before LTE, in the compact layout).
 // iOS also tightens the time when the island is expanded (12:23 is 40 pt wide instead of 42.6). Compact: right cluster centred at 327.3. Centre line y 32.3; island 37 pt tall at y 14.
-export const SB_CY = 32.3, DIM = 0.35, DIM2 = 0.27, ORANGE = '#ff9f0a'
+// Time: SF Pro fitted to the 3x screenshots in Chromium on macOS (iOS semibold renders lighter than Chrome's 600), with the
+// colon raised to the digit centre as iOS does. The expanded-island time is set smaller, not just tighter.
+export const TIME_CMP = `500 16.85px ${'-apple-system, system-ui, "SF Pro Text", "Helvetica Neue", sans-serif'}`, TIME_LS_CMP = 0.26, TIME_LS_EXP = 0.11
+export const COLON_DY = -1.8, TIME_BASE = 6.4, CARRIER_BASE = 6.35
+// With an expanded island iOS draws the whole leading group and the right cluster ~5% smaller (time 35 vs 37 px tall, battery 71 vs 75 px wide).
+export const EXP_K = 0.947, GLYPH_GAP = 3.7, GLYPH_GAP_EXP = 5.4, BAT_FONT = '520 11.75', BAT_LS = 0
+export const SB_CY = 32.3, DIM = 0.35, DIM2 = 0.22, ORANGE = '#ff9f0a'
 export const SB_FONT = '-apple-system, system-ui, "SF Pro Text", "Helvetica Neue", sans-serif'
+/** Expanded layouts: ink-centre corrections (pt) for the leading group, measured per layout against the screenshots,
+ *  since iOS centres the ink rather than the text advance. */
+const leadOff = (sb: SbCfg) => { const g = sbGlyph(sb)
+  return sb.bubble ? (g === 'arrow' ? 0.35 : g === 'moon' ? -0.05 : 0) : sb.act ? -0.1 : -0.4 }
 /** Island layout in pt, Pro width (Pro Max shifts by half the extra width). */
 export function islandLayout(sb: SbCfg, CSS_W: number) {
   const dx = (CSS_W - 402) / 2
@@ -65,54 +75,71 @@ export function Island({ sb, w }: { sb: SbCfg; w: number }) {
   </>
 }
 
-const Moon = ({ c }: { c: string }) => <svg width="13.3" height="13.3" viewBox="0.4 0.4 19.2 19.2" aria-hidden style={{ marginTop: -0.8 }}><path fill={c} d="M7.6 0.6A9.6 9.6 0 1 0 19.4 12.4 8 8 0 0 1 7.6 0.6z" /></svg>
-const Arrow = ({ c }: { c: string }) => <svg width="12.3" height="12.3" viewBox="0.4 0.4 11.2 11.2" aria-hidden style={{ marginTop: 0.4 }}><path fill={c} d="M11.6 0.4L0.4 5.3 5.6 6.4 6.7 11.6z" /></svg>
+// Glyphs fitted to the 3x screenshots (circle minus circle; rounded quad), in pt with y relative to the centre line SB_CY.
+const MOON_W = 13.56, ARROW_W = 12.83
+const Moon = ({ c, x }: { c: string; x: number }) => <path transform={`translate(${x} 0)`} fill={c} d="M5.591 -6.577A6.854 6.854 0 1 0 13.557 1.595A5.777 5.777 0 0 1 5.591 -6.577z" />
+const Arrow = ({ c, x }: { c: string; x: number }) => <path transform={`translate(${x} 0) scale(1.1 1.032)`} fill={c} stroke={c} strokeWidth="1.404" strokeLinejoin="round" d="M0.701 -0.38L5.019 1.031L6.149 6.003L10.955 -5.013z" />
+
+/** Props for an absolutely placed svg drawing user units (vx, vy, vw, vh) at CSS (left, top) with scale k. Chrome snaps the
+ *  svg box to whole CSS px, so the box sits on integer px and the fraction moves into the viewBox (sub-pixel exact). */
+function snapBox(left: number, top: number, k: number, vx: number, vy: number, vw: number, vh: number) {
+  const l = Math.floor(left), t = Math.floor(top), w = Math.ceil(vw * k + left - l) + 1, h = Math.ceil(vh * k + top - t) + 1
+  return { width: w, height: h, viewBox: `${vx - (left - l) / k} ${vy - (top - t) / k} ${w / k} ${h / k}`, overflow: 'visible' as const,
+    style: { position: 'absolute' as const, left: l, top: t, overflow: 'visible' as const } }
+}
 
 /** iOS status bar: time (or carrier) on the left, signal, network and battery on the right, on the island centre line. */
 export function StatusBar({ tone, sb, w: CSS_W, time }: { tone: 'dark' | 'light'; sb: SbCfg; w: number; time: string }) {
   const c = tone === 'dark' ? '#000' : '#fff'
+  // dimmed parts measured per tone: battery 0.3 on dark text, 0.5 on light; Wi-Fi 0.2 on dark text
+  const BDIM = tone === 'dark' ? 0.3 : 0.5, WDIM = tone === 'dark' ? 0.205 : DIM
   const L = islandLayout(sb, CSS_W), lvl = sb.level / 100
   // left: compact -> time centred at 65 with the glyph hanging right; expanded -> time + glyph centred in [12, island left]
-  const GW = sbGlyph(sb) === 'moon' ? 13.3 : sbGlyph(sb) === 'arrow' ? 12.3 : 0, GAP = 4.8
-  const tw = textWidth(sb.carrier ?? time, sb.carrier ? `400 15px ${SB_FONT}` : `600 17px ${SB_FONT}`, sb.carrier ? 0.2 : sbAct(sb) ? -0.8 : -0.3)
+  const GW = sbGlyph(sb) === 'moon' ? MOON_W : sbGlyph(sb) === 'arrow' ? ARROW_W : 0, GAP = sbAct(sb) ? GLYPH_GAP_EXP - (sbGlyph(sb) === 'moon' ? 0.35 : 0) : GLYPH_GAP
+  const K = sbAct(sb) ? EXP_K : 1, KL = sb.carrier ? 1 : K // the carrier name is not scaled
+  const tf = sb.carrier ? `400 15px ${SB_FONT}` : TIME_CMP, tls = sb.carrier ? 0.13 : sbAct(sb) ? TIME_LS_EXP : TIME_LS_CMP
+  const tw = textWidth(sb.carrier ?? time, tf, tls)
   const groupW = tw + (GW ? GAP + GW : 0)
-  const timeL = sb.carrier ? 37.8 : !sbAct(sb) ? 65 - tw / 2 : (12 + L.l) / 2 - groupW / 2
+  const timeL = sb.carrier ? 37.8 : !sbAct(sb) ? 64.9 - tw / 2 : (12 + L.l) / 2 - groupW / 2 + leadOff(sb)
   // right cluster pieces (x in a local svg, y relative to top = SB_CY - 8)
   const items: { w: number; gap: number; el: (x: number) => React.ReactNode }[] = []
   if (sb.sig >= 0) items.push(sb.dual ? { w: 18.33, gap: 0, el: x => <g key="sig" fill={c}>
-      {[4, 5, 6, 6.67].map((h, i) => <rect key={i} x={x + i * 5.33} y={9.7 - h} width="3.33" height={h} rx="0.9" fillOpacity={i < sb.sig ? 1 : DIM2} />)}
-      {[0, 1, 2, 3].map(i => <rect key={'b' + i} x={x + i * 5.33} y={11.37} width="3.33" height="3.67" rx="0.9" fillOpacity={i < sb.sig2 ? 1 : DIM2} />)}</g> }
+      {[4.33, 5.37, 7, 8.6].map((h, i) => <rect key={i} x={x + 0.4 + i * 5.333} y={10.35 - h} width="3.36" height={h - 0.31} rx="1" fillOpacity={i < sb.sig ? 1 : DIM2} />)}
+      {[0, 1, 2, 3].map(i => <rect key={'b' + i} x={x + 0.4 + i * 5.333} y={11.68} width="3.36" height="3.69" rx="1" fillOpacity={i < sb.sig2 ? 1 : DIM2} />)}</g> }
     : { w: 19, gap: 0, el: x => <g key="sig" fill={c}>{[4.3, 3.3, 1.6, 0].map((t, i) => <rect key={i} x={x + i * 5.33} y={t + 1.4} width="3.33" height={13 - t} rx="1" fillOpacity={i < sb.sig ? 1 : DIM} />)}</g> })
-  if (sb.net === 'wifi') items.push({ w: 16, gap: sbAct(sb) ? 6 : 8, el: x => <g key="wifi" transform={`translate(${x} 2)`} fill={c}>
-      <path fillOpacity={sb.wifi >= 3 ? 1 : DIM} d="M8 0C11.1 0 13.9 1.2 16 3.2L14.6 4.6C12.9 2.9 10.6 2 8 2S3.1 2.9 1.4 4.6L0 3.2C2.1 1.2 4.9 0 8 0z" />
-      <path fillOpacity={sb.wifi >= 2 ? 1 : DIM} d="M8 4.1c2 0 3.8.8 5.1 2L11.7 7.5C10.7 6.6 9.4 6 8 6S5.3 6.6 4.3 7.5L2.9 6.1C4.2 4.9 6 4.1 8 4.1z" />
-      <path fillOpacity={sb.wifi >= 1 ? 1 : DIM} d="M8 8.2c1 0 1.9.4 2.6 1L8 12 5.4 9.2C6.1 8.6 7 8.2 8 8.2z" /></g> })
+  if (sb.net === 'wifi') items.push({ w: 16.85, gap: sbAct(sb) ? 2.22 : 8, el: x => <g key="wifi" transform={`translate(${x} 8.4)`} fill={c} stroke={c} strokeWidth="0.76" strokeLinejoin="round">
+      <path fillOpacity={sb.wifi >= 3 ? 1 : WDIM} strokeOpacity={sb.wifi >= 3 ? 1 : WDIM} d="M0.54 -2.41L1.66 -1.23L3.16 -2.32L4.82 -3.12L6.59 -3.61L8.42 -3.78L10.25 -3.61L12.03 -3.12L13.68 -2.32L15.18 -1.23L16.31 -2.41L15.49 -3.07L14.52 -3.72L13.67 -4.18L12.6 -4.65L11.49 -5L10.55 -5.22L9.39 -5.37L8.42 -5.41L7.45 -5.37L6.3 -5.22L5.17 -4.95L4.24 -4.65L3.18 -4.18L2.32 -3.72L1.36 -3.07z" />
+      <path fillOpacity={sb.wifi >= 2 ? 1 : WDIM} strokeOpacity={sb.wifi >= 2 ? 1 : WDIM} d="M3.4 0.61L4.59 1.86L5.43 1.27L6.41 0.82L7.45 0.55L8.42 0.47L9.4 0.55L10.44 0.82L11.42 1.27L12.26 1.86L13.44 0.61L12.38 -0.15L11.14 -0.75L9.8 -1.12L8.42 -1.25L7.04 -1.12L5.71 -0.75L4.46 -0.15z" />
+      <path fillOpacity={sb.wifi >= 1 ? 1 : WDIM} strokeOpacity={sb.wifi >= 1 ? 1 : WDIM} d="M6.34 3.7L8.42 5.9L10.51 3.7L10.05 3.41L9.53 3.18L8.99 3.05L8.42 3L7.86 3.05L7.31 3.18L6.79 3.41z" /></g> })
   if (sb.net === 'lte' || sb.net === '5g') { const t = sb.net === 'lte' ? 'LTE' : '5G', w = sb.net === 'lte' ? 18.7 : 13.5
-    items.push({ w, gap: sbAct(sb) ? 6 : 9.67, el: x => <text key="net" x={x + w / 2} y={13.7} textAnchor="middle" textLength={w} lengthAdjust="spacingAndGlyphs" fill={c} style={{ font: `600 13.7px ${SB_FONT}` }}>{t}</text> }) }
-  items.push({ w: 27.0, gap: sbAct(sb) ? 6 : 8, el: x => <g key="bat">
-      <defs><mask id="sb-pct" maskUnits="userSpaceOnUse"><rect x={x} y="0" width="28" height="16" fill="#fff" />
-        {sb.pct && <text x={x + 12.35} y="11.9" textAnchor="middle" fill="#000" style={{ font: `700 11px ${SB_FONT}`, letterSpacing: -0.2 }}>{sb.level}</text>}</mask>
-        <clipPath id="sb-lvl"><rect x={x} y="0" width={24.7 * lvl} height="16" /></clipPath></defs>
+    items.push({ w, gap: sbAct(sb) ? 6 : 9.67, el: x => <text key="net" x={x + w / 2} y={14.02} textAnchor="middle" textLength={w * 1.09} lengthAdjust="spacingAndGlyphs" fill={c} style={{ font: `600 13.7px ${SB_FONT}` }}>{t}</text> }) }
+  const BW = sbAct(sb) ? 25.12 : 24.28
+  items.push({ w: 27.0 + BW - 24.28, gap: sbAct(sb) ? (sb.net === 'wifi' ? 5.23 : 6.77) : 8, el: x => <g key="bat">
+      <defs><mask id="sb-pct" maskUnits="userSpaceOnUse"><rect x={x} y="0" width="30" height="17" fill="#fff" />
+        {sb.pct && <text x={x + 0.42 + BW / 2 - (sbAct(sb) ? 0.3 : 0)} y={sbAct(sb) ? 12.45 : 12.8} textAnchor="middle" fill="#000" style={{ font: `${BAT_FONT}px ${SB_FONT}`, letterSpacing: BAT_LS }}>{sb.level}</text>}</mask>
+        <clipPath id="sb-lvl"><rect x={x} y="0" width={0.23 + BW * lvl} height="17" /></clipPath></defs>
       {sb.pct ? <g mask="url(#sb-pct)">
-        <rect x={x} y="1.35" width="24.7" height="13.3" rx="4.2" fill={c} fillOpacity="0.4" />
-        <rect x={x} y="1.35" width="24.7" height="13.3" rx="4.2" fill={c} clipPath="url(#sb-lvl)" /></g>
+        <rect x={x + 0.23} y="1.68" width={BW} height="13.63" rx="4.2" fill={c} fillOpacity={BDIM} />
+        <rect x={x + 0.23} y="1.68" width={BW} height="13.63" rx="4.2" fill={c} clipPath="url(#sb-lvl)" /></g>
       : <g><rect x={x + 0.5} y="1.85" width="23.7" height="12.3" rx="3.8" fill="none" stroke={c} strokeOpacity="0.35" />
         <rect x={x + 2} y="3.35" width={20.7 * lvl} height="9.3" rx="2.4" fill={c} /></g>}
-      <path d={`M${x + 26} 6.35v3.3c.6-.2 1-.9 1-1.65s-.4-1.45-1-1.65z`} fill={c} fillOpacity="0.4" /></g> })
+      <path d={`M${x + 2.02 + BW - (sbAct(sb) ? 0.7 : 0)} 6.33h0.3a1.03 2 0 0 1 0 4h-0.3z`} fill={c} fillOpacity={BDIM} /></g> })
   items[0].gap = 0
+  if (K !== 1) items.forEach(it => { it.gap /= K })
   const W = items.reduce((s, it) => s + it.gap + it.w, 0)
   const rightEdge = L.bubble ? L.bubble.l + L.bubble.d : L.r
-  const rcx = sbAct(sb) ? (rightEdge + 386.7 + 2 * L.dx) / 2 : CSS_W - (402 - 327.3)
+  const rcx = sbAct(sb) ? (rightEdge + 384.4 + 2 * L.dx) / 2 + (L.bubble ? 0.45 : sb.act ? 0.4 : 1.1) : CSS_W - (402 - 326.85)
   let x = 0
   const els = items.map(it => { x += it.gap; const e = it.el(x); x += it.w; return e })
   return (
     <div style={{ position: 'absolute', left: 0, top: 0, width: CSS_W, height: STATUS_H, pointerEvents: 'none', color: c }}>
-      <div style={{ position: 'absolute', left: timeL, top: SB_CY - 11 + (sb.carrier ? 0.3 : 0.8), height: 22, display: 'flex', alignItems: 'center', gap: GAP, whiteSpace: 'nowrap',
-        font: sb.carrier ? `400 15px/22px ${SB_FONT}` : `600 17px/22px ${SB_FONT}`, letterSpacing: sb.carrier ? 0.2 : sbAct(sb) ? -0.8 : -0.3 }}>
-        <span>{sb.carrier ?? time}</span>
-        {!sb.carrier && sbGlyph(sb) === 'moon' && <Moon c={c} />}{!sb.carrier && sbGlyph(sb) === 'arrow' && <Arrow c={c} />}
-      </div>
-      <svg width={W} height="16" viewBox={`0 0 ${W} 16`} aria-hidden style={{ position: 'absolute', left: rcx - W / 2, top: SB_CY - 8, overflow: 'visible' }}>{els}</svg>
+      {/* leading group as SVG text: DOM text snaps to whole CSS px, SVG text and paths place at sub-pixel precision */}
+      <svg {...snapBox(timeL + groupW * (1 - KL) / 2, SB_CY - 11 * KL, KL, 0, -11, groupW, 22)} aria-hidden><g transform={sbAct(sb) || sb.carrier ? undefined : 'translate(0 0.07)'}>
+        <text x="0" y={sb.carrier ? CARRIER_BASE : TIME_BASE} fill={c} style={{ font: tf, letterSpacing: tls, whiteSpace: 'pre' }}>
+          {sb.carrier ?? time.split(':').map((p, i) => i ? [<tspan key={'c' + i} dy={COLON_DY}>:</tspan>, <tspan key={'d' + i} dy={-COLON_DY}>{p}</tspan>] : <tspan key="h">{p}</tspan>)}</text>
+        {!sb.carrier && sbGlyph(sb) === 'moon' && <Moon c={c} x={tw + GAP} />}{!sb.carrier && sbGlyph(sb) === 'arrow' && <Arrow c={c} x={tw + GAP} />}</g>
+      </svg>
+      <svg {...snapBox(rcx - W * K / 2, SB_CY - 8 * K - 0.33, K, 0, 0, W, 16)} aria-hidden>{els}</svg>
     </div>
   )
 }
