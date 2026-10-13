@@ -98,7 +98,7 @@ function flatUV(shape: THREE.Shape, w: number, h: number) {
 const E = 0.0003
 /** Concave fillet strip along the lower part of a plateau outline. Built in the outline's plane with height toward -z
  * (out of the back): at the base it starts f out from the wall, and it meets the wall f up. xMax clips it to the flat back. */
-function plateauFillet(shape: THREE.Shape, h: number, xMax: number, f: number, steps = 8) {
+function plateauFillet(shape: THREE.Shape, h: number, xMax: number, f: number, inset = 0, steps = 8) {
   const pts = shape.getSpacedPoints(400).slice(0, -1), n = pts.length
   const keep: { p: THREE.Vector2; nrm: THREE.Vector2 }[] = []
   for (let i = 0; i < n; i++) {
@@ -111,7 +111,9 @@ function plateauFillet(shape: THREE.Shape, h: number, xMax: number, f: number, s
   const pos: number[] = [], idx: number[] = []
   keep.forEach(({ p, nrm }) => {
     for (let k = 0; k <= steps; k++) {
-      const th = (k / steps) * Math.PI / 2, off = f * (1 - Math.sin(th)), up = f * (1 - Math.cos(th))
+      // Fade the fillet out over the last 3 mm before the frame so it never ends in a lip.
+      const fe = f * Math.min(1, Math.max(0, (xMax - Math.abs(p.x)) / (f * 2 + 0.03)))
+      const th = (k / steps) * Math.PI / 2, off = fe * (1 - Math.sin(th)) - inset, up = fe * (1 - Math.cos(th))
       pos.push(p.x + nrm.x * off, p.y + nrm.y * off, -up)
     }
   })
@@ -295,7 +297,9 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const step = new THREE.ExtrudeGeometry(rrect(W + grow * 2 - sh * 2, baseH + grow - sh * 2, [flatR, flatR, topIn, topIn], 0, grow / 2),
       { depth: stepH - mm(0.04), bevelEnabled: true, bevelThickness: mm(0.02), bevelSize: mm(0.03), bevelOffset: -mm(0.03), bevelSegments: 2, curveSegments: 64 })
     // Concave fillet where the shoulder meets the flat back below the plateau.
-    const fillet = plateauFillet(rrect(W, baseH, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)]), baseH, W / 2 - EDGE, mm(1.6))
+    const fillet = plateauFillet(rrect(W, baseH, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)]), baseH, W / 2 - EDGE, mm(1.6),
+      // where the shoulder bevel crosses the back plane it is already inset from the base outline
+      sh * (1 - Math.sqrt(1 - (EDGE / (rise + EDGE)) ** 2)))
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
     const bgTop = mm(s.backGlass.top), bgH = H - bgTop - EDGE * 0.8
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
