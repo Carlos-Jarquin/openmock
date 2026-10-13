@@ -224,7 +224,10 @@ function apply(mesh: THREE.Mesh, noEdges: boolean, m: Mats, o: SketchOptions) {
 function addLines(mesh: THREE.Mesh, src: THREE.Material, noEdges: boolean, m: Mats, o: SketchOptions) {
   for (const c of [...mesh.children]) if (c.userData[ADDED]) { mesh.remove(c) }
   if (!mesh.visible && !mesh.userData.sketchLines) return
-  const add = (obj: THREE.Object3D) => { obj.userData[ADDED] = true; if ((obj as LineSegments2).isLineSegments2) obj.layers.set(LINE_LAYER); obj.raycast = () => {}; mesh.add(obj) }
+  // noBounds: Centred measures with setFromObject(precise), which walks the raw position attribute. On a LineSegments2 that
+  // is the instanced base quad (y -1 to 2 in the line object's space), not the segments, so the lines inflated the device's
+  // box upward and shifted the phone down whenever framing was recomputed in Sketch (e.g. turning the status bar on).
+  const add = (obj: THREE.Object3D) => { obj.userData[ADDED] = true; obj.userData.noBounds = true; if ((obj as LineSegments2).isLineSegments2) obj.layers.set(LINE_LAYER); obj.raycast = () => {}; mesh.add(obj) }
   if (mesh.userData.sketchHull) {
     const h = new THREE.Mesh(mesh.geometry, m.thick); h.renderOrder = -1; add(h)
   }
