@@ -287,6 +287,10 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const flatR = mm(P.topR), baseShape = rrect(W + grow * 2, baseH + grow, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)], 0, grow / 2)
     const plateau = smoothNormals(new THREE.ExtrudeGeometry(baseShape, { depth: plDepth - rise * 2, bevelEnabled: true, bevelThickness: rise,
       bevelSize: sh, bevelOffset: -sh, bevelSegments: 24, curveSegments: 64 }), 60)
+    // Inner edge: the flat top stands a crisp 0.15 mm step proud of the shoulder, giving Apple's visible inner edge line.
+    const stepH = mm(0.15), topIn = Math.max(mm(P.cornerR) - sh, mm(0.5))
+    const step = new THREE.ExtrudeGeometry(rrect(W + grow * 2 - sh * 2, baseH + grow - sh * 2, [flatR, flatR, topIn, topIn], 0, grow / 2),
+      { depth: stepH - mm(0.04), bevelEnabled: true, bevelThickness: mm(0.02), bevelSize: mm(0.03), bevelOffset: -mm(0.03), bevelSegments: 2, curveSegments: 64 })
     // Concave fillet where the shoulder meets the flat back below the plateau.
     const fillet = plateauFillet(rrect(W, baseH, [flatR + sh, flatR + sh, mm(P.cornerR), mm(P.cornerR)]), baseH, W / 2 - EDGE, mm(0.8))
     // Back glass (MagSafe window): top edge and top corner radius from sheet 4; sides and bottom follow the edge band.
@@ -294,15 +298,17 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     const backGlass = new THREE.ShapeGeometry(rrect(W - EDGE * 2.2, bgH, [CR - EDGE, CR - EDGE, mm(s.backGlass.topR), mm(s.backGlass.topR)]), 48)
     const bandH = mm(s.antennaBands[0][1] - s.antennaBands[0][0])
     const band = sideBand(W, T, EDGE, bandH)
-    return { body, glass, screen, island, plateau, fillet, backGlass, band }
+    return { body, glass, screen, island, plateau, fillet, step, backGlass, band }
   })
   useMemo(() => fitTexture(texture, mediaAspect, aspect), [texture, mediaAspect, aspect])
   // Brushed aluminium frame: anisotropic highlight along the band, streaky roughness and faint grooves.
   const darkF = new THREE.Color(f.frame).getHSL({ h: 0, s: 0, l: 0 }).l < 0.35
   const bR = brushedRoughness(), bN = brushedNormal(), fR = frostRoughness(), sR = smudgeRoughness()
   // The brushed roughness/normal maps caused large blotches on the frame at this scale, so the frame is a clean satin.
-  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.3} roughness={0.5}
-    anisotropy={0.3} clearcoat={0.04} clearcoatRoughness={0.4} envMapIntensity={darkF ? 0.45 : 0.5} specularIntensity={darkF ? 0.5 : 0.6} />
+  // Fine satin grain: the brushed roughness map tiled much smaller (shares the uploaded source, so no re-upload).
+  const grain = useMemo(() => { if (!bR) return null; const t = bR.clone(); t.repeat.set(bR.repeat.x * 8, bR.repeat.y * 8); return t }, [bR])
+  const metal = <meshPhysicalMaterial color={f.frame} metalness={0.3} roughness={0.5} roughnessMap={grain}
+    anisotropy={0.3} clearcoat={0.04} clearcoatRoughness={0.4} envMapIntensity={darkF ? 0.45 : 0.32} specularIntensity={darkF ? 0.5 : 0.45} />
   // Plateau: same bead-blasted aluminium but matte, so the wide shoulder rolls off softly with no hot streak.
   const plateauMetal = <meshPhysicalMaterial color={f.frame} metalness={0.25} roughness={0.66}
     envMapIntensity={darkF ? 0.45 : 0.7} specularIntensity={darkF ? 0.5 : 0.75} />
@@ -333,13 +339,14 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.03), 0, 0]}><shapeGeometry args={[rrC(mm(cc.w), mm(cc.len), all(mm(cc.w / 2))), 32]} />
         <meshPhysicalMaterial color="#5e6672" metalness={0.1} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} ior={1.77} polygonOffset polygonOffsetFactor={-4} /></mesh>
     </Pressable>)
-  const zPlat = zb - rise
+  // Parts on the plateau sit on the flat top, which stands 0.13 mm proud of the shoulder (the inner edge step).
+  const zPlat = zb - rise - mm(0.13)
   const lensD = mm(s.lens.d), lensRise = mm(s.lens.rise)
   // Front camera: the drawing gives only the island (front camera keepout); the lens sits in the right-hand cap (assumed).
   const fcamX = mm(s.island.w / 2 - s.island.h / 2)
   const isl = ty(s.island.cy)
   // Antenna bands are a moulded resin: the frame colour pulled toward a neutral grey, matte, non-metallic.
-  const bandColour = useMemo(() => new THREE.Color(f.frame).lerp(new THREE.Color('#77797e'), 0.45), [f.frame])
+  const bandColour = useMemo(() => new THREE.Color(f.frame).lerp(new THREE.Color('#77797e'), darkF ? 0.07 : 0.3), [f.frame, darkF])
   // Frame sides only (faces whose normal points mostly sideways), never the back or the plateau. The bands are drawn as an overlay on the same body, plateau and fillet meshes, kept only inside the band heights, so they wrap
   // the frame sides and run up over the plateau shoulder exactly on the surface (same geometry, LessEqual depth, no z-fighting).
   const bandMaterial = useMemo(() => {
@@ -357,17 +364,6 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
     m.customProgramCacheKey = () => 'om-band'
     return m
   }, [bandColour, s, H])
-  // Inner edge of the plateau: a thin crisp line where the shoulder meets the flat top (normal-band overlay on the plateau).
-  const creaseMat = useMemo(() => {
-    const m = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(f.frame).lerp(new THREE.Color('#ffffff'), darkF ? 0.12 : 0.3),
-      metalness: 0.5, roughness: 0.3, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, depthFunc: THREE.LessEqualDepth })
-    m.onBeforeCompile = sh => {
-      sh.vertexShader = 'varying float vNz;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvNz = objectNormal.z;')
-      sh.fragmentShader = 'varying float vNz;\n' + sh.fragmentShader.replace('void main() {', 'void main() {\n  if (abs(vNz) < 0.93 || abs(vNz) > 0.975) discard;')
-    }
-    m.customProgramCacheKey = () => 'om-crease'
-    return m
-  }, [f.frame, darkF])
   const plY = H / 2 - (plH + mm(P.shoulder)) / 2
   const bandMats = useMemo(() => [0, plY].map(y => {
     const mat = bandMaterial.clone(); mat.onBeforeCompile = sh => { bandMaterial.onBeforeCompile(sh, null as never); sh.uniforms.uOff.value = y }
@@ -403,7 +399,8 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* Antenna bands run over the plateau's outer shoulder and stop at the inner edge of the flat top (normal-based cut). */}
       {bandOn(g.plateau, plY, zb)}
       {bandOn(g.fillet, plY, zb)}
-      <mesh geometry={g.plateau} position={[0, plY, zb]} renderOrder={2} material={creaseMat} />
+      <mesh geometry={g.step} position={[0, plY, zb - rise - mm(0.15) + mm(0.02)]}>
+        <meshPhysicalMaterial color={f.frame} metalness={0.25} roughness={0.75} envMapIntensity={darkF ? 0.2 : 0.55} specularIntensity={darkF ? 0.25 : 0.6} /></mesh>
       {s.lens.at.map(([x, y]) => (
         <group key={`${x}-${y}`} position={[bx(x), ty(y), zPlat]}><RearLens d={lensD} rise={lensRise} frame={f.frame} /></group>))}
       <mesh position={[bx(s.flash.bx), ty(s.flash.y), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(s.flash.d / 2), 40]} /><meshStandardMaterial color="#efe6cf" roughness={0.3} /></mesh>
