@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import * as THREE from 'three'
 import { type SbCfg } from './config'
-import { Island, StatusBar, STATUS_H, clockText, type IslandLook } from './StatusBar'
+import { Island, StatusBar, STATUS_H, clockText, homeBarBox, homeBarColour, type IslandLook } from './StatusBar'
 
 const PX = 3
 
@@ -19,9 +19,9 @@ function barImage(sb: SbCfg, tone: 'dark' | 'light', W: number, time: string, lo
 }
 
 /** Average luminance (0-255) of the top 54 pt of the canvas, from a small downsample. */
-function topLuma(src: HTMLCanvasElement, probe: HTMLCanvasElement) {
+function topLuma(src: HTMLCanvasElement, probe: HTMLCanvasElement, y0 = 0, hPt = STATUS_H) {
   const ctx = probe.getContext('2d', { willReadFrequently: true })!
-  ctx.drawImage(src, 0, 0, src.width, STATUS_H * PX, 0, 0, probe.width, probe.height)
+  ctx.drawImage(src, 0, y0 * PX, src.width, hPt * PX, 0, 0, probe.width, probe.height)
   const d = ctx.getImageData(0, 0, probe.width, probe.height).data
   let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11
   return s / (d.length / 4)
@@ -62,6 +62,11 @@ export function useStatusComposite(media: Src, on: boolean, sb: SbCfg, size: { w
       const tone = sb.mode === 'light' ? 'light' : sb.mode === 'dark' ? 'dark' : topLuma(canvas, probe) > 140 ? 'dark' : 'light'
       ctx.drawImage(tone === 'dark' ? bars.dark : bars.light, 0, 0, W * PX, STATUS_H * PX)
       canvas.dataset.tone = tone
+      if (sb.homeBar) { // home indicator: tone from the content just around it (bottom 34 pt safe area)
+        const b = homeBarBox(W, H)
+        const ht = sb.mode === 'light' ? 'light' : sb.mode === 'dark' ? 'dark' : topLuma(canvas, probe, H - 34, 34) > 140 ? 'dark' : 'light'
+        ctx.fillStyle = homeBarColour(ht); ctx.beginPath(); ctx.roundRect(b.x * PX, b.y * PX, b.w * PX, b.h * PX, b.r * PX); ctx.fill()
+      }
       tex.needsUpdate = true
       if (import.meta.env.DEV) (window as unknown as { __omSb: unknown }).__omSb = { canvas, tone, time, sb, W }
     }
@@ -69,7 +74,7 @@ export function useStatusComposite(media: Src, on: boolean, sb: SbCfg, size: { w
     if (media?.kind !== 'video') return
     let raf = 0; const loop = () => { draw(); raf = requestAnimationFrame(loop) }; raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [active, bars, media, sb.mode, W, H, canvas, probe, tex])
+  }, [active, bars, media, sb.mode, sb.homeBar, W, H, canvas, probe, tex])
   if (!active || !bars) return { texture: media?.texture ?? null, aspect: media?.aspect ?? null, tone: null as string | null }
   return { texture: tex as THREE.Texture, aspect: W / H, tone: canvas.dataset.tone ?? null }
 }

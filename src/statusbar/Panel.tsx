@@ -50,6 +50,7 @@ export function StatusBarControls({ sb, onChange, resetKey = 0 }: { sb: SbCfg; o
         <div style={sub}>Island icon <Seg id="sb-islandicon" value={sb.islandIcon} onChange={v => up({ islandIcon: v })} opts={[['ring', 'Ring'], ['arrow', 'Arrow'], ['lock', 'Lock'], ['none', 'None']]} /></div>
         {!(sb.island === 'activity' || sb.bubble) && sb.islandIcon !== 'lock' && <div style={{ ...sub, color: '#6e6e73', fontSize: 11 }}>Ring and arrow show with an activity or bubble.</div>}
         {((sb.island === 'activity' || sb.bubble) && sb.islandIcon === 'ring' || sb.bubble && sb.bubbleIcon === 'ring') && <div style={sub}>Ring <input id="sb-ring" type="range" min={0} max={100} value={Math.round(sb.ring * 100)} onChange={e => up({ ring: Number(e.target.value) / 100 })} style={{ flex: 1 }} /></div>}
+        <Check id="sb-homebar" label="Home indicator" on={sb.homeBar} set={v => up({ homeBar: v })} />
         <Check id="sb-bubble" label="Bubble" on={sb.bubble} set={v => up({ bubble: v })} />
         {sb.bubble && <div style={sub}>Bubble icon <Seg id="sb-bubbleicon" value={sb.bubbleIcon} onChange={v => up({ bubbleIcon: v })} opts={[['ring', 'Ring'], ['arrow', 'Arrow'], ['none', 'None']]} /></div>}
   </div>

@@ -12,7 +12,7 @@ import type { DeviceOptions, LogoArt } from '../types'
 import { loadLocalLogo } from '../localLogo'
 import { type SbCfg, parseSb, writeSb } from '../statusbar/config'
 import { StatusPanel } from '../statusbar/Panel'
-import { Island, StatusBar, useClock, ISL, islandSketch } from '../statusbar/StatusBar'
+import { Island, StatusBar, HomeBar, useClock, ISL, islandSketch } from '../statusbar/StatusBar'
 import { SketchStyle, SKETCH_PAPER, SKETCH_DEFAULTS } from '../sketch/Sketch'
 
 const mm = (v: number) => v / 100 // same unit as IPhonePro
@@ -35,14 +35,14 @@ const ISLAND_LOOK = islandSketch(SKETCH_DEFAULTS.line)
 const stay = { on: params.has('stay') } // stay at angle: no ease back, screen usable while tilted
 
 /** Light or dark status bar for 'auto': reads the app's top background when it is same-origin, otherwise dark text. */
-function useTone(frame: React.RefObject<HTMLIFrameElement | null>, mode: SbCfg['mode']): 'dark' | 'light' {
+function useTone(frame: React.RefObject<HTMLIFrameElement | null>, mode: SbCfg['mode'], y = 20): 'dark' | 'light' {
   const [tone, setTone] = useState<'dark' | 'light'>('dark')
   useEffect(() => {
     if (mode !== 'auto') return
     const i = setInterval(() => {
       try {
         const d = frame.current?.contentDocument; if (!d?.body) return
-        const el = d.elementFromPoint(CSS_W / 2, 20) ?? d.body
+        const el = d.elementFromPoint(CSS_W / 2, y) ?? d.body
         let n: Element | null = el, bg = ''
         while (n) { bg = getComputedStyle(n).backgroundColor; if (bg && !bg.endsWith(', 0)') && bg !== 'transparent') break; n = n.parentElement }
         const m = bg.match(/\d+(\.\d+)?/g)?.map(Number)
@@ -50,7 +50,7 @@ function useTone(frame: React.RefObject<HTMLIFrameElement | null>, mode: SbCfg['
       } catch { /* cross-origin: keep dark */ }
     }, 500)
     return () => clearInterval(i)
-  }, [frame, mode])
+  }, [frame, mode, y])
   return mode === 'light' ? 'light' : mode === 'dark' ? 'dark' : tone
 }
 
@@ -67,6 +67,7 @@ function Screen({ s, interactive, sb }: { s: IPhoneSpec; interactive: boolean; s
   const [k, setK] = useState(0)
   const frame = useRef<HTMLIFrameElement>(null)
   const tone = useTone(frame, sb.mode)
+  const homeTone = useTone(frame, sb.mode, cssH - 10)
   const clock = useClock(sb.time)
   useEffect(() => { const t = setTimeout(() => setK(1), 50); return () => clearTimeout(t) }, [])
   return (
@@ -78,6 +79,7 @@ function Screen({ s, interactive, sb }: { s: IPhoneSpec; interactive: boolean; s
           {/* Dynamic Island, drawn over the page */}
           <Island sb={sb} w={CSS_W} look={SKETCH ? ISLAND_LOOK : undefined} />
           {sb.mode !== 'off' && <StatusBar tone={tone} sb={sb} w={CSS_W} time={clock} />}
+          {sb.homeBar && <HomeBar tone={homeTone} w={CSS_W} h={cssH} />}
           {/* faint cover-glass sheen */}
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 40%)' }} />
         </div>

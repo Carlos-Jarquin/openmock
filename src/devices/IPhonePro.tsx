@@ -297,18 +297,17 @@ function LensStack({ r, order = 0 }: { r: number; order?: number }) {
   const capGeo = geoOnce(`capflat${r}`, () => new THREE.CircleGeometry(r, 64))
   return (
     <group userData={{ sketchNoEdges: true }}>
-      <mesh renderOrder={order} userData={ISLAND_TONE}><ringGeometry args={[r * 0.74, r, 64]} />
-        <meshPhysicalMaterial color="#0c0d11" metalness={0.85} roughness={0.32} {...off(0)} /></mesh>
-      <mesh renderOrder={order} userData={ISLAND_TONE}><circleGeometry args={[r * 0.74, 64]} />
-        <meshPhysicalMaterial color="#0b0d14" roughness={0.1} clearcoat={1} envMapIntensity={1.6} {...off(0)} /></mesh>
-      <mesh renderOrder={order + 1} userData={ISLAND_TONE}><circleGeometry args={[r * 0.6, 64]} />
-        <meshPhysicalMaterial color="#141a33" metalness={0.35} roughness={0.05} iridescence={1} iridescenceIOR={1.45}
-          iridescenceThicknessRange={[260, 420]} clearcoat={1} clearcoatRoughness={0.03} envMapIntensity={2.2} {...off(1)} /></mesh>
-      {[0.5, 0.36].map((k, i) => <mesh key={k} renderOrder={order + 2} userData={ISLAND_TONE}><ringGeometry args={[r * k - r * 0.025, r * k, 64]} />
-        <meshPhysicalMaterial color={i ? '#2a2546' : '#1b2442'} metalness={0.9} roughness={0.18} {...off(2)} /></mesh>)}
-      <mesh renderOrder={order + 3} userData={ISLAND_TONE}><circleGeometry args={[r * 0.2, 40]} /><meshBasicMaterial color="#000" {...off(3)} /></mesh>
+      {/* Black on black, as through the island glass: a near-black barrel, a slightly lighter grey lens disc, a faint inner ring
+          and a dark pupil. Flat colours so the studio lights can't turn it into a bright dot. */}
+      <mesh renderOrder={order} userData={ISLAND_TONE}><ringGeometry args={[r * 0.72, r, 64]} />
+        <meshBasicMaterial color="#060607" toneMapped={false} {...off(0)} /></mesh>
+      <mesh renderOrder={order} userData={ISLAND_TONE}><circleGeometry args={[r * 0.72, 64]} />
+        <meshBasicMaterial color="#141519" toneMapped={false} {...off(0)} /></mesh>
+      <mesh renderOrder={order + 2} userData={ISLAND_TONE}><ringGeometry args={[r * 0.45 - r * 0.03, r * 0.45 + r * 0.03, 64]} />
+        <meshBasicMaterial color="#25262c" toneMapped={false} {...off(2)} /></mesh>
+      <mesh renderOrder={order + 3} userData={ISLAND_TONE}><circleGeometry args={[r * 0.2, 40]} /><meshBasicMaterial color="#08080a" toneMapped={false} {...off(3)} /></mesh>
       <mesh geometry={capGeo} renderOrder={order + 4}>
-        <meshPhysicalMaterial color="#000" roughness={0.02} specularIntensity={1} envMapIntensity={1.5}
+        <meshPhysicalMaterial color="#000" roughness={0.02} specularIntensity={0.3} envMapIntensity={0.25}
           transparent blending={THREE.AdditiveBlending} depthWrite={false} {...off(4)} /></mesh>
     </group>)
 }

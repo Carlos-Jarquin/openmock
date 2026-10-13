@@ -13,6 +13,7 @@ export type SbCfg = {
   bubble: boolean
   islandIcon: SbIcon; bubbleIcon: SbIcon // leading icon of the expanded island / the bubble ('lock' only for the island)
   batteryLine: boolean // lock-screen line under the battery
+  homeBar: boolean // home indicator at the bottom of the screen
 }
 export type SbIcon = 'ring' | 'arrow' | 'lock' | 'none'
 const ICONS = ['ring', 'arrow', 'lock', 'none'] as const
@@ -36,6 +37,7 @@ export function parseSb(p: URLSearchParams): SbCfg {
     bubble: q('bubble') === 'on',
     islandIcon: icon(q('islandIcon'), 'ring'), bubbleIcon: ((b: SbIcon) => b === 'lock' ? 'arrow' : b)(icon(q('bubbleIcon'), 'arrow')),
     batteryLine: q('batteryLine') === 'on',
+    homeBar: q('homebar') === 'on',
   }
 }
 export const SB_DEFAULT = parseSb(new URLSearchParams())
@@ -63,6 +65,7 @@ export function writeSb(c: SbCfg) {
   set('bubble', c.bubble ? 'on' : null)
   set('islandIcon', c.islandIcon !== d.islandIcon ? c.islandIcon : null); set('bubbleIcon', c.bubbleIcon !== d.bubbleIcon ? c.bubbleIcon : null)
   set('batteryLine', c.batteryLine ? 'on' : null)
+  set('homebar', c.homeBar ? 'on' : null)
   const qs = p.toString()
   history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash)
 }

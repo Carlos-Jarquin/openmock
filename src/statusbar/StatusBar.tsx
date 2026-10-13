@@ -5,6 +5,21 @@ import { type SbCfg, sbAct, sbGlyph } from './config'
 // iOS 18+ on 402x874 and 440x956 (16 Pro class onward): status bar 54 pt.
 // The software Dynamic Island is drawn larger than the glass cut-out: 126 x 37 pt, 14 pt from the top (Apple UI Kit / simulator).
 export const STATUS_H = 54
+// Home indicator, measured from a 3x iPhone 16 Pro screenshot (dark keyboard): 432 x 15 px, bottom edge 24 px above the
+// screen edge, fully rounded, pure white on dark. In pt on 402 wide: 144 x 5, 8 from the bottom, radius 2.5, centred.
+// Pro Max: width scaled by 440/402 (157.6 pt, inferred), height and offset unchanged.
+export const HOME = { w: 144, h: 5, bottom: 8 }
+export const homeBarBox = (W: number, H: number) => { const w = HOME.w * W / 402; return { x: (W - w) / 2, y: H - HOME.bottom - HOME.h, w, h: HOME.h, r: HOME.h / 2 } }
+/** Light bar on dark content, dark bar on light content (tone as for the status bar: 'light' means white ink). */
+export const homeBarColour = (tone: 'dark' | 'light') => tone === 'light' ? '#ffffff' : '#000000'
+export function HomeBar({ tone, w, h }: { tone: 'dark' | 'light'; w: number; h: number }) {
+  const b = homeBarBox(w, h)
+  return <div style={{ position: 'absolute', left: b.x, top: b.y, width: b.w, height: b.h, borderRadius: b.r, background: homeBarColour(tone), pointerEvents: 'none' }} />
+}
+// Front camera seen through the island (non-Sketch looks): the hardware lens sits in the right-hand cap of the 15.68 mm glass
+// cut-out, 4.8 mm right of centre (x 230.0 pt on the Pro, centre +29), visible radius 1.45 mm = 8.8 pt at 6.04 pt/mm.
+// Drawn black on black with a slightly lighter lens disc and a faint inner ring, so it reads without standing out.
+export const FRONT_LENS = { dx: 29.0, r: 8.8 }
 export const ISL = { w: 126, h: 37, top: 14 }
 
 let measureCtx: CanvasRenderingContext2D | null = null
@@ -90,8 +105,8 @@ const Padlock = ({ l, c = LOCK.color }: { l: number; c?: string }) => { const x0
 
 /** Island look. Photo: black. Sketch: the 3D island's sketch tone with a thin sketch-line outline, so the status-bar island is
  *  the single island on screen (the 3D island mesh is hidden whenever this one is drawn). */
-export type IslandLook = { fill: string; line: string; lw: number; accent: string; lock: string }
-export const ISLAND_PHOTO: IslandLook = { fill: '#000', line: 'none', lw: 0, accent: ORANGE, lock: LOCK.color }
+export type IslandLook = { fill: string; line: string; lw: number; accent: string; lock: string; lens?: boolean }
+export const ISLAND_PHOTO: IslandLook = { fill: '#000', line: 'none', lw: 0, accent: ORANGE, lock: LOCK.color, lens: true }
 /** Sketch: fill = Sketch's dark tone (#bdb5a6), outline in the sketch line colour; orange deepened and padlock in the line colour
  *  so they stay legible on the light pill. */
 export const islandSketch = (line: string): IslandLook => ({ fill: '#bdb5a6', line, lw: 0.6, accent: '#c96f00', lock: line })
@@ -103,6 +118,9 @@ export function Island({ sb, w, look = ISLAND_PHOTO }: { sb: SbCfg; w: number; l
     {/* pill drawn as an SVG at a whole-point origin with the fractional offset inside, since a div's box snaps to whole points */}
     <svg width={Math.ceil(L.r) - Math.floor(L.l) + 1} height={L.h + 1} style={{ position: 'absolute', left: Math.floor(L.l), top: L.top, pointerEvents: 'none', overflow: 'visible' }}>
       <rect x={L.l - Math.floor(L.l) + i} y={i} width={L.r - L.l - 2 * i} height={L.h - 2 * i} rx={L.h / 2 - i} fill={look.fill} stroke={look.line} strokeWidth={look.lw} />
+      {look.lens && (() => { const cx = w / 2 + FRONT_LENS.dx - Math.floor(L.l), cy = L.h / 2, r = FRONT_LENS.r
+        return <g><circle cx={cx} cy={cy} r={r} fill="#060607" /><circle cx={cx} cy={cy} r={r * 0.72} fill="#141519" />
+          <circle cx={cx} cy={cy} r={r * 0.45} fill="none" stroke="#25262c" strokeWidth={0.5} /><circle cx={cx} cy={cy} r={r * 0.2} fill="#08080a" /></g> })()}
     </svg>
     <div style={{ position: 'absolute', left: L.l, top: L.top, width: L.r - L.l, height: L.h, pointerEvents: 'none' }}>
       {sbAct(sb) && sb.islandIcon === 'ring' && <svg width="22" height="22" viewBox="0 0 22 22" style={{ position: 'absolute', left: 8.05, top: 7.2 }}><Ring p={sb.ring} c={look.accent} /></svg>}
