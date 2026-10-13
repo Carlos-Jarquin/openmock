@@ -52,10 +52,15 @@ const leadOff = (sb: SbCfg) => { const g = sbGlyph(sb)
 /** Island layout in pt, Pro width (Pro Max shifts by half the extra width). */
 export function islandLayout(sb: SbCfg, CSS_W: number) {
   const dx = (CSS_W - 402) / 2
-  const main = !sbAct(sb) ? { l: 138, r: 264 } : sb.bubble ? { l: 108.3, r: 263.7 } : sb.act ? { l: 107.3, r: 304.7 } : { l: 109.7, r: 285.3 }
-  // Lock screen: the island starts further right (114.25 measured; the island div snaps to whole CSS px, so it draws at 114; measured on the 3x ROGERS lock screen; right edge 263.75 unchanged)
-  if (sb.islandIcon === 'lock') main.l = LOCK.islandL
-  return { l: main.l + dx, r: main.r + dx, top: ISL.top, h: ISL.h, bubble: sb.bubble ? { l: 271.7 + dx, d: 36.7 } : null, dx }
+  // Right edge depends on what trails the island: bubble 263.74, timer text 305.0, nothing (arrow, no text) 285.07.
+  const r = !sbAct(sb) ? 264 : sb.bubble ? 263.74 : sb.act ? 305.0 : 285.07
+  // Left edge depends on the island's leading icon, not on the bubble (edge at the centre line, 3x screenshots):
+  // arrow 109.93 (with or without bubble), lock 114.26, ring 107.33 (timer) / 108.27 (bubble).
+  const l = !sbAct(sb) && sb.islandIcon !== 'lock' ? 138 : sb.islandIcon === 'lock' ? LOCK.islandL : sb.islandIcon === 'arrow' ? 109.93 : sb.bubble ? 108.27 : 107.33
+  // the left ear used to centre the time keeps the previously fitted values (time placement already matches)
+  const ear = !sbAct(sb) ? 138 : sb.bubble ? 108.3 : sb.act ? 107.3 : 109.7
+  const rc = !sbAct(sb) ? 264 : sb.bubble ? 263.7 : sb.act ? 304.7 : 285.3 // right-cluster anchor, previously fitted
+  return { l: l + dx, r: r + dx, ear: ear + dx, rc: rc + dx, top: ISL.top, h: ISL.h, bubble: sb.bubble ? { l: 271.7 + dx, d: 36.7 } : null, dx }
 }
 
 const RING_R = 9.2, RING_C = 2 * Math.PI * RING_R
@@ -75,7 +80,7 @@ const NavArrow = ({ cx, cy }: { cx: number; cy: number }) => { const hw = NAV.w 
 // Lock-screen padlock in the island, traced from the 3x ROGERS lock screen: ink 11.13 x 14.7 pt, body 126.77-137.90 x 31.2-39.5 (r 1.5),
 // shackle stroke 1.35 on a 3.5 pt centre radius (outer top y 24.87, outer legs 128.17-136.53), centred x 132.33, flat grey #d5d5d5.
 // Positioned from the island's left edge (body 12.52 pt in).
-export const LOCK = { islandL: 114.25, dx: 12.52, bw: 11.13, by: 31.35, bh: 8.2, br: 1.5, sr: 3.5, sw: 1.35, top: 25.0, color: '#d5d5d5' }
+export const LOCK = { islandL: 114.26, dx: 12.52, bw: 11.13, by: 31.35, bh: 8.2, br: 1.5, sr: 3.5, sw: 1.35, top: 25.0, color: '#d5d5d5' }
 const Padlock = ({ l }: { l: number }) => { const x0 = l + LOCK.dx, cx = LOCK.bw / 2, ay = LOCK.top + LOCK.sw / 2 + LOCK.sr
   return <svg {...snapBox(x0 - 1, LOCK.top - 1, 1, -1, LOCK.top - 1, LOCK.bw + 2, LOCK.by + LOCK.bh - LOCK.top + 2)}>
     <path d={`M${cx - LOCK.sr} ${LOCK.by + 0.5}V${ay}a${LOCK.sr} ${LOCK.sr} 0 0 1 ${2 * LOCK.sr} 0V${LOCK.by + 0.5}`} fill="none" stroke={LOCK.color} strokeWidth={LOCK.sw} />
@@ -85,7 +90,11 @@ const Padlock = ({ l }: { l: number }) => { const x0 = l + LOCK.dx, cx = LOCK.bw
 export function Island({ sb, w }: { sb: SbCfg; w: number }) {
   const L = islandLayout(sb, w)
   return <>
-    <div style={{ position: 'absolute', left: L.l, top: L.top, width: L.r - L.l, height: L.h, borderRadius: L.h / 2, background: '#000', pointerEvents: 'none' }}>
+    {/* pill drawn as an SVG at a whole-point origin with the fractional offset inside, since a div's box snaps to whole points */}
+    <svg width={Math.ceil(L.r) - Math.floor(L.l) + 1} height={L.h + 1} style={{ position: 'absolute', left: Math.floor(L.l), top: L.top, pointerEvents: 'none', overflow: 'visible' }}>
+      <rect x={L.l - Math.floor(L.l)} y={0} width={L.r - L.l} height={L.h} rx={L.h / 2} fill="#000" />
+    </svg>
+    <div style={{ position: 'absolute', left: L.l, top: L.top, width: L.r - L.l, height: L.h, pointerEvents: 'none' }}>
       {sbAct(sb) && sb.islandIcon === 'ring' && <svg width="22" height="22" viewBox="0 0 22 22" style={{ position: 'absolute', left: 8.05, top: 7.2 }}><Ring p={sb.ring} /></svg>}
       {sbAct(sb) && !sb.bubble && <div style={{ position: 'absolute', right: 9, top: 0, height: L.h, display: 'flex', alignItems: 'center', color: ORANGE,
         font: `500 15.5px/1 ${SB_FONT}`, letterSpacing: -0.2, fontVariantNumeric: 'tabular-nums' }}>{sb.act}</div>}
@@ -132,7 +141,7 @@ export function StatusBar({ tone, sb, w: CSS_W, time }: { tone: 'dark' | 'light'
   const tf = sb.carrier ? `400 15px ${SB_FONT}` : TIME_CMP, tls = sb.carrier ? 0.13 : sbAct(sb) ? TIME_LS_EXP : TIME_LS_CMP
   const tw = textWidth(sb.carrier ?? time, tf, tls)
   const groupW = tw + (GW ? GAP + GW : 0)
-  const timeL = sb.carrier ? 37.8 : !sbAct(sb) ? 64.9 - tw / 2 : (12 + L.l) / 2 - groupW / 2 + leadOff(sb)
+  const timeL = sb.carrier ? 37.8 : !sbAct(sb) ? 64.9 - tw / 2 : (12 + L.ear) / 2 - groupW / 2 + leadOff(sb)
   // right cluster pieces (x in a local svg, y relative to top = SB_CY - 8)
   const items: { w: number; gap: number; el: (x: number) => React.ReactNode }[] = []
   // Dual SIM. Compact: bars 3.36 wide on a 5.333 pitch. Expanded island: iOS redraws them narrower rather than just scaling by
@@ -167,7 +176,7 @@ export function StatusBar({ tone, sb, w: CSS_W, time }: { tone: 'dark' | 'light'
   items[0].gap = 0
   if (K !== 1) items.forEach(it => { it.gap /= K })
   const W = items.reduce((s, it) => s + it.gap + it.w, 0)
-  const rightEdge = L.bubble ? L.bubble.l + L.bubble.d : L.r
+  const rightEdge = L.bubble ? L.bubble.l + L.bubble.d : L.rc
   const rcx = sbAct(sb) ? (rightEdge + 384.4 + 2 * L.dx) / 2 + (L.bubble ? 0.45 : sb.act ? 0.4 : 1.1) : CSS_W - (402 - 326.85)
   let x = 0
   const els = items.map(it => { x += it.gap; const e = it.el(x); x += it.w; return e })
