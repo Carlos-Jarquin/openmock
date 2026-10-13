@@ -99,7 +99,7 @@ export function spectralMaterials(o: SpectralOptions) {
     /** per frame: pixel ratio and canvas size for the screen-space widths, and the shimmer clock (frozen when still) */
     frame(w: number, h: number, dpr: number, t: number) {
       res.set(w * dpr, h * dpr); line.resolution.set(w * dpr, h * dpr); line.linewidth = SPECTRAL_INNER * dpr
-      const spread = [2, 6, 12], op = [0.8 * (1 - blur) ** 2 + 0.05 * blur, 0.035 * blur, 0.02 * blur]
+      const spread = [2, 6, 12], op = [0.8 * (1 - blur) ** 2 + 0.006 * blur, 0.004 * blur, 0.0025 * blur]
       ghosts.forEach((g, i) => { g.resolution.set(w * dpr, h * dpr); g.linewidth = SPECTRAL_INNER * dpr * (1 + blur * spread[i]); g.opacity = op[i]; g.visible = op[i] > 0.003 })
       hull.uniforms.uWidth.value = SPECTRAL_OUTER * dpr; body.uniforms.uTime.value = t
     },
@@ -225,7 +225,7 @@ function prepare(mesh: THREE.SkinnedMesh, owner: string[]): Prepared {
     for (let t = 0; t < idx.count; t += 3) { const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2); if (thumbish.has(owner[a]) || thumbish.has(owner[b]) || thumbish.has(owner[c])) tt.push(a, b, c) }
     for (let k = 0; k < 3; k++) { const A = J(chain[k]), Bj = J(chain[k + 1]), ax2 = Bj.clone().sub(A), L = ax2.length(); ax2.normalize()
       const u = new THREE.Vector3(1, 0, 0); if (Math.abs(u.dot(ax2)) > 0.9) u.set(0, 1, 0); u.addScaledVector(ax2, -u.dot(ax2)).normalize()
-      const w = new THREE.Vector3().crossVectors(ax2, u), steps = k === 0 ? 3 : 4
+      const w = new THREE.Vector3().crossVectors(ax2, u), steps = k === 0 ? 4 : 6
       for (let i = 0; i < steps; i++) { if (k > 0 && i === 0) continue
         const f = spans[k][0] + (spans[k][1] - spans[k][0]) * i / (steps - 1), O = A.clone().addScaledVector(ax2, f * L), ring: Bary[] = []
         for (let j = 0; j < 24; j++) { const an = j / 24 * Math.PI * 2, dir = u.clone().multiplyScalar(Math.cos(an)).addScaledVector(w, Math.sin(an))
@@ -260,7 +260,7 @@ function edgesOf(geo: THREE.BufferGeometry): Edges {
   const r = { tris, edges: new Uint32Array(out) }; edgeCache.set(geo, r); return r
 }
 
-interface LineState { skinned: Float32Array; creases: Float32Array; rings: Float32Array[]; lines: LineSegments2; ghosts: LineSegments2[]; camKey: string }
+interface LineState { skinned: Float32Array; creases: Float32Array; rings: Float32Array[]; lines: LineSegments2; thumb: LineSegments2; ghosts: LineSegments2[]; camKey: string }
 /** Rebuilds the skinned positions and the crease and fingertip lines for the current pose (on each re-solve). */
 export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: SpectralMats) {
   for (const c of [...mesh.children]) if (c.userData.spectral && !c.userData.spectralHull) { mesh.remove(c); (c as THREE.Mesh).geometry?.dispose() }
@@ -279,7 +279,11 @@ export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: Spect
   for (const g of ghosts) g.renderOrder = 8 // before the hand's depth prepass (9): they test only against the phone's depth,
   // so nothing behind the phone ever shows; the clear skin (10) then lies over them and the crisp lines (12) win where visible
   const rings = prep.rings.map(r => { const a = new Float32Array(r.length * 3); r.forEach(([x, y, z, u, w], i) => { for (let k = 0; k < 3; k++) a[i * 3 + k] = sk[x * 3 + k] * (1 - u - w) + sk[y * 3 + k] * u + sk[z * 3 + k] * w }); return a })
-  mesh.userData.spectralLines = { skinned: sk, creases: new Float32Array(cr), rings, lines, ghosts, camKey: '' } as LineState
+  // The thumb outline is drawn before the hand's depth prepass, so only the phone (not the hand's own skin, e.g. the
+  // thenar bulge it runs past) can hide it; with its 7 mm pull it also clears the frame it rests on.
+  const thumb = new LineSegments2(new LineSegmentsGeometry(), m.line); thumb.renderOrder = 8
+  thumb.userData = { spectral: true, noBounds: true }; thumb.layers.set(LINE_LAYER); thumb.frustumCulled = false; mesh.add(thumb)
+  mesh.userData.spectralLines = { skinned: sk, creases: new Float32Array(cr), rings, lines, thumb, ghosts, camKey: '' } as LineState
 }
 
 const _cam = new THREE.Vector3(), _inv = new THREE.Matrix4()
@@ -304,8 +308,9 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
   // left the contour failing the depth test and only its faint see-through copy showed. Moving toward the camera does
   // not shift a line on screen, so the larger pull only changes what it may draw over, by 5 mm.
   let pull = 0.005
+  const tout: number[] = []; let tgt = out
   const nudge = (x: number, y: number, z: number) => { const dx = _cam.x - x, dy = _cam.y - y, dz = _cam.z - z, l = Math.hypot(dx, dy, dz) || 1, k = pull / l
-    out.push(x + dx * k, y + dy * k, z + dz * k) }
+    tgt.push(x + dx * k, y + dy * k, z + dz * k) }
   for (let e = 0; e < edges.length; e += 4) {
     const t1 = edges[e + 2], t2 = edges[e + 3]
     if (t2 === 0xffffffff || facing[t1] === facing[t2]) continue
@@ -314,6 +319,20 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
   }
   // thumb side edges: per ring, the two points where the skin turns from facing the camera to facing away
   let thumbHits = 0
+  // The thumb outline is drawn before the hand's depth (so only the phone hides it), which means the hand's own skin must
+  // be checked here: a point counts as buried when the ray to the camera meets the hand more than 10 mm in front of it
+  // (the palm, when the thumb is on the far side). Nearer skin, like the thenar bulge the edge runs past, doesn't count.
+  const ray = new THREE.Ray(), va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3(), hitP = new THREE.Vector3()
+  const buried = (p: number[]) => { ray.origin.set(p[0], p[1], p[2]); ray.direction.set(_cam.x - p[0], _cam.y - p[1], _cam.z - p[2]).normalize()
+    ray.origin.addScaledVector(ray.direction, 0.01)
+    for (let t = 0; t < T; t++) { const a = tris[t * 3] * 3, b = tris[t * 3 + 1] * 3, c = tris[t * 3 + 2] * 3
+      va.set(sk[a], sk[a + 1], sk[a + 2]); vb.set(sk[b], sk[b + 1], sk[b + 2]); vc.set(sk[c], sk[c + 1], sk[c + 2])
+      if (ray.intersectTriangle(va, vb, vc, false, hitP)) return true }
+    return false }
+  // The thumb hugs the phone's side and front edge, so its inner edge lies on (or a hair inside) the frame and failed the
+  // depth test there. Its points get a 7 mm pull: enough to clear the frame it rests on, still less than the phone's
+  // 8.25 mm thickness, so a thumb truly behind the phone (seen from the back) stays hidden.
+  pull = 0.007; tgt = tout
   { let prev: number[][] | null = null
     for (const r of st.rings) { const n = r.length / 3; let cx = 0, cy = 0, cz = 0; for (let i = 0; i < n; i++) { cx += r[i * 3]; cy += r[i * 3 + 1]; cz += r[i * 3 + 2] } cx /= n; cy /= n; cz /= n
       const f = (i: number) => { const x = r[i * 3], y = r[i * 3 + 1], z = r[i * 3 + 2]; return (x - cx) * (_cam.x - x) + (y - cy) * (_cam.y - y) + (z - cz) * (_cam.z - z) }
@@ -329,14 +348,21 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
         const d = (p: number[], q: number[]) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
         const sw: boolean = d(prev[0], hits[0]) + d(prev[1], hits[1]) > d(prev[0], hits[1]) + d(prev[1], hits[0])
         const h: number[][] = sw ? [hits[1], hits[0]] : hits
-        for (let s2 = 0; s2 < 2; s2++) { nudge(prev[s2][0], prev[s2][1], prev[s2][2]); nudge(h[s2][0], h[s2][1], h[s2][2]) }
+        for (let s2 = 0; s2 < 2; s2++) if (!buried(prev[s2]) && !buried(h[s2])) { nudge(prev[s2][0], prev[s2][1], prev[s2][2]); nudge(h[s2][0], h[s2][1], h[s2][2]) }
         prev = h
-      } else prev = hits.length === 2 ? hits : null }
+      } else if (hits.length === 2) {
+        // first good ring: the thumb's base, where it leaves the palm, closed with a line across (the thenar edge)
+        if (!prev && !buried(hits[0]) && !buried(hits[1])) { nudge(hits[0][0], hits[0][1], hits[0][2]); nudge(hits[1][0], hits[1][1], hits[1][2]) }
+        prev = hits }
+      // a ring with no clean crossing (a gap in the cast points) is skipped and the edges bridge over it
+    }
   }
   if (import.meta.env.DEV) (globalThis as { __thumbHits?: number }).__thumbHits = thumbHits
+  tgt = out
   pull = 0.0012
   const cr = st.creases; for (let i = 0; i < cr.length; i += 3) nudge(cr[i], cr[i + 1], cr[i + 2])
   st.lines.geometry.dispose(); const g = new LineSegmentsGeometry(); g.setPositions(out); st.lines.geometry = g; for (const gh of st.ghosts) gh.geometry = g
+  st.thumb.geometry.dispose(); const tg = new LineSegmentsGeometry(); tg.setPositions(tout.length ? tout : [0, 0, 0, 0, 0, 0]); st.thumb.geometry = tg
 }
 
 /** The opaque outer outline: an inverted hull sharing the hand's geometry and skeleton (or a plain mesh for the forearm). */
@@ -364,7 +390,9 @@ export function addHull(mesh: THREE.Mesh, m: SpectralMats) {
   // Depth prepass: the body is see-through, so without it the palm, the thumb behind it and fingers wrapping the phone
   // each add their own Glimmer rim and Shimmer, which shows as shards and flat facets. Writing depth first means only the
   // nearest skin surface is shaded (the phone still shows through, since it is drawn before at renderOrder 0).
-  const pm = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true })
+  // transparent (though it draws no colour) so it sorts by renderOrder with the clear body and the lines; as an opaque
+  // material it ran in the opaque pass before every line, which silently hid the see-through and thumb lines too.
+  const pm = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, transparent: true })
   let d: THREE.Mesh
   if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) { const s = mesh as THREE.SkinnedMesh; const sd = new THREE.SkinnedMesh(s.geometry, pm); sd.bind(s.skeleton, s.bindMatrix); sd.bindMode = s.bindMode; d = sd }
   else d = new THREE.Mesh(mesh.geometry, pm)

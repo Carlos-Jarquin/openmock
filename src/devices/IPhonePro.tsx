@@ -537,9 +537,10 @@ function IPhonePro({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec
       {/* receiver slot along the top glass edge */}
       <mesh position={[0, ty(s.receiver.cy), zf + E * 3]}><shapeGeometry args={[rrC(mm(s.receiver.w), mm(s.receiver.h), all(mm(s.receiver.h / 2))), 16]} />
         <meshBasicMaterial color="#0b0b0d" polygonOffset polygonOffsetFactor={-3} /></mesh>
-      {/* cover glass reflection over the display: black base, additive, so only the fresnel reflection and faint smudges show */}
+      {/* cover glass reflection over the display: black base, additive, so only a soft, even fresnel reflection shows */}
       <mesh geometry={g.screen} position={[0, 0, zf + E * 4.5]} renderOrder={10}>
-        <meshPhysicalMaterial color="#000" roughness={1} roughnessMap={sR} specularIntensity={0.14}
+        {/* no smudge roughness map here: magnified on the large display it reflected as a blurry grid of dark blotches */}
+        <meshPhysicalMaterial color="#000" roughness={1} specularIntensity={0.14}
           transparent blending={THREE.AdditiveBlending} depthWrite={false} polygonOffset polygonOffsetFactor={-8} /></mesh>
       {/* back: aluminium between the plateau and the glass, then the matte glass window */}
       <mesh geometry={g.backGlass} position={[0, ty(s.backGlass.top) - (H - mm(s.backGlass.top) - EDGE * 0.8) / 2, zb - E]} rotation={[0, Math.PI, 0]}>{matte}</mesh>
