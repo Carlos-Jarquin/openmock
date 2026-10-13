@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import * as THREE from 'three'
 import type { DeviceProps } from '../types'
-import { fitTexture } from './shared'
+import { fitTexture, DEFAULT_LOGO_TINT } from './shared'
 // iPhone Duo: unofficial procedural model. Overall size and screen sizes from Apple's published specs;
 // details (bezels, island, buttons, camera) are estimates from Apple's product imagery.
 // Scale: 1 unit = 100 mm. Open 164.6 x 117.8 x 5.2 mm, closed 84.1 x 117.8 x 11.3 mm.
@@ -114,8 +114,8 @@ export default function Duo({ texture, mediaAspect, opts }: DeviceProps) {
       {logo && (
         <mesh position={[W / 2, 0, -T / 2 - E * 3]} rotation={[0, Math.PI, 0]}>
           <planeGeometry args={[opts.logoSize, opts.logoSize / logo.aspect]} />
-          <meshPhysicalMaterial color={opts.logoTint} metalness={0.95} roughness={0.12} clearcoat={1}
-            alphaMap={logo.mask} bumpMap={logo.mask} bumpScale={4} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
+          <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : f.back} metalness={0.55} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.6}
+            alphaMap={logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
         </mesh>)}
       {/* volume up/down on the top edge, 36.6 to 47.4 mm and 50.2 to 61 mm from the hinge */}
       {[0.42, 0.556].map(x => (

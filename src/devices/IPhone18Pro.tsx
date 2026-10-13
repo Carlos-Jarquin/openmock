@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import * as THREE from 'three'
 import type { DeviceProps } from '../types'
-import { fitTexture } from './shared'
+import { fitTexture, DEFAULT_LOGO_TINT } from './shared'
 // iPhone 18 Pro: unofficial procedural model, not affiliated with Apple.
 // Measurements from Apple's "iPhone 18 Pro Dimensional Drawings" (2026-09-09,
 // developer.apple.com/accessories/dimensional-drawings). Finishes and pixel size from apple.com/iphone-18-pro/specs.
@@ -73,10 +73,25 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
   const black = <meshPhysicalMaterial color="#040405" roughness={0.08} clearcoat={1} />
   const zf = T / 2
   const zb = -T / 2
-  const side = (x: number, cy: number, len: number, prot: number, wz: number, key: string, mat = metal) => (
-    <mesh key={key} position={[x + Math.sign(x) * (prot / 2 - mm(0.3)), ty(cy), 0]}>
-      <capsuleGeometry args={[wz / 2, len - wz, 6, 16]} />{mat}
-    </mesh>)
+  // Buttons: pill (fully rounded ends) in side view, 2.66 wide, extruded 0.45 out of the flat side band
+  // with a rounded bevel where the face meets the sides. 0.3 mm is sunk into the frame so no gap shows.
+  const SINK = mm(0.3)
+  const btnGeo = (len: number, wz: number, prot: number) => {
+    const bev = Math.min(prot * 0.45, mm(0.2))
+    const r = wz / 2
+    const g = new THREE.ExtrudeGeometry(rrect(wz - bev * 2, len - bev * 2, all(r - bev)), { depth: prot + SINK - bev, bevelEnabled: true, bevelThickness: bev, bevelSize: bev, bevelSegments: 4, curveSegments: 24 })
+    g.translate(0, 0, -SINK); g.rotateY(Math.PI / 2); return g // extrusion now runs along +x
+  }
+  const side = (x: number, cy: number, len: number, key: string) => (
+    <mesh key={key} geometry={btnGeo(len, mm(2.66), mm(0.45))} position={[x, ty(cy), 0]} rotation={[0, x < 0 ? Math.PI : 0, 0]} castShadow>{metal}</mesh>)
+  // Camera Control: flush. Thin metal surround plus a sapphire glass inset, both within 0.05 mm of the frame surface.
+  const cameraControl = (cy: number) => (
+    <group position={[W / 2, ty(cy), 0]}>
+      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.01), 0, 0]}><shapeGeometry args={[rrect(mm(3.43), mm(17.5), all(mm(1.715))), 32]} />
+        <meshPhysicalMaterial color={f.frame} metalness={0.95} roughness={0.18} polygonOffset polygonOffsetFactor={-2} /></mesh>
+      <mesh rotation={[0, Math.PI / 2, 0]} position={[mm(0.03), 0, 0]}><shapeGeometry args={[rrect(mm(3.03), mm(17.1), all(mm(1.515))), 32]} />
+        <meshPhysicalMaterial color="#5e6672" metalness={0.1} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} ior={1.77} polygonOffset polygonOffsetFactor={-4} /></mesh>
+    </group>)
   const lensX = (x: number) => bx(x), lensY = (y: number) => ty(y)
   const zPlat = zb - PLATEAU.rise
   return (
@@ -105,12 +120,12 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
       <mesh position={[bx(SENSOR[0]), ty(SENSOR[1]), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(3.45), 40]} />{black}</mesh>
       <mesh position={[bx(MIC[0]), ty(MIC[1]), zPlat - E * 3]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(0.575), 16]} /><meshBasicMaterial color="#111" /></mesh>
       {/* left side (seen from the front): Action button and volume, centres 34.28 / 48.43 / 62.63 mm from the top */}
-      {side(-W / 2, 34.28, mm(7.8), mm(0.45), mm(2.66), 'act')}
-      {side(-W / 2, 48.43, mm(11.8), mm(0.45), mm(2.66), 'vup')}
-      {side(-W / 2, 62.63, mm(11.8), mm(0.45), mm(2.66), 'vdn')}
+      {side(-W / 2, 34.28, mm(7.8), 'act')}
+      {side(-W / 2, 48.43, mm(11.8), 'vup')}
+      {side(-W / 2, 62.63, mm(11.8), 'vdn')}
       {/* right side: side button (centre 55.53, 17.7 long) and flush sapphire Camera Control (centre 98.40, 17.1 long) */}
-      {side(W / 2, 55.53, mm(17.7), mm(0.45), mm(2.66), 'side')}
-      {side(W / 2, 98.40, mm(17.1), mm(0.1), mm(3.03), 'cc', <meshPhysicalMaterial color="#8d939c" metalness={0.3} roughness={0.05} clearcoat={1} />)}
+      {side(W / 2, 55.53, mm(17.7), 'side')}
+      {cameraControl(98.40)}
       {/* bottom: USB-C centred at 35.92 mm, speaker and mic holes Ø1.53, screws Ø1.50 */}
       <group position={[0, -H / 2 - E, 0]} rotation={[Math.PI / 2, 0, 0]}>
         <mesh><shapeGeometry args={[rrect(mm(8.9), mm(3.2), all(mm(1.6))), 24]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>
@@ -123,7 +138,7 @@ export default function IPhone18Pro({ texture, mediaAspect, opts }: DeviceProps)
       {opts.logo && (
         <mesh position={[0, ty(91.2), zb - E * 4]} rotation={[0, Math.PI, 0]}>
           <planeGeometry args={[opts.logoSize, opts.logoSize / opts.logo.aspect]} />
-          <meshPhysicalMaterial color={opts.logoTint} metalness={0.95} roughness={0.12} clearcoat={1}
+          <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : f.back} metalness={0.55} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.6}
             alphaMap={opts.logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
         </mesh>)}
     </group>

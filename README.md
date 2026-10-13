@@ -29,3 +29,7 @@ Then open the URL Vite prints (usually http://localhost:5173).
 ## Licence
 
 MIT. See `LICENSE` and `CREDITS.md`.
+
+## Your own logo
+
+Put your own logo at public/local/logo.svg; it is never committed. A logo.png works too. It loads into the logo spot on the iPhone 18 Pro and iPhone Duo, and the Logo control can still replace or clear it.

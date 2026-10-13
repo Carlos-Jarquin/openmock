@@ -122,6 +122,23 @@ export default function App() {
   const three = useRef<Grab | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const drag = useRef<{ x: number; y: number; pan: boolean } | null>(null)
+  // Optional local logo: public/local/logo.svg or logo.png (git-ignored). Loaded once; the Logo control can override or clear it.
+  useEffect(() => {
+    let live = true
+    ;(async () => {
+      for (const name of ['logo.svg', 'logo.png']) {
+        try {
+          const r = await fetch(`/local/${name}`)
+          const type = r.headers.get('content-type') ?? ''
+          if (!r.ok || !type.startsWith('image/')) continue // Vite serves index.html for missing files
+          const logo = await loadLogo(new File([await r.blob()], name, { type }))
+          if (live) setOpts(o => (o.logo ? o : { ...o, logo }))
+          return
+        } catch { /* try the next one */ }
+      }
+    })()
+    return () => { live = false }
+  }, [])
   const def = DEVICES.find(d => d.id === device)!
   const screenAspect = typeof def.screenAspect === 'function' ? def.screenAspect(opts) : def.screenAspect
 
