@@ -65,6 +65,7 @@ const Ring = ({ p }: { p: number }) => <>
   <circle cx="11" cy="11" r={RING_R} fill="none" stroke={ORANGE} strokeWidth="2.3" strokeLinecap="round" strokeDasharray={`${RING_C * p} ${RING_C}`} transform="rotate(-90 11 11)" /></>
 // Maps navigation arrow in the expanded island, traced from two 3x screenshots (Maps live activity): ink 12.78 x 13.94 pt,
 // tip at y 24.57, base at 38.51, notch apex at 34.33, centred at x 128.84 (Pro); colour #5096f3. Island-independent position.
+export const BUBBLE_ARROW_DX = 128.84 + 161 - 271.7 // arrow centre from the bubble's left edge
 export const NAV = { cx: 128.84, cy: 31.54, w: 12.78, h: 13.94, notch: 34.33 - 24.57, color: '#5096f3' }
 const NavArrow = ({ cx, cy }: { cx: number; cy: number }) => { const hw = NAV.w / 2, hh = NAV.h / 2, sw = 1.3, i = sw / 2
   // svg boxes snap to whole CSS px, so place via snapBox (fraction in the viewBox)
@@ -93,10 +94,12 @@ export function Island({ sb, w }: { sb: SbCfg; w: number }) {
     {sbAct(sb) && sb.islandIcon === 'arrow' && <NavArrow cx={NAV.cx + L.dx} cy={NAV.cy} />}
     {sb.islandIcon === 'lock' && <Padlock l={L.l} />}
     {L.bubble && <div style={{ position: 'absolute', left: L.bubble.l, top: L.top, width: L.bubble.d, height: L.bubble.d, borderRadius: '50%', background: '#000', pointerEvents: 'none' }}>
-      {sb.bubbleIcon === 'arrow' && <svg width="13" height="14" viewBox="0 0 13 14" style={{ position: 'absolute', left: (L.bubble.d - 12.3) / 2, top: (L.bubble.d - 13.3) / 2 - 0.4 }}>
-        <path d="M6.5 0.3L12.6 13.4 6.5 10.2 0.4 13.4z" fill="#3e8bff" /></svg>}
       {sb.bubbleIcon === 'ring' && <svg width="22" height="22" viewBox="0 0 22 22" style={{ position: 'absolute', left: (L.bubble.d - 22) / 2, top: (L.bubble.d - 22) / 2 }}><Ring p={sb.ring} /></svg>}
     </div>}
+    {/* bubble arrow: the 3x screenshots show the same Maps glyph as the island arrow (pixel-identical, same #5096f3 tint, upright),
+        exactly 161.00 pt right of it (ink centroid 289.68, 32.30; bbox 283.67-296.00 x 24.67-38.33), i.e. 18.14 pt into the 36.7 pt bubble.
+        Drawn in page coordinates via snapBox so its sub-pixel position is exact. */}
+    {L.bubble && sb.bubbleIcon === 'arrow' && <NavArrow cx={L.bubble.l + BUBBLE_ARROW_DX} cy={NAV.cy} />}
   </>
 }
 
