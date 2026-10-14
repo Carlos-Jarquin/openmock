@@ -467,7 +467,7 @@ function spineGeo(phi: number) {
   const R = T + GAP - 0.0003, r0 = R * 0.45, a = phi / 2, d = R * Math.cos(a) + R * SPINE_FLAT * Math.sin(a) * Math.sin(a)
   // c (back planes pulled in) ramps in over the first 60 degrees, so the cover is recessed between the rails at every
   // angle beyond that; near flat it widens (del) into a strip just under the backs that closes the rails' V groove
-  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 0, 60), cIn = RAIL.c * cl, P = 16 + 400 * (1 - cl), BS = 0.0012
+  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 0, 60), cIn = RAIL.c * cl, P = 16 + 44 * cl + 400 * (1 - cl), BS = 0.0002   // P: crisp panel edges when closed
   const dmax = Math.max(d, R * Math.cos(a) + 0.0001), del = THREE.MathUtils.degToRad(1.5 + 30 * (1 - cl)), N = 160
   const outer: [number, number][] = [], inner: [number, number][] = []
   for (let i = 0; i <= N; i++) {
@@ -491,7 +491,7 @@ function smooth(g: THREE.BufferGeometry) {
   const m = mergeVertices(g, 1e-6); m.computeVertexNormals(); g.dispose(); return m
 }
 /** Hinge-side rails: RB back-corner radius, k slab inset, c how far the closed spine panel is pulled in from each back. */
-const RAIL = { RB: 0.02, k: 0.021, c: 0.033 }
+const RAIL = { RB: 0.014, k: 0.015, c: 0.0225 }   // c puts the panel's edge into the crease where each rail's arc ends
 /** One half's rail along y, side +1 right half (x >= 0), -1 left. Profile in (x, z), back at z = -T/2: a fully rounded
  *  back corner reaching x = -EO (flush with the other frame edges), rolling back in to the hinge face at x = 0, which runs
  *  flat to a 0.5 mm screen-side corner; overlaps the slab by 4 mm. */
