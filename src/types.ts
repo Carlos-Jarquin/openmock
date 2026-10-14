@@ -12,5 +12,7 @@ export interface DeviceOptions { fold: number; screen: 'inner' | 'outer'; finish
   fitInner?: 'fill' | 'fit'; fitOuter?: 'fill' | 'fit' }
 export interface DeviceProps { texture: THREE.Texture | null; mediaAspect: number; opts: DeviceOptions
   /** Duo only: the outer screen's own media (the inner screen uses texture). */
-  textureOuter?: THREE.Texture | null; mediaAspectOuter?: number }
+  textureOuter?: THREE.Texture | null; mediaAspectOuter?: number
+  /** the device's id in the scene, for per-device live state (Duo fold) */
+  uid?: string }
 export interface DeviceDef { id: DeviceId; label: string; screenAspect: number | ((o: DeviceOptions) => number); foldable?: boolean; finishes?: Record<string, { label: string }>; defaultFinish?: string; nativePx?: { w: number; h: number }; logoSpot?: boolean; Component: ComponentType<DeviceProps> }

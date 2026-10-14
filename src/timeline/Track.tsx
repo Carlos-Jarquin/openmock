@@ -1,7 +1,7 @@
 // After Effects style track: a time ruler, one bar per segment (width = its duration), keyframe diamonds at their
 // times, a draggable playhead and an end handle for the total duration. All drags snap to 0.1 s.
 import { useEffect, useRef, useState } from 'react'
-import { fmt, starts, tlLive, total, type Keyframe } from './tlCore'
+import { devKf, fmt, starts, tlLive, total, type Keyframe } from './tlCore'
 
 const SNAP = 0.1, MIN = 0.1, MAX_T = 120
 const snap = (t: number) => Math.round(t / SNAP) * SNAP
@@ -36,9 +36,17 @@ const changesOf = (a: Keyframe['s'], b: Keyframe['s']) => {
   if (p('zoom') || p('fov')) out.push('camera')
   return out
 }
+/** With several devices: the view row only shows camera and view changes; each device row shows its own. */
+const viewChanges = (a: Keyframe['s'], b: Keyframe['s']) => (Object.keys(a.pose) as (keyof typeof a.pose)[]).some(k => Math.abs(a.pose[k] - b.pose[k]) > 1e-4) ? ['camera' as const] : []
+const devChanges = (a: Keyframe['s'], b: Keyframe['s'], uid: string, i: number, what: 'phone' | 'hand') => {
+  const x = devKf(a, uid, i), y = devKf(b, uid, i); if (!x && !y) return false
+  return what === 'phone' ? ne(x?.xf, y?.xf) || ne(x?.fold, y?.fold) : ne(x?.hands, y?.hands) || ne(x?.handRot, y?.handRot) || ne(x?.tap, y?.tap) || ne(x?.ges, y?.ges)
+}
 
-export function Track({ keys, sel, setKeys, onSelect, seek, below, gap = 1.5, setGap }: {
+export function Track({ keys, sel, setKeys, onSelect, seek, below, rows, gap = 1.5, setGap }: {
   gap?: number; setGap?: (g: number) => void
+  /** several devices: a row per device (placement and fold) with a Hand sub-row */
+  rows?: { uid: string; name: string }[]
   below?: (span: number, pct: (t: number) => string) => React.ReactNode
   keys: Keyframe[]; sel: string | null; setKeys: (k: Keyframe[]) => void; onSelect: (i: number) => void; seek: (t: number) => void
 }) {
@@ -140,7 +148,7 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below, gap = 1.5, se
         {ticks.map(t => <span key={t} className="tl-tick lab" style={{ left: pct(t) }}>{t > v0 + span - s * 0.6 ? '' : t < 60 ? `${+t.toFixed(s < 0.1 ? 2 : 1)}s` : fmt(t)}</span>)}
       </div>
       <div className="tl-chg" aria-label="What changes at each keyframe">
-        {keys.slice(1).map((x, j) => { const c = changesOf(keys[j].s, x.s); return c.length ? (
+        {keys.slice(1).map((x, j) => { const c = rows ? viewChanges(keys[j].s, x.s) : changesOf(keys[j].s, x.s); return c.length ? (
           <span key={x.id} className="tl-chg-k" style={{ left: pct(st[j + 1]) }}>
             {c.map(k => <span key={k} className={`tl-chg-i ${k}`} title={`${CHG[k].tip} at keyframe ${j + 2}`} aria-label={CHG[k].tip}><ChgIco d={CHG[k].d} /></span>)}
           </span>) : null })}
@@ -165,6 +173,13 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below, gap = 1.5, se
           onPointerDown={e => { onSelect(i); if (i) begin(e, 'key', i); else e.stopPropagation() }} />)}
         {keys.length > 1 && <button className="tl-end" style={{ left: pct(T) }} aria-label="Total duration" title={`Total ${T.toFixed(1)} s. Drag to make the whole timeline longer or shorter.`} onPointerDown={e => begin(e, 'end', 0)} />}
       </div>
+      {rows?.map((r, ri) => (['phone', 'hand'] as const).map(w => (
+        <div key={r.uid + w} className={`tl-drow ${w === 'hand' ? 'sub' : ''}`} aria-label={w === 'phone' ? `${r.name}: placement and fold changes` : `${r.name}: hand changes`}>
+          <span className="tl-dlab">{w === 'phone' ? r.name : 'Hand'}</span>
+          {keys.slice(1).map((x, j) => <i key={x.id} className="tl-dtick" style={{ left: pct(st[j + 1]) }} />)}
+          {keys.slice(1).map((x, j) => devChanges(keys[j].s, x.s, r.uid, ri, w) ? (
+            <span key={x.id} className={`tl-chg-i ${w}`} style={{ left: pct(st[j + 1]) }} title={`${w === 'phone' ? `${r.name} moved` : `${r.name}: hand changed`} at keyframe ${j + 2}`} aria-label={CHG[w].tip}><ChgIco d={CHG[w].d} /></span>) : null)}
+        </div>)))}
       {below?.(span, pct)}
       {zoom && (() => { const range = Math.max(fit, v0 + span, T + 10); return (
         <div className="tl-scroll" onPointerDown={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(), c = view.current

@@ -9,6 +9,7 @@ import { GESTURE_DEFAULT, HAND_ROT0, type Gesture, type HandRot } from '../hands
 import type { IdleLevel } from '../hands/motion'
 import { SB_DEFAULT, type SbCfg } from '../statusbar/config'
 import { SKETCH_DEFAULTS } from '../sketch/Sketch'
+import { XF0, type Xf } from '../timeline/tlCore'
 
 export type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement; svg?: string; live?: boolean }
 export const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
@@ -37,6 +38,11 @@ export interface DeviceState {
   gesture: Gesture
   handRot: HandRot
   idle: IdleLevel
+  /** shown name ('' = the model's name, numbered when there are several) */
+  name: string
+  hidden: boolean
+  /** placement inside the view: position in scene units and rotation in degrees (all 0 for the first device) */
+  xf: Xf
 }
 export interface GlobalState {
   pose: Pose
@@ -62,6 +68,7 @@ export const newDevice = (model: DeviceId = 'ip18'): DeviceState => ({
   sb: SB_DEFAULT, sbReset: 0,
   foldFollow: true, foldSpeed: 1, foldDark: 0,
   hands: { pose: 'off', tone: 'fair' }, spectral: SPECTRAL_DEFAULTS, gesture: GESTURE_DEFAULT, handRot: HAND_ROT0, idle: 'low',
+  name: '', hidden: false, xf: XF0,
 })
 const GLOBAL0: GlobalState = { pose: POSE, light: LIGHT, fx: FX, style: 'photo', sk: SKETCH_DEFAULTS, bgMode: 'gradient', bg1: '#dfe7ff', bg2: '#f7d9e8', angle: 135, transparent: false, scale: 2 }
 const init = (): SceneState => { const d = newDevice(); return { devices: [d], selected: d.uid, global: GLOBAL0 } }
@@ -84,13 +91,30 @@ export function useScene() {
       const nv = resolve(v, s.global[k]); if (Object.is(nv, s.global[k])) return s
       return { ...s, global: { ...s.global, [k]: nv } }
     })
-    const devKeys = ['model', 'opts', 'media', 'mediaOuter', 'mediaTo', 'sbOn', 'sb', 'sbReset', 'foldFollow', 'foldSpeed', 'foldDark', 'hands', 'spectral', 'gesture', 'handRot', 'idle'] as const
+    /** a setter for one field of any device, by uid */
+    const devAt = <K extends keyof DeviceState>(uid: string, k: K, v: SetStateAction<DeviceState[K]>) => setScene(s => {
+      const i = s.devices.findIndex(d => d.uid === uid); if (i < 0) return s
+      const d = s.devices[i], nv = resolve(v, d[k]); if (Object.is(nv, d[k])) return s
+      const devices = s.devices.slice(); devices[i] = { ...d, [k]: nv }; return { ...s, devices }
+    })
+    const devKeys = ['model', 'opts', 'media', 'mediaOuter', 'mediaTo', 'sbOn', 'sb', 'sbReset', 'foldFollow', 'foldSpeed', 'foldDark', 'hands', 'spectral', 'gesture', 'handRot', 'idle', 'name', 'hidden', 'xf'] as const
     const gloKeys = ['pose', 'light', 'fx', 'style', 'sk', 'bgMode', 'bg1', 'bg2', 'angle', 'transparent', 'scale'] as const
     return {
       dev: Object.fromEntries(devKeys.map(k => [k, dev(k)])) as { [K in typeof devKeys[number]]: Setter<DeviceState[K]> },
       glo: Object.fromEntries(gloKeys.map(k => [k, glo(k)])) as { [K in typeof gloKeys[number]]: Setter<GlobalState[K]> },
       select: (uid: string) => setScene(s => s.devices.some(d => d.uid === uid) ? { ...s, selected: uid } : s),
       get: () => ref.current,
+      devAt,
+      /** add a device (placed by the caller), select it and return its uid */
+      add: (model: DeviceId, xf: Xf, from?: DeviceState) => { const d = from ? { ...from, uid: newDevice().uid, name: from.name ? `${from.name} copy` : '', hidden: false, xf } : { ...newDevice(model), xf }
+        setScene(s => ({ ...s, devices: [...s.devices, d], selected: d.uid })); return d.uid },
+      remove: (uid: string) => setScene(s => { if (s.devices.length < 2) return s
+        const i = s.devices.findIndex(d => d.uid === uid); if (i < 0) return s
+        const devices = s.devices.filter(d => d.uid !== uid)
+        return { ...s, devices, selected: s.selected === uid ? devices[Math.max(0, i - 1)].uid : s.selected } }),
+      /** move a device up or down the list */
+      reorder: (uid: string, by: number) => setScene(s => { const i = s.devices.findIndex(d => d.uid === uid), j = i + by
+        if (i < 0 || j < 0 || j >= s.devices.length) return s; const devices = s.devices.slice(); [devices[i], devices[j]] = [devices[j], devices[i]]; return { ...s, devices } }),
     }
   }, [])
   const selected = scene.devices.find(d => d.uid === scene.selected) ?? scene.devices[0]

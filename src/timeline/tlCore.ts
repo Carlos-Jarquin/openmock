@@ -15,7 +15,18 @@ export interface KfState {
   ges?: Partial<Record<GesKey, number>>
   light: { intensity: number; azimuth: number; elevation: number; floor: number }
   fx: { focus: number; blur: number }
+  /** every device (scene order); the top-level device fields mirror the first one. Missing on single-device timelines. */
+  devs?: DevKf[]
 }
+export interface Xf { x: number; y: number; z: number; rx: number; ry: number; rz: number }
+export const XF0: Xf = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0 }
+export interface DevKf { uid: string; xf: Xf; fold: number | null; hands: { pose: string; tone: string }; handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges?: Partial<Record<GesKey, number>> }
+/** One device's part of a keyframe: by uid, then by position, and an old (single-device) keyframe counts as the first device. */
+export function devKf(s: KfState, uid: string, i: number): DevKf | null {
+  if (s.devs) return s.devs.find(d => d.uid === uid) ?? (s.devs[i] && !tlLive.devs.includes(s.devs[i].uid) ? s.devs[i] : null)
+  return i === 0 ? { uid, xf: XF0, fold: s.fold, hands: s.hands, handRot: s.handRot, tap: s.tap, ges: s.ges } : null
+}
+export interface DevFrame { uid: string; xf: Xf; fold: number | null; handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges: Partial<Record<GesKey, number>> }
 export const GES_KEYS = ['sx', 'sy', 'ex', 'ey', 'progress', 'spread', 'angle', 'kx', 'ky', 'kx2', 'ky2'] as const
 export type GesKey = typeof GES_KEYS[number]
 export interface Keyframe { id: string; dur: number; ease: Ease; s: KfState }
@@ -43,8 +54,8 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
 /** Interpolated frame at time t: rotation as a quaternion (slerp, the shortest way, never flips), the rest lerped.
  *  seg/half say which segment and which half of it we are in, for the discrete values. */
-export interface Frame { handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges: Partial<Record<GesKey, number>>; q: THREE.Quaternion; pan: [number, number]; zoom: number; fov: number; fold: number | null; seg: number; disc: KfState; k: number }
-const out: Frame = { handRot: { tilt: 0, spin: 0, roll: 0 }, tap: { x: 0, y: 0 }, ges: {}, q: new THREE.Quaternion(), pan: [0, 0], zoom: 1, fov: 30, fold: null, seg: 0, disc: null as unknown as KfState, k: 0 }
+export interface Frame { handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges: Partial<Record<GesKey, number>>; q: THREE.Quaternion; pan: [number, number]; zoom: number; fov: number; fold: number | null; seg: number; disc: KfState; k: number; devs: DevFrame[] }
+const out: Frame = { handRot: { tilt: 0, spin: 0, roll: 0 }, tap: { x: 0, y: 0 }, ges: {}, q: new THREE.Quaternion(), pan: [0, 0], zoom: 1, fov: 30, fold: null, seg: 0, disc: null as unknown as KfState, k: 0, devs: [] }
 export function sample(k: Keyframe[], t: number): Frame | null {
   if (!k.length) return null
   const st = starts(k)
@@ -66,6 +77,17 @@ function fill(a: KfState, b: KfState, e: number) {
   for (const k of GES_KEYS) { const x = a.ges?.[k], y = b.ges?.[k]; if (x != null || y != null) g[k] = x == null ? y! : y == null ? x : lerp(x, y, e) }
   out.ges = g
   out.fold = a.fold == null || b.fold == null ? (b.fold ?? a.fold) : lerp(a.fold, b.fold, e)
+  const ds: DevFrame[] = []
+  tlLive.devs.forEach((uid, i) => {
+    const x = devKf(a, uid, i) ?? devKf(b, uid, i), y = devKf(b, uid, i) ?? x; if (!x || !y) return
+    const xf = {} as Xf; for (const k of Object.keys(XF0) as (keyof Xf)[]) xf[k] = lerp(x.xf?.[k] ?? 0, y.xf?.[k] ?? 0, e)
+    const g: Partial<Record<GesKey, number>> = {}
+    for (const k of GES_KEYS) { const p = x.ges?.[k], q = y.ges?.[k]; if (p != null || q != null) g[k] = p == null ? q! : q == null ? p : lerp(p, q, e) }
+    ds.push({ uid, xf, ges: g, fold: x.fold == null || y.fold == null ? (y.fold ?? x.fold) : lerp(x.fold, y.fold, e),
+      tap: { x: lerp(x.tap.x, y.tap.x, e), y: lerp(x.tap.y, y.tap.y, e) },
+      handRot: { tilt: lerp(x.handRot.tilt, y.handRot.tilt, e), spin: lerp(x.handRot.spin, y.handRot.spin, e), roll: lerp(x.handRot.roll, y.handRot.roll, e) } })
+  })
+  out.devs = ds
 }
 /** The pose sliders' angles for a quaternion (for handing the final frame back to the UI). */
 export function quatPose(q: THREE.Quaternion) {
@@ -95,6 +117,8 @@ export const tlLive = {
   onHand: null as null | ((f: Frame) => void),
   /** frame timing log for checks: performance.now() of each applied frame */
   log: null as number[] | null,
+  /** device uids in scene order (set by App), for per-device frames */
+  devs: [] as string[],
 }
 
 const KEY = 'om-timeline-v1'

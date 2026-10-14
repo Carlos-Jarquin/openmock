@@ -91,7 +91,8 @@ function pillGeo(len: number, h: number, d: number) {
   g.translate(0, 0, b); pillCache.set(k, g); return g
 }
 
-function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: DeviceProps) {
+function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }: DeviceProps) {
+  const foldLive = uid ? foldLiveFor(uid) : foldLiveDefault
   const f = FINISHES[opts.finish as keyof typeof FINISHES] ?? FINISHES.night
   const g = useMemo(() => {
     // Right half spans x 0..W, left half spans -W..0 (in its own frame before swinging).
@@ -324,7 +325,14 @@ export interface FoldAnim { from: number; target: number; to: 'inner' | 'outer';
   onSwap?: () => void; onDone?: (fold: number, zoomK: number) => void }
 /** Live fold state shared by the studio and the Duo, read every frame (no React state per frame). */
 /** Live fold state read in the frame loop. dark scales the dissolve's darkening (0 = blur only and the default, 1 = full, 1.5 max). */
-export const foldLive: { anim: FoldAnim | null; follow: boolean; dark: number; log: [number, number][] | null; tl: number | null } = { anim: null, follow: true, dark: 0, log: null, tl: null }
+export type FoldLive = { anim: FoldAnim | null; follow: boolean; dark: number; log: [number, number][] | null; tl: number | null }
+const fl0 = (): FoldLive => ({ anim: null, follow: true, dark: 0, log: null, tl: null })
+/** The default (first device's) fold state. */
+export const foldLive: FoldLive = fl0()
+const foldLiveDefault = foldLive
+const lives = new Map<string, FoldLive>()
+/** Each device has its own fold state, so two Duos fold on their own. The first device made uses the default one. */
+export function foldLiveFor(uid: string): FoldLive { let l = lives.get(uid); if (!l) { l = lives.size ? fl0() : foldLive; lives.set(uid, l) } return l }
 /** Hinge swing at speed 1, in ms, on smootherstep (no snap, no rebound). The dissolve has no timer of its own. */
 export const FOLD_MS = 900
 

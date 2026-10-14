@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { ContactShadows } from '@react-three/drei'
 import { EffectComposer, DepthOfField, Bloom, Noise, N8AO } from '@react-three/postprocessing'
@@ -7,7 +7,7 @@ RectAreaLightUniformsLib.init()
 import * as THREE from 'three'
 import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
-import { INNER_PX, OUTER_PX, foldLive, FOLD_MS } from './devices/Duo'
+import { INNER_PX, OUTER_PX, foldLiveFor, FOLD_MS } from './devices/Duo'
 import { sceneHit } from './devices/shared'
 import { ErrorBoundary } from './ErrorBoundary'
 import { loadLogo, loadLocalLogo } from './localLogo'
@@ -26,9 +26,9 @@ import { islandSketch } from './statusbar/StatusBar'
 import { Timeline, TimelineDriver, type TlApi, type TlInfo } from './timeline/Timeline'
 import { Chrome, type ChromeApi, type Cmd, type Section } from './ui/Chrome'
 import { Icon } from './ui/icons'
-import { mixers, screenLive } from './timeline/screenTrack'
-import { useScene, POSE, type Media, type Pose, type BgMode } from './scene/store'
-import { GES_KEYS, quatPose, tlLive, type Frame, type KfState } from './timeline/tlCore'
+import { mixersFor, screenLive } from './timeline/screenTrack'
+import { useScene, POSE, type Media, type Pose, type BgMode, type DeviceState } from './scene/store'
+import { GES_KEYS, XF0, devKf, quatPose, tlLive, type Frame, type KfState, type Xf } from './timeline/tlCore'
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const wrap = (v: number) => ((v + 540) % 360) - 180
@@ -151,6 +151,79 @@ function Rig({ zoom, fov }: { zoom: number; fov: number }) {
   return null
 }
 
+const mixMedia = (m: { on: boolean; tex: THREE.Texture; aspect: number }): Media | null => m.on ? { texture: m.tex, aspect: m.aspect, kind: 'image', name: 'Screen track', live: true } : null
+const D2R = THREE.MathUtils.degToRad
+/** Rough width of each model in scene units, for placing new devices and the layout presets. */
+const WIDTH: Partial<Record<DeviceId, number>> = { ip18: 0.72, ip18max: 0.78, duo: 1.5, phone: 0.75, ipmini: 1.38, ippro11: 1.8, ippro13: 2.2, browser: 2.6 }
+const widthOf = (d: DeviceState) => d.model === 'duo' && d.opts.fold < 90 ? 0.75 : WIDTH[d.model] ?? 0.8
+/** The hand fit each device's gesture was last scaled for, so switching model rescales only that device's gesture. */
+const fitOfDev = new Map<string, HandFit>()
+/** Shown names: the model's name, numbered when the scene has more than one of it. */
+export function devNames(devs: DeviceState[]) {
+  const seen: Record<string, number> = {}, tot: Record<string, number> = {}
+  for (const d of devs) tot[d.model] = (tot[d.model] ?? 0) + 1
+  return devs.map(d => { const l = DEVICES.find(x => x.id === d.model)!.label; seen[d.model] = (seen[d.model] ?? 0) + 1; return d.name || (tot[d.model] > 1 ? `${l} ${seen[d.model]}` : l) })
+}
+
+/** One device in the scene: its own screen composite, screen-track mixers, fold state, hand and placement. */
+const DeviceRig = memo(function DeviceRig({ d, active, multi, sketch, sk, islandLook, screenGen, onGesture, onGrab, reg }: {
+  d: DeviceState; active: boolean; multi: boolean; sketch: boolean; sk: typeof SKETCH_DEFAULTS; islandLook: ReturnType<typeof islandSketch> | undefined; screenGen: number
+  onGesture: (g: DeviceState['gesture']) => void; onGrab: (uid: string, e: PointerEvent) => void; reg: (uid: string, g: THREE.Group | null) => void
+}) {
+  const def = DEVICES.find(x => x.id === d.model)!, D = def.Component, opts = d.opts, device = d.model
+  const screenAspect = typeof def.screenAspect === 'function' ? def.screenAspect(opts) : def.screenAspect
+  // Screen in iPhone points for the status bar: Pro 402x874, Pro Max 440x956
+  const sbSize = device === 'ip18' ? SB_PRO : device === 'ip18max' ? SB_MAX : null
+  // Screen track: while a clip covers a screen, its mixer canvas is that screen's media
+  const mx = mixersFor(d.uid)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const mixIn = useMemo(() => mixMedia(mx.inner), [screenGen, mx]), mixOut = useMemo(() => mixMedia(mx.outer), [screenGen, mx])
+  const shownInner = mixIn ?? d.media, shownOuter = mixOut ?? d.mediaOuter
+  const screenTex = useStatusComposite(shownInner, d.sbOn, d.sb, sbSize, islandLook)
+  // status bar on: its island is the single island, so the 3D island mesh and front lens are hidden
+  const devOpts = useMemo(() => d.sbOn && sbSize ? { ...opts, hideIsland: true } : opts, [opts, d.sbOn, !!sbSize])
+  const fl = foldLiveFor(d.uid); fl.follow = d.foldFollow && active; fl.dark = d.foldDark
+  const xf = d.xf
+  const pos = useMemo(() => [xf.x, xf.y, xf.z] as [number, number, number], [xf.x, xf.y, xf.z])
+  const rot = useMemo(() => [D2R(xf.rx), D2R(xf.ry), D2R(xf.rz)] as [number, number, number], [xf.rx, xf.ry, xf.rz])
+  const ref = useCallback((g: THREE.Group | null) => reg(d.uid, g), [d.uid, reg])
+  if (d.hidden) return null
+  return (
+    <group ref={ref} position={pos} rotation={rot}
+      onPointerDown={multi ? e => { if (e.button !== 0 || e.shiftKey || e.intersections.some(i => onGizmo(i.object))) return; e.stopPropagation(); sceneHit.current = true; onGrab(d.uid, e.nativeEvent) } : undefined}>
+      <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, screenTex.texture, d.hands.pose]}>
+        <HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={HAND_FITS[device] ?? null} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle}>
+          <SketchStyle on={sketch} o={sk}><D uid={d.uid} texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
+            {...(device === 'duo' ? { textureOuter: shownOuter?.texture ?? null, mediaAspectOuter: shownOuter?.aspect } : {})} /></SketchStyle>
+        </HandRig>
+      </Centred>
+    </group>)
+})
+/** Is this object part of a gizmo (the hand's touch target), which takes the drag before the device does? */
+const onGizmo = (o: THREE.Object3D | null) => { for (; o; o = o.parent) if (o.userData.gizmo) return true; return false }
+const SB_PRO = { w: 402, h: 874 }, SB_MAX = { w: 440, h: 956 }
+
+/** The selection outline: a soft rectangle over the selected device's projected bounds (DOM, so it never shows in exports). */
+function SelBox({ get, el }: { get: () => THREE.Object3D | null; el: React.RefObject<HTMLDivElement | null> }) {
+  const { camera, size } = useThree(), box = useMemo(() => new THREE.Box3(), []), v = useMemo(() => new THREE.Vector3(), []), tmp = useMemo(() => new THREE.Box3(), [])
+  useFrame(() => {
+    const d = el.current; if (!d) return
+    const o = get(); if (!o) { d.style.display = 'none'; return }
+    // the device itself: hands and gizmos (marked noBounds) are left out, as in Centred
+    box.makeEmpty(); o.updateWorldMatrix(true, true)
+    const walk = (x: THREE.Object3D) => { if (!x.visible || x.userData.noBounds || x.userData.gizmo) return
+      const m = x as THREE.Mesh; if (m.isMesh && m.geometry) { if (!m.geometry.boundingBox) m.geometry.computeBoundingBox(); tmp.copy(m.geometry.boundingBox!).applyMatrix4(m.matrixWorld); box.union(tmp) }
+      for (const c of x.children) walk(c) }
+    walk(o); if (box.isEmpty()) { d.style.display = 'none'; return }
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9
+    for (let i = 0; i < 8; i++) { v.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).project(camera)
+      const x = (v.x + 1) / 2 * size.width, y = (1 - v.y) / 2 * size.height; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y) }
+    const p = 10; d.style.display = 'block'
+    d.style.transform = `translate(${x0 - p}px, ${y0 - p}px)`; d.style.width = `${x1 - x0 + 2 * p}px`; d.style.height = `${y1 - y0 + 2 * p}px`
+  })
+  return null
+}
+
 export default function App() {
   // Scene store: the selected device's fields and the global settings, each with a stable useState-style setter
   const S = useScene(), D0 = S.selected, G = S.scene.global
@@ -185,11 +258,13 @@ export default function App() {
   const [foldPlaying, setFoldPlaying] = useState(false)
   const foldSpeed = D0.foldSpeed, setFoldSpeed = S.dev.foldSpeed
   const foldDark = D0.foldDark, setFoldDark = S.dev.foldDark
-  foldLive.follow = foldFollow
+  const selUid = useRef(D0.uid); selUid.current = D0.uid
   // The transition runs in the Duo's frame loop from foldLive (no React state per frame). React only hears about it
   // twice: the screen swap at 30% (both screens are dissolved then, so the content change is hidden) and the end.
   const foldTo = useCallback((to: 'inner' | 'outer', then?: () => void) => {
-    const o = optsRef.current!, cur = foldLive.anim, target = to === 'inner' ? 180 : 0
+    // the fold belongs to the device selected when it starts, even if the selection changes while it runs
+    const uid = selUid.current, foldLive = foldLiveFor(uid), setOpts = (v: React.SetStateAction<DeviceOptions>) => S.devAt(uid, 'opts', v)
+    const o = S.get().devices.find(d => d.uid === uid)?.opts ?? optsRef.current!, cur = foldLive.anim, target = to === 'inner' ? 180 : 0
     // start from wherever the hinge is now, even mid-transition
     let from = o.fold
     if (cur) { const h = Math.min(1, (performance.now() - cur.t0) / cur.dur), e = h * h * h * (h * (h * 6 - 15) + 10); from = cur.from + (cur.target - cur.from) * e }
@@ -203,15 +278,16 @@ export default function App() {
   /** Stops the Play loop; finish also ends a running transition at its target (for the Fold slider). */
   const stopFold = useCallback((finish = true) => {
     clearTimeout(foldAnim.current.timer); foldAnim.current.loop = false; setFoldPlaying(false)
-    const a = foldLive.anim; if (a && finish) { foldLive.anim = null; a.onDone?.(a.target, 1) }
+    for (const d of S.get().devices) { const fl = foldLiveFor(d.uid), a = fl.anim; if (a && finish) { fl.anim = null; a.onDone?.(a.target, 1) } }
   }, [])
   const playFold = useCallback(() => {
     foldAnim.current.loop = true; setFoldPlaying(true)
     const go = () => { if (!foldAnim.current.loop) return
-      foldTo(optsRef.current!.screen === 'inner' ? 'outer' : 'inner', () => { foldAnim.current.timer = window.setTimeout(go, 700) }) }
+      const o = S.get().devices.find(d => d.uid === selUid.current)?.opts ?? optsRef.current!
+      foldTo(o.screen === 'inner' ? 'outer' : 'inner', () => { foldAnim.current.timer = window.setTimeout(go, 700) }) }
     go()
   }, [foldTo])
-  useEffect(() => () => { clearTimeout(foldAnim.current.timer); foldLive.anim = null }, [])
+  useEffect(() => () => { clearTimeout(foldAnim.current.timer); for (const d of S.get().devices) foldLiveFor(d.uid).anim = null }, [])
   const light = G.light, setLight = S.glo.light
   const fx = G.fx, setFx = S.glo.fx
   const style = G.style, setStyle = S.glo.style
@@ -222,8 +298,9 @@ export default function App() {
   const gesture = D0.gesture, setGesture = S.dev.gesture
   const handRot = D0.handRot, setHandRot = S.dev.handRot
   const idle = D0.idle, setIdle = S.dev.idle
-  const gestureFit = useRef(HAND_FITS.ip18!)
-  useEffect(() => { const f = HAND_FITS[device]; if (f && f !== gestureFit.current) { setGesture(g => rescale(g, screenOf(gestureFit.current), screenOf(f))); gestureFit.current = f } }, [device])
+  useEffect(() => { const f = HAND_FITS[device], was = fitOfDev.get(D0.uid) ?? HAND_FITS.ip18!
+    if (f && f !== was) setGesture(g => rescale(g, screenOf(was), screenOf(f)))
+    if (f) fitOfDev.set(D0.uid, f) }, [device, D0.uid])
   // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
   const [ai, setAi] = useState<{ guide: Guide; shadows: boolean; busy: boolean; url: string | null }>({ guide: 'depth', shadows: false, busy: false, url: null })
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
@@ -248,29 +325,43 @@ export default function App() {
   // so fresh arrays here would snap the phone back to the slider pose on every frame (the hand then looked detached).
   const devPos = useMemo(() => [pose.panX, pose.panY, 0] as [number, number, number], [pose.panX, pose.panY])
   const devRot = useMemo(() => [THREE.MathUtils.degToRad(pose.tiltX), THREE.MathUtils.degToRad(pose.tiltY), THREE.MathUtils.degToRad(pose.rotZ)] as [number, number, number], [pose.tiltX, pose.tiltY, pose.rotZ])
-  const tlSnapshot = useCallback((): KfState => { const v = live.current; return {
-    pose: { ...v.pose }, fold: v.device === 'duo' ? v.opts.fold : null, hands: { ...v.hands }, handRot: { ...v.handRot }, tap: { x: v.gesture.x, y: v.gesture.y }, ges: Object.fromEntries(GES_KEYS.map(k => [k, v.gesture[k]])),
-    light: { intensity: v.light.intensity, azimuth: v.light.azimuth, elevation: v.light.elevation, floor: v.light.floor }, fx: { focus: v.fx.focus, blur: v.fx.blur } } }, [])
+  // A keyframe holds every device (devs); its top-level device fields mirror the first device, as single-device timelines did.
+  const tlSnapshot = useCallback((): KfState => { const v = live.current, ds = S.get().devices, d0 = ds[0]
+    const one = (d: DeviceState) => ({ uid: d.uid, xf: { ...d.xf }, fold: d.model === 'duo' ? d.opts.fold : null, hands: { ...d.hands }, handRot: { ...d.handRot }, tap: { x: d.gesture.x, y: d.gesture.y }, ges: Object.fromEntries(GES_KEYS.map(k => [k, d.gesture[k]])) })
+    const f = one(d0); return {
+    pose: { ...v.pose }, fold: f.fold, hands: f.hands, handRot: f.handRot, tap: f.tap, ges: f.ges,
+    light: { intensity: v.light.intensity, azimuth: v.light.azimuth, elevation: v.light.elevation, floor: v.light.floor }, fx: { focus: v.fx.focus, blur: v.fx.blur },
+    devs: ds.map(one) } }, [])
   const tlDisc = useCallback((k: KfState) => {
-    setHands(h => h.pose === k.hands.pose && h.tone === k.hands.tone ? h : { pose: k.hands.pose as HandPose, tone: k.hands.tone })
-    setHandRot(r => r.tilt === k.handRot.tilt && r.spin === k.handRot.spin && r.roll === k.handRot.roll ? r : { ...k.handRot })
-    setGesture(g => ({ ...g, ...k.ges, x: k.tap.x, y: k.tap.y }))
+    S.get().devices.forEach((d, i) => { const x = devKf(k, d.uid, i); if (!x) return
+      S.devAt(d.uid, 'hands', h => h.pose === x.hands.pose && h.tone === x.hands.tone ? h : { pose: x.hands.pose as HandPose, tone: x.hands.tone })
+      S.devAt(d.uid, 'handRot', r => r.tilt === x.handRot.tilt && r.spin === x.handRot.spin && r.roll === x.handRot.roll ? r : { ...x.handRot })
+      S.devAt(d.uid, 'gesture', g => ({ ...g, ...x.ges, x: x.tap.x, y: x.tap.y })) })
     setLight(l => ({ ...l, ...k.light })); setFx(f => ({ ...f, ...k.fx }))
   }, [])
+  const setXfAt = (uid: string, v: Xf) => S.devAt(uid, 'xf', o => (Object.keys(v) as (keyof Xf)[]).every(k => o[k] === v[k]) ? o : { ...v })
+  const foldAt = (uid: string, fold: number) => S.devAt(uid, 'opts', o => o.fold === fold && o.screen === (fold >= 90 ? 'inner' : 'outer') ? o : { ...o, fold, screen: fold >= 90 ? 'inner' : 'outer' })
   const tlApply = useCallback((k: KfState) => {
-    setPose({ ...k.pose }); if (k.fold != null && live.current.device === 'duo') setOpts(o => ({ ...o, fold: k.fold!, screen: k.fold! >= 90 ? 'inner' : 'outer' }))
+    setPose({ ...k.pose })
+    S.get().devices.forEach((d, i) => { const x = devKf(k, d.uid, i); if (!x) return
+      if (x.fold != null && d.model === 'duo') foldAt(d.uid, x.fold)
+      setXfAt(d.uid, { ...XF0, ...x.xf }) })
     tlDisc(k)
   }, [tlDisc])
   const tlCommit = useCallback((f: Frame) => {
     setPose(p => ({ ...p, ...quatPose(f.q), zoom: f.zoom, fov: f.fov, panX: f.pan[0], panY: f.pan[1] }))
-    if (f.fold != null && live.current.device === 'duo') setOpts(o => ({ ...o, fold: f.fold!, screen: f.fold! >= 90 ? 'inner' : 'outer' }))
+    const ds = S.get().devices
+    for (const x of f.devs) { const d = ds.find(y => y.uid === x.uid); if (!d) continue
+      if (x.fold != null && d.model === 'duo') foldAt(d.uid, x.fold)
+      setXfAt(d.uid, x.xf) }
   }, [])
-  const tlSide = useCallback((inner: boolean) => { if (live.current.device === 'duo') setOpts(o => o.screen === (inner ? 'inner' : 'outer') ? o : { ...o, screen: inner ? 'inner' : 'outer' }) }, [])
-  // per frame while the timeline runs: the interpolated touch point, hand rotation and gesture, so the hand moves with the thumb
+  const tlSide = useCallback((inner: boolean, uid: string) => { if (S.get().devices.find(d => d.uid === uid)?.model === 'duo') S.devAt(uid, 'opts', o => o.screen === (inner ? 'inner' : 'outer') ? o : { ...o, screen: inner ? 'inner' : 'outer' }) }, [])
+  // per frame while the timeline runs: each device's touch point, hand rotation, gesture and placement, so the hand moves with the thumb
   const tlHand = useCallback((f: Frame) => {
-    const r = f.handRot, t = f.tap, gs = f.ges
-    setHandRot(o => o.tilt === r.tilt && o.spin === r.spin && o.roll === r.roll ? o : { ...r })
-    setGesture(o => o.x === t.x && o.y === t.y && GES_KEYS.every(k => gs[k] == null || o[k] === gs[k]) ? o : { ...o, ...gs, x: t.x, y: t.y })
+    for (const x of f.devs) { const r = x.handRot, t = x.tap, gs = x.ges
+      S.devAt(x.uid, 'handRot', o => o.tilt === r.tilt && o.spin === r.spin && o.roll === r.roll ? o : { ...r })
+      S.devAt(x.uid, 'gesture', o => o.x === t.x && o.y === t.y && GES_KEYS.every(k => gs[k] == null || o[k] === gs[k]) ? o : { ...o, ...gs, x: t.x, y: t.y })
+      setXfAt(x.uid, x.xf) }
   }, [])
   useEffect(() => { tlLive.onHand = tlHand; return () => { tlLive.onHand = null } }, [tlHand])
   useEffect(() => { tlLive.onDisc = tlDisc; return () => { tlLive.onDisc = null } }, [tlDisc])
@@ -295,13 +386,49 @@ export default function App() {
   // Screen track: while a clip covers a screen, its mixer canvas is that screen's media
   const [screenGen, bumpScreen] = useState(0)
   useEffect(() => { screenLive.onShape = () => bumpScreen(n => n + 1); return () => { screenLive.onShape = null } }, [])
-  const mixMedia = (m: typeof mixers.inner): Media | null => m.on ? { texture: m.tex, aspect: m.aspect, kind: 'image', name: 'Screen track', live: true } : null
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const mixIn = useMemo(() => mixMedia(mixers.inner), [screenGen]), mixOut = useMemo(() => mixMedia(mixers.outer), [screenGen])
-  const shownInner = mixIn ?? media, shownOuter = mixOut ?? mediaOuter
-  const screenTex = useStatusComposite(shownInner, sbOn, sb, sbSize, islandLook)
-  // status bar on: its island is the single island, so the 3D island mesh and front lens are hidden
-  const devOpts = useMemo(() => sbOn && sbSize ? { ...opts, hideIsland: true } : opts, [opts, sbOn, !!sbSize])
+  const devices = S.scene.devices, multi = devices.length > 1, names = devNames(devices)
+  const [renaming, setRenaming] = useState<{ uid: string; text: string } | null>(null)
+  const [addModel, setAddModel] = useState<DeviceId>('ip18')
+  tlLive.devs = screenLive.devs = devices.map(d => d.uid)
+  const selName = names[devices.indexOf(D0)] ?? def.label
+  const tlDevs = useMemo(() => devices.map((d, i) => ({ uid: d.uid, name: names[i], duo: d.model === 'duo', duoScreen: d.opts.screen === 'outer' ? 'outer' as const : 'inner' as const,
+    current: (t: 'inner' | 'outer') => (t === 'outer' ? d.mediaOuter ?? d.media : d.media) })), [devices, names.join('|')])
+  // the rig group of each device (for the selection outline and dragging)
+  const rigs = useRef(new Map<string, THREE.Group>())
+  const reg = useCallback((uid: string, g: THREE.Group | null) => { if (g) rigs.current.set(uid, g); else rigs.current.delete(uid) }, [])
+  const selBox = useRef<HTMLDivElement>(null)
+  // Dragging a device (only with several in the scene): the screen movement, turned into the view group's frame
+  const onGrab = useCallback((uid: string, e: PointerEvent) => {
+    S.select(uid)
+    let x = e.clientX, y = e.clientY
+    const q = new THREE.Quaternion(), v = new THREE.Vector3()
+    const mv = (ev: PointerEvent) => { const dx = ev.clientX - x, dy = ev.clientY - y; x = ev.clientX; y = ev.clientY
+      const g = devGroup.current; if (!g) return
+      g.getWorldQuaternion(q).invert(); v.set(dx, -dy, 0).multiplyScalar(0.004 / poseRef.current.zoom).applyQuaternion(q)
+      S.devAt(uid, 'xf', o => ({ ...o, x: clamp(o.x + v.x, -4, 4), y: clamp(o.y + v.y, -4, 4), z: clamp(o.z + v.z, -4, 4) })) }
+    const up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up) }
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up)
+  }, [])
+  /** Where a new device goes: to the right of the rightmost one, level with it. */
+  const nextXf = (w: number): Xf => { const ds = S.get().devices; let best = ds[0]
+    for (const d of ds) if (d.xf.x + widthOf(d) / 2 > best.xf.x + widthOf(best) / 2) best = d
+    return { ...XF0, x: Math.round((best.xf.x + widthOf(best) / 2 + 0.12 + w / 2) * 100) / 100, y: best.xf.y, z: best.xf.z } }
+  const addDevice = (model: DeviceId) => { S.add(model, nextXf(WIDTH[model] ?? 0.8)); flash(`${DEVICES.find(d => d.id === model)!.label} added. Drag it in the view to move it.`) }
+  const dupDevice = (d: DeviceState) => { const uid = S.add(d.model, nextXf(widthOf(d)), d); const f = fitOfDev.get(d.uid); if (f) fitOfDev.set(uid, f); flash('Device duplicated.') }
+  /** Layout presets: place every visible device side by side, fanned out or in a grid, centred on the view. */
+  const layout = (kind: 'row' | 'fan' | 'grid') => {
+    const ds = S.get().devices.filter(d => !d.hidden), n = ds.length; if (!n) return
+    const ws = ds.map(widthOf), gap = 0.12, r2 = (x: number) => Math.round(x * 1000) / 1000
+    let out: Xf[]
+    if (kind === 'row') { const tot = ws.reduce((a, b) => a + b, 0) + gap * (n - 1); let x = -tot / 2
+      out = ws.map(w => { const c = x + w / 2; x += w + gap; return { ...XF0, x: r2(c) } }) }
+    else if (kind === 'fan') { const step = Math.max(...ws) * 0.55, mid = (n - 1) / 2
+      out = ds.map((_, i) => { const k = i - mid; return { ...XF0, x: r2(k * step), y: r2(-Math.abs(k) * 0.06), z: r2(-Math.abs(k) * 0.12), ry: r2(k * -14), rz: r2(k * -6) } }) }
+    else { const cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols), cw = Math.max(...ws) + gap, ch = 1.75
+      out = ds.map((_, i) => ({ ...XF0, x: r2((i % cols - (cols - 1) / 2) * cw), y: r2(((rows - 1) / 2 - Math.floor(i / cols)) * ch) })) }
+    ds.forEach((d, i) => S.devAt(d.uid, 'xf', out[i]))
+    flash(kind === 'row' ? 'Devices side by side.' : kind === 'fan' ? 'Devices fanned out.' : 'Devices in a grid.')
+  }
 
   /** SVG markup: rasterised at 3x the Pro Max screen width (1320 px) for the screen texture; the markup is kept for SVG export. */
   const loadSvg = useCallback((text: string, name: string, done?: string, to: 'inner' | 'outer' = 'inner') => {
@@ -463,7 +590,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive, setSbOn, setSb, setSpectral, setIdle }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -499,12 +626,36 @@ export default function App() {
 
   const sections: Section[] = [
     // SCENE rail
-    { id: 'devices', side: 'scene', title: 'Devices', icon: 'devices', settings: ['Selected device', 'Add device'], render: () => <>
-      <div className="om-devlist">
-        <button className="om-devrow on" aria-current="true" onClick={() => S.select(D0.uid)}><Icon name="model" /><span>{def.label}<small>{def.finishes?.[opts.finish]?.label ?? 'Default'}{hands.pose !== 'off' ? ` · ${HAND_POSES.find(([k]) => k === hands.pose)?.[1]}` : ''}</small></span></button>
+    { id: 'devices', side: 'scene', title: 'Devices', icon: 'devices', settings: ['Selected device', 'Add device', 'Duplicate', 'Rename', 'Hide', 'Delete', 'Side by side', 'Fanned', 'Grid'], render: () => <>
+      <div className="om-devlist" role="list" aria-label="Devices in the scene">
+        {devices.map((d, i) => { const on = d.uid === D0.uid, dd = DEVICES.find(x => x.id === d.model)!
+          return <div key={d.uid} role="listitem" className={`om-devitem ${on ? 'on' : ''} ${d.hidden ? 'off' : ''}`}>
+            {renaming?.uid === d.uid
+              ? <input className="om-devname" autoFocus aria-label="Device name" value={renaming.text} placeholder={dd.label} onFocus={e => e.currentTarget.select()}
+                  onChange={e => setRenaming({ uid: d.uid, text: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); S.devAt(d.uid, 'name', renaming.text.trim()); setRenaming(null) } else if (e.key === 'Escape') { e.preventDefault(); setRenaming(null) } }}
+                  onBlur={() => { S.devAt(d.uid, 'name', renaming.text.trim()); setRenaming(null) }} />
+              : <button className={`om-devrow ${on ? 'on' : ''}`} aria-current={on ? 'true' : undefined} onClick={() => S.select(d.uid)} onDoubleClick={() => setRenaming({ uid: d.uid, text: d.name || names[i] })}
+                  title={on ? 'Selected. Double-click to rename.' : 'Select this device'}>
+                  <Icon name="model" /><span>{names[i]}<small>{dd.finishes?.[d.opts.finish]?.label ?? 'Default'}{d.hands.pose !== 'off' ? ` · ${HAND_POSES.find(([k]) => k === d.hands.pose)?.[1]}` : ''}{d.hidden ? ' · Hidden' : ''}</small></span></button>}
+            {multi && <button className="ghost icon om-devact" aria-label={d.hidden ? `Show ${names[i]}` : `Hide ${names[i]}`} aria-pressed={d.hidden} title={d.hidden ? 'Show' : 'Hide'} onClick={() => S.devAt(d.uid, 'hidden', h => !h)}><Icon name={d.hidden ? 'eyeoff' : 'eye'} size={16} /></button>}
+          </div> })}
       </div>
-      <button className="ghost" disabled title="Several devices in one scene arrive in the next stage">+ Add device</button>
-      <p className="hint">One device for now. Adding and duplicating devices comes next.</p>
+      <div className="om-devtools">
+        <button className="ghost" onClick={() => setRenaming({ uid: D0.uid, text: D0.name || selName })}><Icon name="pencil" size={16} /> Rename</button>
+        <button className="ghost" onClick={() => dupDevice(D0)}><Icon name="copy" size={16} /> Duplicate</button>
+        {multi && <button className="ghost" onClick={() => S.devAt(D0.uid, 'hidden', h => !h)}><Icon name={D0.hidden ? 'eye' : 'eyeoff'} size={16} /> {D0.hidden ? 'Show' : 'Hide'}</button>}
+        {multi && <button className="ghost danger" onClick={() => { const n = selName; S.remove(D0.uid); flash(`${n} removed.`) }}><Icon name="trash" size={16} /> Delete</button>}
+      </div>
+      <div className="om-devadd">
+        <select value={addModel} onChange={e => setAddModel(e.target.value as DeviceId)} aria-label="Model to add">{DEVICES.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}</select>
+        <button onClick={() => addDevice(addModel)} disabled={devices.length >= 6} title={devices.length >= 6 ? 'Six devices at most' : 'Add this model to the scene'}><Icon name="plus" size={16} /> Add device</button>
+      </div>
+      {multi ? <>
+        <span className="om-sub-h">Layout</span>
+        <div className="seg"><button onClick={() => layout('row')}>Side by side</button><button onClick={() => layout('fan')}>Fanned</button><button onClick={() => layout('grid')}>Grid</button></div>
+        <p className="hint">Click a device in the view or the list to select it. Drag a device to move it; drag empty space to orbit.</p>
+      </> : <p className="hint">Add a second device to show several in one scene.</p>}
     </> },
     { id: 'preset', side: 'scene', title: 'Preset', icon: 'preset', settings: ['Violet silhouette'], render: () => <>
       <button onClick={violetScene}>Violet silhouette</button>
@@ -587,6 +738,17 @@ export default function App() {
       <p className="hint">Uses ComfyUI on this Mac to repaint only the hands. The phone stays exactly as rendered.</p>
     </> : <p className="hint">Turn on a hand under Device › Hand first. {handOk ? '' : 'Hands are available for the iPhone 18 Pro and 18 Pro Max.'}</p> },
     // DEVICE rail
+    ...(multi ? [{ id: 'place', side: 'device' as const, title: 'Position', icon: 'move', settings: ['Across', 'Up and down', 'Depth', 'Turn', 'Tilt', 'Roll', 'Reset position'], render: () => { const xf = D0.xf, set = (k: keyof Xf) => (n: number) => S.dev.xf(o => ({ ...o, [k]: n }))
+      return <>
+        {slider('Across', +xf.x.toFixed(2), -4, 4, 0.01, set('x'))}
+        {slider('Up and down', +xf.y.toFixed(2), -4, 4, 0.01, set('y'))}
+        {slider('Depth', +xf.z.toFixed(2), -4, 4, 0.01, set('z'))}
+        {slider('Turn', Math.round(xf.ry), -180, 180, 1, set('ry'), '°')}
+        {slider('Tilt', Math.round(xf.rx), -90, 90, 1, set('rx'), '°')}
+        {slider('Roll', Math.round(xf.rz), -180, 180, 1, set('rz'), '°')}
+        <button className="ghost" onClick={() => S.dev.xf(XF0)}>Reset position</button>
+        <p className="hint">Places this device in the scene. Drag it in the view to move it across and up.</p>
+      </> } }] : []),
     { id: 'model', side: 'device', title: 'Model', icon: 'model', settings: DEVICES.map(d => d.label), render: () => <>
       <div className="om-tiles">{DEVICES.map(d => <button key={d.id} className={`om-tile ${d.id === device ? 'on' : ''}`} aria-pressed={d.id === device} onClick={() => { setDevice(d.id); if (d.defaultFinish && !(d.finishes && opts.finish in d.finishes)) setOpts(o => ({ ...o, finish: d.defaultFinish! })) }}>{d.label}</button>)}</div>
       {def.nativePx && <p className="hint">Native size: {def.nativePx.w} × {def.nativePx.h} px. Screenshots at this size fit exactly.</p>}
@@ -640,7 +802,7 @@ export default function App() {
       <label className="check"><input type="checkbox" checked={opts.foldDissolve !== false} onChange={e => setOpts({ ...opts, foldDissolve: e.target.checked })} /> Dissolve while folding</label>
       {slider('Transition blur', Math.round((opts.foldBlur ?? 0.15) * 100), 0, 100, 1, n => setOpts({ ...opts, foldBlur: n / 100 }), '%')}
       {slider('Speed', foldSpeed, 0.5, 2, 0.05, n => setFoldSpeed(n), '×')}
-      {slider('Darkness', Math.round(foldDark * 100), 0, 150, 1, n => { foldLive.dark = n / 100; setFoldDark(n / 100) }, '%')}
+      {slider('Darkness', Math.round(foldDark * 100), 0, 150, 1, n => { foldLiveFor(D0.uid).dark = n / 100; setFoldDark(n / 100) }, '%')}
       <label className="check"><input type="checkbox" checked={foldFollow} onChange={e => setFoldFollow(e.target.checked)} /> Camera follows the fold</label>
       <p className="hint">Switching screens swings the hinge in 0.9 s at 1×. Each screen frosts and darkens as it leaves its rest and is clear as the hinge settles. Untick Dissolve while folding for a sharp still at any angle.</p>
     </> }] : []),
@@ -697,6 +859,17 @@ export default function App() {
     ...(handOk ? tones.map(([k, t]) => ({ id: `tone-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Skin tone › ${t.label}`, meta: 'APPLY' as const, run: () => setHands(h => ({ ...h, tone: k })) })) : []),
     ...(def.foldable ? [{ id: 'fold-in', group: 'device' as const, section: 'fold', label: 'Fold › Open (inner screen)', meta: 'APPLY' as const, run: () => { stopFold(false); foldTo('inner') } },
       { id: 'fold-out', group: 'device' as const, section: 'fold', label: 'Fold › Close (outer screen)', meta: 'APPLY' as const, run: () => { stopFold(false); foldTo('outer') } }] : []),
+    ...DEVICES.map(d => ({ id: `add-${d.id}`, group: 'scene' as const, section: 'devices', label: `Devices › Add ${d.label}`, meta: 'APPLY' as const, run: () => addDevice(d.id) })),
+    { id: 'dup', group: 'scene', section: 'devices', label: 'Devices › Duplicate selected', meta: 'APPLY', run: () => dupDevice(D0) },
+    ...(multi ? [
+      ...devices.map((d, i) => ({ id: `sel-${d.uid}`, group: 'scene' as const, section: 'devices', label: `Devices › Select ${names[i]}`, meta: d.uid === D0.uid ? 'CURRENT' as const : 'APPLY' as const, run: () => S.select(d.uid) })),
+      { id: 'hide', group: 'scene' as const, section: 'devices', label: 'Devices › Hide or show selected', meta: 'TOGGLE' as const, run: () => S.devAt(D0.uid, 'hidden', h => !h) },
+      { id: 'del', group: 'scene' as const, section: 'devices', label: 'Devices › Delete selected', meta: 'APPLY' as const, run: () => S.remove(D0.uid) },
+      { id: 'lay-row', group: 'scene' as const, section: 'devices', label: 'Layout › Side by side', meta: 'APPLY' as const, run: () => layout('row') },
+      { id: 'lay-fan', group: 'scene' as const, section: 'devices', label: 'Layout › Fanned', meta: 'APPLY' as const, run: () => layout('fan') },
+      { id: 'lay-grid', group: 'scene' as const, section: 'devices', label: 'Layout › Grid', meta: 'APPLY' as const, run: () => layout('grid') },
+      { id: 'xf0', group: 'device' as const, section: 'place', label: 'Position › Reset position', meta: 'APPLY' as const, run: () => S.dev.xf(XF0) },
+    ] : []),
     { id: 'violet', group: 'scene', section: 'preset', label: 'Preset › Violet silhouette', meta: 'APPLY', run: violetScene },
     { id: 'photo', group: 'scene', section: 'style', label: 'Style › Photo', meta: style === 'photo' ? 'CURRENT' : 'APPLY', run: () => setStyle('photo') },
     { id: 'sketch', group: 'scene', section: 'style', label: 'Style › Sketch', meta: sketch ? 'CURRENT' : 'APPLY', run: () => { setStyle('sketch'); setBgMode('solid'); setBg1(SKETCH_PAPER); setTransparent(false) } },
@@ -802,13 +975,10 @@ export default function App() {
             <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
           </>}
           <group ref={devGroup} position={devPos} rotation={devRot}>
-            <Centred off={device === 'duo'} deps={[device, ...(device === 'duo' ? [] : [opts.fold, opts.screen]), screenTex.texture, hands.pose]}>
-              <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture} rot={handRot} idle={idle}>
-                <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
-                  {...(device === 'duo' ? { textureOuter: shownOuter?.texture ?? null, mediaAspectOuter: shownOuter?.aspect } : {})} /></SketchStyle>
-              </HandRig>
-            </Centred>
+            {devices.map(d => <DeviceRig key={d.uid} d={d} active={d.uid === D0.uid} multi={multi} sketch={sketch} sk={sk} islandLook={islandLook} screenGen={screenGen}
+              onGesture={setGesture} onGrab={onGrab} reg={reg} />)}
           </group>
+          {multi && <SelBox get={() => rigs.current.get(D0.uid) ?? null} el={selBox} />}
           {light.shadowOn && light.shadow > 0 && (() => {
             // light.floor is the phone's height above the floor in cm (0.1 units per cm, phone about 1.6 units tall).
             // The floor plane stays where it is so it stays in frame at any height; the shadow is shaped as if the
@@ -830,14 +1000,15 @@ export default function App() {
             </EffectComposer>)}
         </Canvas>
         </ErrorBoundary>
+        {multi && <div ref={selBox} className="om-selbox" aria-hidden="true" />}
         {ai.url && <img className="ai-overlay" src={ai.url} alt="" />}
         {dragging && <div className="dropnote">Drop to use as the screen</div>}
         {toast && <div className="toast" role="status" style={{ position: 'absolute', left: '50%', bottom: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8,
           background: toast.error ? 'rgba(192,57,43,0.92)' : 'rgba(29,29,31,0.85)', color: '#fff', font: '13px -apple-system, system-ui, sans-serif', pointerEvents: 'none', maxWidth: 420, textAlign: 'center' }}>{toast.text}</div>}
       </main>
-      <Chrome apiRef={chromeApi} sections={sections} commands={commands} deviceName={def.label} tools={tools} exportMenu={exportMenu} onInsets={onInsets} toggleTimeline={toggleTimeline}
+      <Chrome apiRef={chromeApi} sections={sections} commands={commands} deviceName={selName} tools={tools} exportMenu={exportMenu} onInsets={onInsets} toggleTimeline={toggleTimeline}
         timeline={<Timeline snapshot={tlSnapshot} apply={tlApply} canvas={() => document.querySelector('.stage canvas')} transparent={transparent} flash={flash}
-          duo={device === 'duo'} duoScreen={opts.screen === 'outer' ? 'outer' : 'inner'} current={t => (t === 'outer' ? mediaOuter ?? media : media)}
+          devs={tlDevs}
           open={tlOpen} setOpen={setTlOpen} api={tlApi} onInfo={setTlInfo} />} />
     </div>
   )

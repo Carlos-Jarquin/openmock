@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
-import { foldLive } from '../devices/Duo'
+import { foldLiveFor } from '../devices/Duo'
 import { Track, viewSpan } from './Track'
 import { ScreenLane } from './ScreenLane'
 import { loadClips, saveClips, screenLive, sortClips, updateScreens, type ScreenClip } from './screenTrack'
@@ -10,9 +10,9 @@ import { EASES, fmt, loadKeys, quatPose, sample, saveKeys, starts, tlLive, total
 
 /** Applies the timeline to the scene every frame while it owns it: device rotation (slerp) and position, camera zoom
  *  and lens, the Duo hinge (which drives the screen dissolve), and the discrete values at segment midpoints. */
-export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefObject<THREE.Group | null>; onCommit: (f: Frame) => void; onSide: (inner: boolean) => void }) {
+export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefObject<THREE.Group | null>; onCommit: (f: Frame) => void; onSide: (inner: boolean, uid: string) => void }) {
   const { camera } = useThree()
-  const side = useRef<boolean | null>(null)
+  const side = useRef<Record<string, boolean | null>>({})
   const handQueued = useRef(false)
   useFrame(() => {
     const L = tlLive
@@ -28,9 +28,9 @@ export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefOb
     const cam = camera as THREE.PerspectiveCamera
     if (cam.fov !== f.fov) { cam.fov = f.fov; cam.updateProjectionMatrix() }
     cam.position.set(0, 0, 4.2 / f.zoom * Math.tan(THREE.MathUtils.degToRad(15)) / Math.tan(THREE.MathUtils.degToRad(f.fov / 2))); cam.lookAt(0, 0, 0)
-    foldLive.tl = f.fold
-    // the Duo shows the inner content when open past 90 degrees, the outer when closed (both are dissolved at 90)
-    if (f.fold != null) { const s = f.fold >= 90; if (s !== side.current) { side.current = s; onSide(s) } }
+    // each device's hinge; the Duo shows the inner content when open past 90 degrees, the outer when closed (both are dissolved at 90)
+    for (const d of f.devs) { foldLiveFor(d.uid).tl = d.fold
+      if (d.fold != null) { const s = d.fold >= 90; if (s !== side.current[d.uid]) { side.current[d.uid] = s; onSide(s, d.uid) } } }
     if (f.disc !== L.disc) { L.disc = f.disc; L.onDisc?.(f.disc) }
     // hand updates go through React state; posting them out of the frame loop (one pending at a time, newest frame wins)
     // keeps React from counting 60 synchronous updates a second as an update loop
@@ -41,7 +41,7 @@ export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefOb
     if (u.head) u.head.style.left = `${(Math.min(L.t, T) - L.view0) / (L.view || T || 1) * 100}%`
     L.log?.push(now)
     // paused or scrubbed: hand the frame back to the sliders once, then let the user drive again
-    if (!L.playing && L.pending) { L.pending = false; L.active = false; foldLive.tl = null; side.current = null; onCommit(f) }
+    if (!L.playing && L.pending) { L.pending = false; L.active = false; for (const d of f.devs) foldLiveFor(d.uid).tl = null; side.current = {}; onCommit(f) }
   })
   return null
 }
@@ -57,15 +57,20 @@ const I = {
 
 const uid = () => Math.random().toString(36).slice(2, 9)
 
+/** One device as the timeline sees it. */
+export interface TlDev { uid: string; name: string; duo: boolean; duoScreen: 'inner' | 'outer'; current: (t: 'inner' | 'outer') => { texture: THREE.Texture; kind: 'image' | 'video'; name: string } | null }
+
 /** What the Export menu needs from the timeline: video settings and the record action. */
 export interface TlApi { record: () => void; add: () => void; setFps: (f: 30 | 60) => void; setFmtOut: (f: 'webm' | 'mp4') => void }
 export interface TlInfo { fps: 30 | 60; fmtOut: 'webm' | 'mp4'; mp4ok: boolean; rec: boolean; keys: number }
 
-export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duoScreen, current, open, setOpen, api, onInfo }: {
+export function Timeline({ snapshot, apply, canvas, transparent, flash, devs, open, setOpen, api, onInfo }: {
   open: boolean; setOpen: (o: boolean) => void; api: React.MutableRefObject<TlApi | null>; onInfo: (i: TlInfo) => void
   snapshot: () => KfState; apply: (s: KfState) => void; canvas: () => HTMLCanvasElement | null; transparent: boolean; flash: (t: string, err?: boolean) => void
-  duo: boolean; duoScreen: 'inner' | 'outer'; current: (t: 'inner' | 'outer') => { texture: THREE.Texture; kind: 'image' | 'video'; name: string } | null
+  /** the devices in the scene, for their rows and screen lanes */
+  devs: TlDev[]
 }) {
+  const multi = devs.length > 1
   // Screen track (saved separately, so timelines from before it load with an empty one)
   const [clips, setClipsState] = useState<ScreenClip[]>(() => { const c = loadClips(); screenLive.clips = c; return c })
   const setClips = useCallback((c: ScreenClip[]) => { setClipsState(c); screenLive.clips = c; saveClips(c) }, [])
@@ -230,11 +235,12 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duo
         <button className="ghost icon" onClick={() => setOpen(false)} aria-expanded={true} aria-label="Minimize timeline" title="Minimize timeline (T)"><Ico d={I.chev} /></button>
       </div>
       {undo && <div className="tl-undo" role="status">Timeline cleared. <button onClick={restore}>Undo</button></div>}
-      <div className="tl-body">
-        <div className="tl-labels" aria-hidden="true"><span className="l-k">Camera · Pose</span><span className="l-s">Screen</span></div>
+      <div className={`tl-body ${multi ? 'multi' : ''}`}>
+        <div className="tl-labels" aria-hidden="true"><span className="l-k">{multi ? 'Camera · View' : 'Camera · Pose'}</span>{!multi && <span className="l-s">Screen</span>}</div>
         <div className="tl-main">
         <Track key={epoch} gap={gap} setGap={setGap} keys={keys} sel={sel} setKeys={setKeys} seek={seek} onSelect={i => { setSel(keys[i].id); if (playing) pause() }}
-          below={(span, pct) => <ScreenLane clips={clips} setClips={setClips} span={span} T={T} duo={duo} defTarget={duoScreen} current={current} flash={flash} pct={pct} />} />
+          rows={multi ? devs.map(d => ({ uid: d.uid, name: d.name })) : undefined}
+          below={(span, pct) => devs.map(d => <ScreenLane key={d.uid} dev={d.uid} first={devs[0].uid} label={multi ? `Screen · ${d.name}` : 'Screen'} clips={clips} setClips={setClips} span={span} T={T} duo={d.duo} defTarget={d.duoScreen} current={d.current} flash={flash} pct={pct} />)} />
         <div className="tl-cards">
           {keys.length === 1 && <p className="hint">Move the phone or hand, add a keyframe, change the pose, then press Play.</p>}
           {keys.length === 0 && <p className="hint">Move the phone or hand, add a keyframe, change the pose, then press Play.</p>}

@@ -247,3 +247,25 @@ kbd, .om-kbd { display: inline-grid; place-items: center; min-width: 20px; heigh
 .om-chrome .tl-undo { background: var(--ink); top: -48px; font-family: var(--mono); font-size: 11px; }
 .om-chrome .tl-undo button { background: rgba(255,255,255,.14) !important; min-height: 26px; }
 .om-chrome .timeline kbd { flex: none; }
+
+/* Stage 3: several devices */
+.om-devitem { display: flex; align-items: center; gap: 4px; }
+.om-devitem > .om-devrow, .om-devitem > .om-devname { flex: 1 1 auto; min-width: 0; }
+.om-devitem.off .om-devrow { opacity: .55; }
+.om-chrome .om-devname { min-height: 44px; padding: 0 10px; font: inherit; }
+.om-chrome .om-devact { flex: none; width: 34px; min-height: 34px; padding: 0; display: grid; place-items: center; }
+.om-devtools { display: flex; flex-wrap: wrap; gap: 6px; }
+.om-chrome .om-devtools button { display: inline-flex; align-items: center; gap: 5px; text-transform: none; }
+.om-chrome .om-devtools button.danger { color: #a3342a; }
+.om-devadd { display: flex; gap: 6px; }
+.om-devadd select { flex: 1 1 auto; min-width: 0; }
+.om-chrome .om-devadd button { display: inline-flex; align-items: center; gap: 5px; text-transform: none; white-space: nowrap; }
+.om-selbox { position: absolute; left: 0; top: 0; display: none; pointer-events: none; border-radius: 18px;
+  border: 1.5px solid rgba(54,69,79,.55); box-shadow: 0 0 0 4px rgba(54,69,79,.10), 0 0 18px rgba(54,69,79,.18); transition: none; }
+.tl-drow { position: relative; height: 18px; margin-top: 3px; border-top: 1px solid var(--line, rgba(0,0,0,.08)); }
+.tl-drow.sub { margin-top: 0; border-top: 0; }
+.tl-dlab { position: absolute; left: 0; top: 2px; font: 600 10px var(--mono, monospace); color: var(--ink-muted, #666); white-space: nowrap; pointer-events: none; z-index: 1; background: var(--paper, #fff); padding-right: 6px; }
+.tl-drow.sub .tl-dlab { padding-left: 10px; font-weight: 500; }
+.tl-dtick { position: absolute; top: 7px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--line-strong, #ccc); }
+.tl-drow .tl-chg-i { position: absolute; top: 2px; transform: translateX(-50%); }
+.om-chrome .tl-open .tl-body.multi .tl-screen-h .tl-lab { display: inline; }

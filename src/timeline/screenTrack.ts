@@ -4,7 +4,7 @@
 import * as THREE from 'three'
 
 export type ScreenTarget = 'inner' | 'outer' | 'both'
-export interface ScreenClip { id: string; at: number; target: ScreenTarget; name: string; kind: 'image' | 'video'; fade: number; src?: string; thumb?: string }
+export interface ScreenClip { id: string; at: number; target: ScreenTarget; name: string; kind: 'image' | 'video'; fade: number; src?: string; thumb?: string; /** device uid; missing means the first device (old timelines) */ dev?: string }
 export interface Source { el: HTMLImageElement | HTMLCanvasElement | HTMLVideoElement; w: number; h: number; kind: 'image' | 'video' }
 
 /** In-memory media for each clip (videos only live here; images also persist as data URLs). */
@@ -16,11 +16,13 @@ export const screenLive = {
   clips: [] as ScreenClip[],
   /** bumped whenever a mixer starts or stops covering its screen, or changes shape, so App re-reads the override */
   onShape: null as null | (() => void),
+  /** device uids in scene order, set by App */
+  devs: [] as string[],
 }
 export function loadClips(): ScreenClip[] {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) || '[]'); if (!Array.isArray(v)) return []
-    for (const c of v as ScreenClip[]) if (c.src && !sources.has(c.id)) { const im = new Image(); im.onload = () => { sources.set(c.id, { el: im, w: im.naturalWidth, h: im.naturalHeight, kind: 'image' }); mixers.inner.key = mixers.outer.key = '' }; im.src = c.src }
+    for (const c of v as ScreenClip[]) if (c.src && !sources.has(c.id)) { const im = new Image(); im.onload = () => { sources.set(c.id, { el: im, w: im.naturalWidth, h: im.naturalHeight, kind: 'image' }); for (const m of allMixers()) m.key = '' }; im.src = c.src }
     return v
   } catch { return [] }
 }
@@ -81,9 +83,19 @@ class Mixer {
     this.tex.needsUpdate = true
   }
 }
-export const mixers = { inner: new Mixer(), outer: new Mixer() }
-/** Per frame (from the timeline driver): bring both mixers to the playhead. */
+type Pair = { inner: Mixer; outer: Mixer }
+const byDev = new Map<string, Pair>()
+/** The mixer pair of one device (made on first use). */
+export function mixersFor(uid: string): Pair { let p = byDev.get(uid); if (!p) { p = { inner: new Mixer(), outer: new Mixer() }; byDev.set(uid, p) } return p }
+function allMixers() { const a: Mixer[] = []; for (const p of byDev.values()) a.push(p.inner, p.outer); return a }
+/** Is this clip on device `uid`? Clips without a device belong to the first one. */
+export const clipOn = (c: ScreenClip, uid: string, first: string) => (c.dev ?? first) === uid || (!!c.dev && !screenLive.devs.includes(c.dev) && uid === first)
+/** Per frame (from the timeline driver): bring every device's mixers to the playhead. */
 export function updateScreens(t: number, playing: boolean) {
-  const c = screenLive.clips; if (!c.length) { for (const m of [mixers.inner, mixers.outer]) if (m.on) { m.on = false; m.key = ''; screenLive.onShape?.() } return }
-  mixers.inner.update('inner', c, t, playing); mixers.outer.update('outer', c, t, playing)
+  const all = screenLive.clips, first = screenLive.devs[0] ?? ''
+  for (const uid of screenLive.devs) {
+    const m = mixersFor(uid), c = all.filter(x => clipOn(x, uid, first))
+    if (!c.length) { for (const x of [m.inner, m.outer]) if (x.on) { x.on = false; x.key = ''; screenLive.onShape?.() } continue }
+    m.inner.update('inner', c, t, playing); m.outer.update('outer', c, t, playing)
+  }
 }

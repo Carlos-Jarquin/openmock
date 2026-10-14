@@ -3,17 +3,19 @@ import { useRef, useState } from 'react'
 import * as THREE from 'three'
 import { fmt, tlLive } from './tlCore'
 import { parseTime } from './Track'
-import { FADES, sortClips, sourceOf, sources, toDataUrl, type ScreenClip, type ScreenTarget, type Source } from './screenTrack'
+import { FADES, clipOn, sortClips, sourceOf, sources, toDataUrl, type ScreenClip, type ScreenTarget, type Source } from './screenTrack'
 
 const uid = () => Math.random().toString(36).slice(2, 10)
 const r2 = (t: number) => Math.round(t * 100) / 100
 const TARGETS: [ScreenTarget, string][] = [['inner', 'Inner'], ['outer', 'Outer'], ['both', 'Both']]
 
-export function ScreenLane({ clips, setClips, span, T, duo, defTarget, current, flash, pct }: {
-  clips: ScreenClip[]; setClips: (c: ScreenClip[]) => void; span: number; T: number; duo: boolean; defTarget: 'inner' | 'outer'
+export function ScreenLane({ clips: all, setClips: setAll, dev, first, label = 'Screen', span, T, duo, defTarget, current, flash, pct }: {
+  clips: ScreenClip[]; setClips: (c: ScreenClip[]) => void; dev: string; first: string; label?: string; span: number; T: number; duo: boolean; defTarget: 'inner' | 'outer'
   current: (t: 'inner' | 'outer') => { texture: THREE.Texture; kind: 'image' | 'video'; name: string } | null
   flash: (t: string, err?: boolean) => void; pct: (t: number) => string
 }) {
+  const clips = all.filter(c => clipOn(c, dev, first))
+  const setClips = (m: ScreenClip[]) => setAll(sortClips([...all.filter(c => !clipOn(c, dev, first)), ...m]))
   const lane = useRef<HTMLDivElement>(null), file = useRef<HTMLInputElement>(null)
   const [sel, setSel] = useState<string | null>(null)
   const [target, setTarget] = useState<ScreenTarget | null>(null)
@@ -26,7 +28,7 @@ export function ScreenLane({ clips, setClips, span, T, duo, defTarget, current, 
   const addSource = (s: Source, name: string) => {
     const id = uid()
     sources.set(id, s)
-    const c: ScreenClip = { id, at: at(), target: tgt, name, kind: s.kind, fade: 0, thumb: toDataUrl(s, 64), ...(s.kind === 'image' ? { src: toDataUrl(s, 1320) } : {}) }
+    const c: ScreenClip = { id, at: at(), target: tgt, name, kind: s.kind, fade: 0, dev, thumb: toDataUrl(s, 64), ...(s.kind === 'image' ? { src: toDataUrl(s, 1320) } : {}) }
     setClips(sortClips([...clips, c])); setSel(id)
     flash(`Screen clip added at ${fmt(c.at)}.`)
   }
@@ -57,7 +59,7 @@ export function ScreenLane({ clips, setClips, span, T, duo, defTarget, current, 
 
   return (<>
     <div className="tl-screen-h">
-      <span className="tl-lab">Screen</span>
+      <span className="tl-lab">{label}</span>
       <button onClick={addCurrent} title="Add the media on the screen now, starting at the playhead"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M8 3v10M3 8h10" /></svg> Current screen</button>
       <button onClick={() => file.current?.click()} title="Pick an image or video to show from the playhead">Add file</button>
       <input ref={file} type="file" accept="image/*,video/*,.svg" hidden onChange={e => { const f = e.target.files?.[0]; if (f) addFile(f); e.target.value = '' }} />
