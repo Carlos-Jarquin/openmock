@@ -121,7 +121,7 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
       <div className="tl-lane" onPointerDown={e => begin(e, 'head', 0)}>
         {T > 0 && <div className="tl-out" style={{ left: pct(T) }} />}
         {keys.slice(1).map((x, j) => { const i = j + 1; return (
-          <div key={x.id} className={`tl-seg ${keys[i].id === sel || keys[i - 1].id === sel ? 'sel' : ''}`} style={{ left: pct(st[i - 1]), width: pct(x.dur) }}
+          <div key={x.id} className={`tl-seg ${keys[i].id === sel || keys[i - 1].id === sel ? 'sel' : ''}`} style={{ left: pct(st[i - 1]), width: `${x.dur / span * 100}%` }}
             onPointerDown={e => { e.stopPropagation(); onSelect(i) }} onDoubleClick={e => { e.stopPropagation(); setDrag(null); setTip(null); setEdit({ kind: 'seg', i, text: String(r2(x.dur)), err: '' }) }}
             title={`Keyframe ${i} to ${i + 1}: ${x.dur.toFixed(2)} s. Double-click to type a length.`}>
             <span>{+x.dur.toFixed(2)} s</span>

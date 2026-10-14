@@ -67,7 +67,7 @@ export function ScreenLane({ clips, setClips, span, T, duo, defTarget, current, 
     <div className="tl-lane tl-screen" ref={lane}>
       {clips.map((c, i) => { const end = Math.max(c.at + 0.05, clips.slice(i + 1).find(d => d.target === c.target || d.target === 'both' || c.target === 'both')?.at ?? Math.max(T, c.at + 0.5)); const miss = !sources.has(c.id)
         return (
-        <div key={c.id} className={`tl-clip ${c.id === sel ? 'sel' : ''} ${miss ? 'miss' : ''}`} style={{ left: pct(c.at), width: pct(end - c.at) }}
+        <div key={c.id} className={`tl-clip ${c.id === sel ? 'sel' : ''} ${miss ? 'miss' : ''}`} style={{ left: pct(c.at), width: `${(end - c.at) / span * 100}%` }}
           title={`${c.name} from ${fmt(c.at)}${duo ? `, ${c.target} screen` : ''}${c.fade ? `, fades in over ${c.fade} s` : ''}${miss ? '. The video needs adding again after a reload.' : ''}. Drag to retime, double-click to type a time.`}
           onPointerDown={e => { e.stopPropagation(); setSel(c.id); const r = lane.current!.getBoundingClientRect(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); setDrag({ id: c.id, x0: e.clientX, at0: c.at, px: r.width }) }}
           onPointerMove={e => { const d = drag; if (!d || d.id !== c.id) return; const t = Math.max(0, Math.min(T, Math.round((d.at0 + (e.clientX - d.x0) / d.px * span) * 10) / 10)); if (t !== c.at) upd(c.id, { at: t }); setTip({ at: t }) }}
