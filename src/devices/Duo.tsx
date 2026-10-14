@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { mergeVertices, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { DeviceProps } from '../types'
 import { DEFAULT_LOGO_TINT } from './shared'
 import { RearLens, Pressable } from './IPhonePro'
@@ -481,14 +481,23 @@ function spineGeo(phi: number) {
   const sh = new THREE.Shape(outer.map(([x, z]) => new THREE.Vector2(x, -z)).concat(inner.reverse().map(([x, z]) => new THREE.Vector2(x, -z))))
   // ends: flush with the frame's top and bottom faces (y = +-(H/2 + EO)) and rounded exactly like the rails' end caps
   // (1.2 mm bevel), so rails and spine end together as one closed rounded corner
-  const L = H + 2 * EO - 0.0002, b = 0.0012   // 0.1 mm under the rails' top plane: no z-fighting on the top face
+  const L = H + 2 * EO - 0.0006, b = 0.0012   // 0.3 mm under the frame top (rails sit 0.2 mm under): never shows on the top face
   const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: BS, bevelSegments: 4, curveSegments: 4 })
-  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return smooth(g)
+  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return smoothFast(g)
+}
+/** Cheap welded normals for the per-angle spine (built while the fold animates, so it must stay fast). */
+function smoothFast(g: THREE.BufferGeometry) {
+  g.deleteAttribute('normal'); g.deleteAttribute('uv')
+  const m = mergeVertices(g, 1e-6); m.computeVertexNormals(); g.dispose(); return m
 }
 /** Extrusions come with faceted normals; weld and recompute so rounded parts shade smoothly like the frame. */
 function smooth(g: THREE.BufferGeometry) {
-  g.deleteAttribute('normal'); g.deleteAttribute('uv')
-  const m = mergeVertices(g, 1e-6); m.computeVertexNormals(); g.dispose(); return m
+  // smooth across soft angles only (creases over 15 degrees stay sharp), so flat end faces keep flat normals
+  g.deleteAttribute('uv'); const m = toCreasedNormals(g, THREE.MathUtils.degToRad(15)); g.dispose()
+  // end caps: snap near-vertical normals so the flat top and bottom faces shade exactly like the body's top face
+  const n = m.attributes.normal
+  for (let i = 0; i < n.count; i++) if (Math.abs(n.getY(i)) > 0.9) n.setXYZ(i, 0, Math.sign(n.getY(i)), 0)
+  return m
 }
 /** Hinge-side rails: RB back-corner radius, k slab inset, c how far the closed spine panel is pulled in from each back. */
 const RAIL = { RB: 0.014, k: 0.015, c: 0.0225 }   // c puts the panel's edge into the crease where each rail's arc ends
@@ -499,13 +508,14 @@ function railGeo(side: number) {
   const { RB, k } = RAIL, bv = 0.0012, xo = -EO + bv, rb = RB - bv   // the extrude bevel grows the profile by bv
   // the arc rolls back only to XF (just behind the closed spine panel's face), so no groove opens between rail and panel
   const XF = -0.0011 + bv, xc = xo + rb, zc = -T / 2 + bv + rb, th = Math.acos(Math.min(1, (xc - XF) / rb))
-  // the rail ends where the slab's hinge edge begins (x = k), so their top faces meet in one seam
-  const kIn = k + 0.0002 - bv
-  const pts: [number, number][] = [[kIn, -T / 2 + bv]]
+  // the rail runs 2 mm on under the slab (its faces there 0.05 mm inside the slab's), so its inner end is buried and its
+  // flat top (0.02 mm under the slab's) bridges the slab's bevelled hinge edge: one continuous top face, no wedge seam
+  const kIn = k, kE = k + 0.02, zi = 0.0005
+  const pts: [number, number][] = [[kE, -T / 2 + bv + zi], [kIn + zi, -T / 2 + bv + zi], [kIn, -T / 2 + bv]]
   for (let i = 0; i <= 32; i++) { const al = -Math.PI / 2 - (Math.PI / 2 + th) * i / 32; pts.push([xc + rb * Math.cos(al), zc + rb * Math.sin(al)]) }
-  pts.push([XF, T / 2 - bv - 0.0005], [XF + 0.0007, T / 2 - bv], [kIn, T / 2 - bv])
+  pts.push([XF, T / 2 - bv - 0.0005], [XF + 0.0007, T / 2 - bv], [kIn, T / 2 - bv], [kIn + zi, T / 2 - bv - zi], [kE, T / 2 - bv - zi])
   const sh = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(side * x, -z)))
-  const L = H + 2 * EO
+  const L = H + 2 * EO - 0.0004
   const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * bv, bevelEnabled: true, bevelThickness: bv, bevelSize: bv, bevelSegments: 4, curveSegments: 4 })
   g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * bv) / 2, 0); return smooth(g)
 }
