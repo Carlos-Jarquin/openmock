@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { DeviceProps } from '../types'
 import { DEFAULT_LOGO_TINT } from './shared'
+import { RearLens } from './IPhonePro'
 // iPhone Duo: unofficial procedural model. Overall size and screen sizes from Apple's published specs;
 // details (bezels, island, buttons, camera) are estimates from Apple's product imagery.
 // Scale: 1 unit = 100 mm. Open 164.6 x 117.8 x 5.2 mm, closed 84.1 x 117.8 x 11.3 mm.
@@ -44,6 +45,8 @@ function slab(shape: THREE.Shape, depth: number, bevel: number) {
   const g = new THREE.ExtrudeGeometry(shape, { depth: depth - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel * 0.8, bevelSegments: 3, curveSegments: 24 })
   g.translate(0, 0, -(depth - bevel * 2) / 2); return g
 }
+/** The body's outer edge sits this far outside its outline (the slab bevel grows outward); edge parts sit on it. */
+const EO = 0.006 * 0.8
 const pill = (w: number, h: number) => { const r = Math.min(w, h) / 2; return rrect(w, h, [r, r, r, r]) }
 const E = 0.0004 // z separation between stacked flat layers
 
@@ -51,6 +54,35 @@ function Overlay({ geo, z, color = '#000', order = 2 }: { geo: THREE.BufferGeome
   return <mesh geometry={geo} position={[0, 0, z]} renderOrder={order} userData={{ sketchTone: 'black' }}>
     <meshBasicMaterial color={color} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
   </mesh>
+}
+
+/** Antenna bands (after Carlos's iPhone Duo reference): light, matte resin bands crossing the frame. Positions in model
+ *  units (1 = 100 mm) as distance from the hinge for the top and bottom edges (the same on both halves, so they line up
+ *  when closed), and as y on the free short edges. Band width 1.5 mm. */
+const BANDS = { top: [0.165, 0.703], bottom: [0.295, 0.565], side: [H / 2 - 0.123, -H / 2 + 0.13], w: 0.015 }
+function bandMaterial(colour: THREE.Color) {
+  const m = new THREE.MeshPhysicalMaterial({ color: colour, metalness: 0.05, roughness: 0.6, clearcoat: 0.25, clearcoatRoughness: 0.4,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1, depthFunc: THREE.LessEqualDepth })
+  const hw = (BANDS.w / 2).toFixed(4), f = (v: number) => v.toFixed(4)
+  m.onBeforeCompile = sh => {
+    sh.vertexShader = 'varying vec3 vObj;\nvarying vec3 vNo;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvObj = position; vNo = objectNormal;')
+    sh.fragmentShader = 'varying vec3 vObj;\nvarying vec3 vNo;\n' + sh.fragmentShader.replace('void main() {', `void main() {
+  float ax = abs(vObj.x), on = 0.0;
+  if (vObj.y > ${f(H / 2 - 0.2)}) on += step(abs(ax - ${f(BANDS.top[0])}), ${hw}) + step(abs(ax - ${f(BANDS.top[1])}), ${hw});
+  if (vObj.y < ${f(-H / 2 + 0.2)}) on += step(abs(ax - ${f(BANDS.bottom[0])}), ${hw}) + step(abs(ax - ${f(BANDS.bottom[1])}), ${hw});
+  if (ax > ${f(W - 0.2)}) on += step(abs(vObj.y - ${f(BANDS.side[0])}), ${hw}) + step(abs(vObj.y - ${f(BANDS.side[1])}), ${hw});
+  if (on < 0.5 || abs(normalize(vNo).z) > 0.93) discard;`)
+  }
+  m.customProgramCacheKey = () => 'duo-band'
+  return m
+}
+/** Pill (stadium) face of length len and height h, extruded d out of the surface along +z with a soft edge. */
+const pillCache = new Map<string, THREE.BufferGeometry>()
+function pillGeo(len: number, h: number, d: number) {
+  const k = `${len}|${h}|${d}`, hit = pillCache.get(k); if (hit) return hit
+  const b = Math.min(d * 0.45, h * 0.2)
+  const g = new THREE.ExtrudeGeometry(pill(len - 2 * b, h - 2 * b), { depth: d - b, bevelEnabled: true, bevelThickness: b, bevelSize: b, bevelSegments: 4, curveSegments: 20 })
+  g.translate(0, 0, b); pillCache.set(k, g); return g
 }
 
 function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: DeviceProps) {
@@ -74,6 +106,9 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
   }, [])
   useEffect(() => () => Object.values(g).forEach(x => x.dispose()), [g])
   const frameMat = <meshPhysicalMaterial color={f.frame} metalness={0.9} roughness={0.28} clearcoat={0.3} />
+  // antenna band resin: the frame colour pulled to a light neutral, as in the reference
+  const bandMat = useMemo(() => bandMaterial(new THREE.Color(f.frame).lerp(new THREE.Color('#eceef0'), 0.7)), [f.frame])
+  useEffect(() => () => bandMat.dispose(), [bandMat])
   const glassBack = <meshPhysicalMaterial color={f.back} metalness={0.1} roughness={0.55} clearcoat={0.6} clearcoatRoughness={0.4} />
   // The fold is applied every frame from refs (no React state per frame): the hinge angle, the self-centring shift,
   // the spine and the three screen materials all read one eased timeline while a transition runs (foldLive.anim),
@@ -195,18 +230,15 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       <mesh position={[0, 0, -T / 2 - E]} rotation={[0, Math.PI, 0]}>
         <shapeGeometry args={[rrC(W - 0.0025, H - 0.004, [CR - 0.004, 0.0003, 0.0003, CR - 0.004], -(W - 0.0015) / 2), 24]} />{glassBack}
       </mesh>
-      {/* camera plateau: horizontal rounded block near the top free corner, two lenses side by side + flash.
-          About 38 x 23.6 mm, 4 mm from the top and free edge (seen from the back, lenses sit next to the free edge). */}
-      <group position={[W - 0.23, H / 2 - 0.158, -T / 2]}>
-        <mesh rotation={[Math.PI, 0, 0]}><extrudeGeometry args={[rrC(0.38, 0.236, [0.1, 0.1, 0.1, 0.1]), { depth: 0.01, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.004, bevelSegments: 4, curveSegments: 32 }]} />{glassBack}</mesh>
-        {[0.075, -0.06].map(x => (
-          <group key={x} position={[x, 0, -0.012]}>
-            <mesh rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.0625, 0.066, 0.01, 48]} />{frameMat}</mesh>
-            <mesh position={[0, 0, -0.0052]} rotation={[Math.PI, 0, 0]}><circleGeometry args={[0.052, 48]} /><meshPhysicalMaterial color="#07080b" roughness={0.05} clearcoat={1} /></mesh>
-            <mesh position={[0, 0, -0.0054]} rotation={[Math.PI, 0, 0]}><ringGeometry args={[0.022, 0.032, 48]} /><meshPhysicalMaterial color="#1a2340" metalness={0.6} roughness={0.1} /></mesh>
-          </group>))}
-        <mesh position={[-0.145, 0.03, -0.0142]} rotation={[Math.PI, 0, 0]}><circleGeometry args={[0.0175, 24]} /><meshStandardMaterial color="#f1e7cf" roughness={0.3} /></mesh>
-        <mesh position={[-0.145, -0.04, -0.0142]} rotation={[Math.PI, 0, 0]}><circleGeometry args={[0.006, 16]} /><meshBasicMaterial color="#111" /></mesh>
+      {/* camera plateau (after Carlos's iPhone Duo reference): a pill-shaped raised plateau in the back finish, about
+          59 x 26 mm, 1.8 mm in from the top and free edges, holding two large lenses side by side (the iPhone 18 Pro lens
+          build, 17 mm) next to the free edge, and a small flash/sensor slot at its inner end. */}
+      <group position={[W - 0.313, H / 2 - 0.148, -T / 2]}>
+        <mesh rotation={[Math.PI, 0, 0]} castShadow><extrudeGeometry args={[pill(0.59, 0.26), { depth: 0.008, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.006, bevelSegments: 6, curveSegments: 48 }]} />{glassBack}</mesh>
+        {[0.18, -0.009].map(x => (
+          <group key={x} position={[x, 0.006, -0.0139]}><RearLens d={0.17} rise={0.0211} frame={f.frame} /></group>))}
+        <mesh position={[-0.182, 0.074, -0.0141]} rotation={[Math.PI, 0, 0]}><shapeGeometry args={[pill(0.035, 0.014), 12]} />
+          <meshPhysicalMaterial color="#1a1b1f" roughness={0.25} clearcoat={1} /></mesh>
       </group>
       {/* logo spot: centre of the right half's back; user-supplied art only */}
       {logo && (
@@ -215,19 +247,25 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
           <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : f.back} metalness={0.55} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.6}
             alphaMap={logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
         </mesh>)}
-      {/* volume up/down on the top edge, 36.6 to 47.4 mm and 50.2 to 61 mm from the hinge */}
-      {[0.42, 0.556].map(x => (
-        <mesh key={x} position={[x, H / 2 + 0.0015, 0]}><boxGeometry args={[0.108, 0.006, T * 0.42]} />{frameMat}</mesh>))}
-      {/* side button with Touch ID on the free edge, 33.7 to 52 mm from the top */}
-      <mesh position={[W + 0.0018, H / 2 - 0.4285, 0]}><boxGeometry args={[0.0065, 0.183, T * 0.46]} />
-        <meshPhysicalMaterial color={f.frame} metalness={0.6} roughness={0.15} clearcoat={1} /></mesh>
-      {/* Camera Control, flush sapphire on the free edge, centred about 72 mm from the top */}
-      <mesh position={[W + 0.0012, H / 2 - 0.72, 0]}><boxGeometry args={[0.004, 0.14, T * 0.4]} />
-        <meshPhysicalMaterial color="#9aa0aa" metalness={0.2} roughness={0.05} clearcoat={1} /></mesh>
+      {/* volume up/down on the top edge (reference): raised pills, 38.9 to 49.9 mm and 53.4 to 64.8 mm from the hinge */}
+      {[[0.444, 0.11], [0.591, 0.114]].map(([x, len]) => (
+        <mesh key={x} position={[x, H / 2 + EO - 0.0005, 0]} rotation={[-Math.PI / 2, 0, 0]} geometry={pillGeo(len, T * 0.44, 0.0045)} castShadow>{frameMat}</mesh>))}
+      {/* free edge (reference): two dark pill buttons, the side button 31.8 to 50.6 mm and Camera Control 77 to 95.2 mm
+          from the top, each in a thin frame-coloured surround */}
+      {[[H / 2 - 0.412, 0.188], [H / 2 - 0.861, 0.182]].map(([y, len]) => (
+        <group key={y} position={[W + EO - 0.0005, y, 0]} rotation={[0, Math.PI / 2, 0]}>
+          <mesh rotation={[0, 0, Math.PI / 2]} geometry={pillGeo(len + 0.012, T * 0.5, 0.002)}>{frameMat}</mesh>
+          <mesh rotation={[0, 0, Math.PI / 2]} geometry={pillGeo(len, T * 0.38, 0.0032)}><meshPhysicalMaterial color="#0c0d10" metalness={0.2} roughness={0.12} clearcoat={1} /></mesh>
+        </group>))}
+      {/* antenna bands on both halves (see BANDS) */}
+      <mesh geometry={g.rightBody} material={bandMat} renderOrder={1} />
       {/* bottom edge speaker grilles, 16 to 23 mm and 60 to 68 mm from the hinge */}
       {[0.16, 0.60].flatMap(x0 => [0, 1, 2, 3].map(i => (
-        <mesh key={`${x0}${i}`} position={[x0 + 0.01 + i * 0.022, -H / 2 - 0.0005, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <mesh key={`${x0}${i}`} position={[x0 + 0.01 + i * 0.022, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}>
           <circleGeometry args={[0.0065, 12]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>)))}
+      {/* bottom edge mic holes (reference), 35 and 51 mm from the hinge, on both halves */}
+      {[0.354, 0.51].map(x => (
+        <mesh key={x} position={[x, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}><circleGeometry args={[0.0055, 16]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
       {/* hinge spine (after Carlos's reference and Apple's imagery): a thin, flat, polished titanium strip the full height
           of the hinge edge with rounded ends and two break lines. It sits on the bisector of the two halves and spans
           the chord between their back corners, so it is always joined to both: flush with both frames when closed,
@@ -241,12 +279,15 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
         <group position={[0, 0, -T / 2 - GAP]}>
           <mesh geometry={g.leftBody} castShadow>{frameMat}</mesh>
           <HingeFill x={-HR / 2}>{frameMat}</HingeFill>
+          <mesh geometry={g.leftBody} material={bandMat} renderOrder={1} />
+          {[-0.354, -0.51].map(x => (
+            <mesh key={x} position={[x, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}><circleGeometry args={[0.0055, 16]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
           {/* USB-C on the bottom edge, about 43 mm from the hinge */}
-          <mesh position={[-0.43, -H / 2 - 0.0005, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh position={[-0.43, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}>
             <shapeGeometry args={[USB_SHAPE]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>
           {/* top edge speaker grille, 36 to 51 mm from the hinge */}
           {[0, 1, 2, 3, 4, 5].map(i => (
-            <mesh key={i} position={[-0.365 - i * 0.028, H / 2 + 0.0005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <mesh key={i} position={[-0.365 - i * 0.028, H / 2 + EO + 0.0003, 0]} rotation={[-Math.PI / 2, 0, 0]}>
               <circleGeometry args={[0.007, 12]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
           <mesh geometry={g.bezelL} position={[0, 0, zf]}><meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
           <mesh name="screen" geometry={g.scrL} position={[0, 0, zf + E]}><primitive object={mats.moving} attach="material" /></mesh>

@@ -315,7 +315,7 @@ function LensStack({ r, order = 0 }: { r: number; order?: number }) {
 /** Rear camera, built in true 3D on the plateau (local +y = out of the back, 0 = plateau surface).
  * Polished ring with chamfered lips, a dark recessed barrel, three glass elements at different depths with AR
  * coatings, an iris ring and a domed sapphire cover. All sizes not on the drawing are estimates. */
-function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }) {
+export function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }) {
   // Ring: outer edge at the drawn 16.58 diameter; width 1.25 mm, measured from Apple's hero photo along the unforeshortened axis (ring/diameter ~0.075).
   const R = d / 2, w = mm(1.25), ri = R - w, c = mm(0.32), floor = mm(0.12)
   // Sketch style: outer edge, inner lip and the front element as circles, in this group's local space (y is up).
