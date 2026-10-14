@@ -6,9 +6,9 @@ import * as THREE from 'three'
 
 export type NailShape = 'round' | 'square' | 'oval' | 'almond' | 'stiletto' | 'coffin'
 export const NAIL_SHAPES: [NailShape, string][] = [['round', 'Round'], ['square', 'Square'], ['oval', 'Oval'], ['almond', 'Almond'], ['stiletto', 'Stiletto'], ['coffin', 'Coffin']]
-/** How each device's hand looks: size (0.85 to 1.15), nail length (0 = short and flush, 1 = long), shape and colour (null = natural). */
-export interface HandLook { size: number; nailLen: number; nailShape: NailShape; nailColor: string | null }
-export const HAND_LOOK0: HandLook = { size: 1, nailLen: 0, nailShape: 'round', nailColor: null }
+/** How each device's hand looks: size (0.5 to 1.15), build (girth: 0.75 slender to 1.3 robust, length unchanged), nail length (0 = short and flush, 1 = long), shape and colour (null = natural). */
+export interface HandLook { size: number; build: number; nailLen: number; nailShape: NailShape; nailColor: string | null }
+export const HAND_LOOK0: HandLook = { size: 1, build: 1, nailLen: 0, nailShape: 'round', nailColor: null }
 export const NAIL_SWATCHES = ['#f2d4cf', '#c8102e', '#7a1f3d', '#1d1d22', '#e9c7a8', '#d7b8f0']
 
 /** Half-width (0 to 1) of the nail's free part at t (0 where the shaping starts, 1 at the very tip). */

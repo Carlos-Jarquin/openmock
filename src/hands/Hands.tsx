@@ -71,7 +71,7 @@ const mt = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip &
 const mirror = (p: HandPlan): HandPlan => ({ ...p, side: p.side === 'right' ? 'left' : 'right', knuckle: mx(p.knuckle), F: mx(p.F), N: mx(p.N), fingers: p.fingers.map(mt), thumb: mt(p.thumb) })
 
 /** Poses in device space: x right and y up seen from the front, z out of the screen. Sizes scale with the device. */
-function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail = 0, flat = nail): HandPlan[] {
+function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail = 0, flat = nail, size = 1): HandPlan[] {
   // Dev only: a test harness can override the plan to tune poses.
   const dbg = import.meta.env.DEV ? (globalThis as { __handPlan?: (f: HandFit, v: typeof v3) => HandPlan[] | undefined }).__handPlan?.(f, v3) : undefined
   if (dbg) return dbg
@@ -113,7 +113,8 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     const approach = (hx: number, hy: number, len: number, e0: number, fx: number, fy: number, d0: number) => {
       const e = deg(Math.max(10, e0 - 28 * flat)), d = deg(Math.max(3, d0 - 24 * flat)), hl = Math.hypot(hx, hy), fl = Math.hypot(fx, fy)
       return { off: v3(hx / hl * Math.cos(e) * len, hy / hl * Math.cos(e) * len, Math.sin(e) * len), F: v3(fx / fl * Math.cos(d), fy / fl * Math.cos(d), -Math.sin(d)) } }
-    const ap = approach(0.35, -0.55, 0.9596, 46.85, -0.3, 0.72, 35.2), apZ = approach(0.3, -0.75, 0.9772, 34.25, -0.35, 0.7, 35.1)
+    // the knuckle's reach back from the point scales with the hand
+    const ap = approach(0.35, -0.55, 0.9596 * size, 46.85, -0.3, 0.72, 35.2), apZ = approach(0.3, -0.75, 0.9772 * size, 34.25, -0.35, 0.7, 35.1)
     const pointer = (t: THREE.Vector3): HandPlan => ({ side: 'right', knuckle: t.clone().add(ap.off), F: ap.F, N: v3(0.15, 0.5, -1), follow: true,
       fingers: [{ curl: [0, 18, 22, 12], tip: t, touch: true }, ...fist], thumb: { oppose: -20, abduct: -10, curl: [10, 30, 30] } })
     const tw = import.meta.env.DEV ? (globalThis as { __gestTweak?: (p: HandPlan[], v: typeof v3) => HandPlan[] }).__gestTweak : undefined
@@ -324,6 +325,32 @@ function makeRig(src: THREE.Object3D): Rig {
     owner.push(m.skeleton.bones[bi].name)
   }
   return { root, mesh: m, bones, rest, owner }
+}
+
+/** Hand build: scales the skin's girth about each bone's own segment (fingers, thumb and the palm round its
+ *  metacarpals) without moving any joint, so lengths, the rig and the solver's frames are unchanged. Rebuilds the mesh's
+ *  geometry from the asset's original positions, so caches keyed on the geometry (Spectral lines, edges) start fresh. */
+const NEXT: Record<string, string> = { wrist: 'middle-finger-phalanx-proximal', 'thumb-metacarpal': 'thumb-phalanx-proximal', 'thumb-phalanx-proximal': 'thumb-phalanx-distal', 'thumb-phalanx-distal': 'thumb-tip' }
+for (const f of FINGERS) for (let i = 0; i < 4; i++) NEXT[`${f}-${JOINTS[i]}`] = `${f}-${JOINTS[i + 1]}`
+function applyBuild(rig: Rig, build: number) {
+  const m = rig.mesh, base = (m.userData.baseGeo ??= m.geometry) as THREE.BufferGeometry
+  if ((m.userData.build ?? 1) === build && m.geometry !== base || build === 1 && m.geometry === base) return
+  const geo = build === 1 ? base : base.clone()
+  if (build !== 1) {
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute, bones = m.skeleton.bones
+    const J = (n: string) => { const k = bones.findIndex(b => b.name === n); return new THREE.Vector3().setFromMatrixPosition(m.skeleton.boneInverses[k].clone().invert()) }
+    const seg: Record<string, [THREE.Vector3, THREE.Vector3]> = {}
+    for (const n of Object.keys(NEXT)) if (rig.bones[n] && rig.bones[NEXT[n]]) seg[n] = [J(n), J(NEXT[n])]
+    for (const f of [...FINGERS, 'thumb']) seg[`${f}-tip`] = seg[`${f}-phalanx-distal`]
+    const inv = m.bindMatrix.clone().invert(), v = new THREE.Vector3(), c = new THREE.Vector3(), ab = new THREE.Vector3()
+    for (let i = 0; i < pos.count; i++) { const s = seg[rig.owner[i]]; if (!s) continue
+      v.fromBufferAttribute(pos, i).applyMatrix4(m.bindMatrix)
+      ab.subVectors(s[1], s[0]); const t = Math.max(0, Math.min(1, v.clone().sub(s[0]).dot(ab) / Math.max(1e-9, ab.lengthSq())))
+      c.copy(s[0]).addScaledVector(ab, t); v.sub(c).multiplyScalar(build).add(c).applyMatrix4(inv); pos.setXYZ(i, v.x, v.y, v.z) }
+    pos.needsUpdate = true; geo.computeBoundingSphere()   // keep the asset normals: a radial scale barely turns them, and a recompute split the UV seams into hard creases
+  }
+  if (m.geometry !== base) m.geometry.dispose()
+  m.geometry = geo; m.userData.build = build
 }
 
 const _m = new THREE.Matrix4(), _t = new THREE.Matrix4(), _r = new THREE.Matrix4(), _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3()
@@ -635,7 +662,9 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   // Only the gesture fields the pose uses, so moving a marker re-solves just the touching hand.
   const ges = isGesture(pose) ? gesture : undefined
   // Nails: measured on each hand at rest (before any solve), rebuilt when length or shape change, riding on the distal bones
-  const spots = useMemo(() => ({ right: measureNails(rigs.right, 'right'), left: measureNails(rigs.left, 'left') }), [rigs])
+  const build = Math.max(0.75, Math.min(1.3, look.build ?? 1))
+  const spots = useMemo(() => { applyBuild(rigs.right, build); applyBuild(rigs.left, build)
+    return { right: measureNails(rigs.right, 'right'), left: measureNails(rigs.left, 'left') } }, [rigs, build])
   const nailMat = useMemo(() => spm ? spm.body : nailMaterial(SKIN_TONES[tone]?.color ?? SKIN_TONES.fair.color, look.nailColor ?? (tone === 'silhouette' ? SKIN_TONES.silhouette?.color ?? null : null)), [spm, tone, look.nailColor])
   useEffect(() => () => { if (!spm) nailMat.dispose() }, [nailMat, spm])
   const nails = useMemo(() => {
@@ -661,11 +690,11 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = m.receiveShadow = true; m.userData.hand = true } }, [arms, mat])
   useEffect(() => {
     const g = group.current; if (!g) return
-    const mk = (flat: number) => plans(pose, fit, ges, look.nailLen, flat).map(pl => rotatePlan(pl, rot))
+    const mk = (flat: number) => plans(pose, fit, ges, look.nailLen, flat, look.size).map(pl => rotatePlan(pl, rot))
     const list = mk(look.nailLen)
     const used = new Set<THREE.Object3D>()
     for (let li = 0; li < list.length; li++) { let pl = list[li]
-      const r = rigs[pl.side], key = JSON.stringify([pl, fit, look.size, look.nailLen, look.nailShape])
+      const r = rigs[pl.side], key = JSON.stringify([pl, fit, look.size, look.nailLen, look.nailShape, build])
       if (solved.current[pl.side] !== key || r.root.parent !== g) {
         // spring from the pose on screen to the new solve, unless the hand is just appearing
         const m = motion[pl.side], animate = r.root.parent === g
@@ -679,7 +708,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
         for (let k = 1, flat = look.nailLen; look.nailLen > 0 && k <= 4 && (r.root.userData.nailClear ?? 1) < 0.01; k++) {
           flat += 0.3; pl = { ...mk(flat)[li], thumbFace: 0.08 * k }; solve(r, pl, fit, look.size, look.nailLen); const sc = score(); if (sc < best.s) best = { s: sc, pl } }
         if (best.pl !== pl) { pl = best.pl; solve(r, pl, fit, look.size, look.nailLen) }
-        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); g.add(arms[pl.side])
+        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); arms[pl.side].scale.set(build, 1, build); g.add(arms[pl.side])
         const touching = new Set<string>([...(pl.thumb.touch ? ['thumb'] : []), ...pl.fingers.flatMap((f, i) => f.touch ? [FINGERS[i]] : [])])
         m.capture(r.root, r.bones, r.rest, touching, arms[pl.side], animate)
       }

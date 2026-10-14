@@ -852,7 +852,7 @@ export default function App() {
       <label className="check"><input type="checkbox" checked={foldFollow} onChange={e => setFoldFollow(e.target.checked)} /> Camera follows the fold</label>
       <p className="hint">Switching screens swings the hinge in 0.9 s at 1×. Each screen frosts and darkens as it leaves its rest and is clear as the hinge settles. Untick Dissolve while folding for a sharp still at any angle.</p>
     </> }] : []),
-    { id: 'hand', side: 'device', title: 'Hand', icon: 'hand', settings: ['Hand size', 'Nail length', 'Nail shape', 'Nail colour', ...NAIL_SHAPES.map(([, l]) => `${l} nails`), 'Grip', 'Gesture', ...HAND_POSES.map(([, l]) => l), 'Touch target', 'Show marker', 'Skin tone', ...tones.map(([, t]) => t.label), 'Tint', 'Transparency', 'Glimmer', 'Rotation', 'Tilt', 'Spin', 'Roll', 'Idle motion', 'Reset hand', 'Hand size', 'Nail length', 'Nail shape'], render: () => handOk ? <>
+    { id: 'hand', side: 'device', title: 'Hand', icon: 'hand', settings: ['Hand size', 'Build', 'Slender', 'Robust', 'Hand thickness', 'Nail length', 'Nail shape', 'Nail colour', ...NAIL_SHAPES.map(([, l]) => `${l} nails`), 'Grip', 'Gesture', ...HAND_POSES.map(([, l]) => l), 'Touch target', 'Show marker', 'Skin tone', ...tones.map(([, t]) => t.label), 'Tint', 'Transparency', 'Glimmer', 'Rotation', 'Tilt', 'Spin', 'Roll', 'Idle motion', 'Reset hand', 'Hand size', 'Nail length', 'Nail shape'], render: () => handOk ? <>
       {!poseOk(fitNow, hands.pose) && <p className="hint warn">{HAND_POSES.find(([k]) => k === hands.pose)?.[1]} does not suit this device, so the hand is hidden. Pick another grip or gesture.</p>}
       <div className="om-sub"><h3>Grip</h3>
         <div className="seg wrap">{poses.filter(([k]) => !isGesture(k)).map(([k, l]) => <button key={k} className={hands.pose === k ? 'on' : ''} aria-pressed={hands.pose === k} onClick={() => setHands({ ...hands, pose: k })}>{l}</button>)}</div></div>
@@ -888,7 +888,9 @@ export default function App() {
         <button className="ghost" onClick={() => setHandRot(HAND_ROT0)}>Reset hand</button>
       </>}
       <div className="om-sub"><h3>Appearance</h3>
-        {slider('Hand size', Math.round(look.size * 100), 85, 115, 1, n => setLook(o => ({ ...o, size: n / 100 })), '%')}
+        {slider('Hand size', Math.round(look.size * 100), 50, 115, 1, n => setLook(o => ({ ...o, size: n / 100 })), '%')}
+        {(() => { const bw = look.build ?? 1, word = bw < 0.88 ? 'Slender' : bw > 1.12 ? 'Robust' : 'Average'
+          return <label className="row" title="Finger and palm thickness. Length stays the same."><span>Build</span><input type="range" min={75} max={130} step={1} value={Math.round(bw * 100)} aria-valuetext={word} onChange={e => setLook(o => ({ ...o, build: +e.target.value / 100 }))} /><output>{word}</output></label> })()}
         <label className="row"><span>Nail length</span><input type="range" min={0} max={100} step={1} value={Math.round(look.nailLen * 100)} aria-valuetext={nailWord(look.nailLen)} onChange={e => setLook(o => ({ ...o, nailLen: +e.target.value / 100 }))} /><output>{nailWord(look.nailLen)}</output></label>
         <div className="seg wrap" role="group" aria-label="Nail shape">{NAIL_SHAPES.map(([k, l]) => <button key={k} className={look.nailShape === k ? 'on' : ''} aria-pressed={look.nailShape === k} onClick={() => setLook(o => ({ ...o, nailShape: k }))}>{l}</button>)}</div>
         <div className="row om-nailcol"><span>Nail colour</span>
