@@ -242,6 +242,9 @@ function setBone(rig: Rig, name: string, M: THREE.Matrix4) {
   _m.compose(r.p, r.q, _s.set(1, 1, 1)).premultiply(M).decompose(b.position, b.quaternion, _s)
 }
 
+// Thumb pad: which side of the distal phalanx is the pad (+1 or -1 along curl axis x bone), how far it should face into
+// the glass (1 = straight down, 0.85 leans back so the nail shows from above and behind), and how hard to ask.
+const PAD_SIGN = 1, PAD_FACE = 0.85, PAD_W = 2e-2
 function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
   const R = rig.rest, P = (n: string) => R[n].p
   const h = plan.side === 'right' ? 1 : -1
@@ -289,8 +292,9 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
   const chainPose = (names: string[], axes: THREE.Vector3[], angles: number[], pre?: (M: THREE.Matrix4) => void) => {
     const M = new THREE.Matrix4()
     if (pre) pre(M)
-    names.forEach((n, i) => { if (i < angles.length) hinge(M, P(n), axes[i], angles[i]); setBone(rig, n, M) })
+    names.forEach((n, i) => { if (i < angles.length) hinge(M, P(n), axes[i], angles[i]); setBone(rig, n, M); boneM[n] = M.clone() })
   }
+  const boneM: Record<string, THREE.Matrix4> = {}
   const close = (names: string[], axes: THREE.Vector3[], angles: number[], from: number, max: number[], pre?: (M: THREE.Matrix4) => void) => {
     const set = new Set(names)
     for (let j = from; j < names.length - 1; j++) {
@@ -309,7 +313,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
   }
   /** Reach: coordinate descent on a digit's angles (degrees) so its tip lands on a target, while keeping the
    * finger out of the device (spheres along the bones) and staying near the starting pose. */
-  const reach = (names: string[], target: THREE.Vector3, x0: number[], lo: number[], hi: number[], apply: (x: number[]) => void, radius: number, free = false) => {
+  const reach = (names: string[], target: THREE.Vector3, x0: number[], lo: number[], hi: number[], apply: (x: number[]) => void, radius: number, free = false, extra?: () => number) => {
     const tipB = rig.bones[names[names.length - 1]], wp = new THREE.Vector3(), wq = new THREE.Vector3()
     const cost = (x: number[]) => {
       apply(x); update()
@@ -324,6 +328,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
         }
       }
       for (let k = 0; k < x.length; k++) c += 2e-7 * (x[k] - x0[k]) ** 2
+      if (extra) c += extra()
       return c
     }
     const x = x0.slice(); let best = cost(x)
@@ -369,9 +374,21 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
   const preT = (M: THREE.Matrix4) => { hinge(M, P(THUMB[0]), F0, deg(tp.oppose) * -h); hinge(M, P(THUMB[0]), N0, deg(tp.abduct) * h) }
   const angT = tp.curl.map(deg)
   if (tp.tip && tp.touch) {
-    const apply = (x: number[]) => chainPose(THUMB, axesT, [x[2], x[3], x[4]].map(deg), M => { hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h) })
+    // A sixth angle rolls the thumb's two phalanges about their own long axis at the proximal joint (the tip stays
+    // near that axis, so the contact barely moves), so the pad, not the side of the thumb, faces the glass. The reach
+    // cost asks for the pad to face into the glass (nail up and away), leaning back a little the way a real thumb taps.
+    const rollAxis = P(THUMB[3]).clone().sub(P(THUMB[1])).normalize()
+    const dDist = P(THUMB[3]).clone().sub(P(THUMB[2])).normalize(), padRest = axesT[2].clone().cross(dDist).multiplyScalar(PAD_SIGN).normalize()
+    const apply = (x: number[]) => {
+      const M = new THREE.Matrix4(); hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h)
+      const a = [x[2], x[3], x[4]].map(deg)
+      THUMB.forEach((n, i) => { if (i < 3) hinge(M, P(n), axesT[i], a[i]); if (i === 1) hinge(M, P(n), rollAxis, deg(x[5]) * h); setBone(rig, n, M); boneM[n] = M.clone() })
+    }
+    const pad = () => padRest.clone().transformDirection(boneM[THUMB[2]]).transformDirection(rig.root.matrixWorld)
+    if (import.meta.env.DEV) (globalThis as { __thumbPad?: () => THREE.Vector3 }).__thumbPad = pad
+    const padCost = () => { const z = pad().z + PAD_FACE; return z > 0 ? PAD_W * z * z : 0 }
     touches.push({ owners: new Set([THUMB[2], THUMB[3]]), surf: tp.tip.clone(), aim: tp.tip.clone(), run: aim =>
-      reach(THUMB, aim, [tp.oppose, tp.abduct, ...tp.curl], [-60, -60, -30, -30, -20], [100, 80, 70, 80, 90], apply, 0.08, true) })
+      reach(THUMB, aim, [tp.oppose, tp.abduct, ...tp.curl, 0], [-60, -60, -30, -30, -20, -75], [100, 80, 70, 80, 90, 75], apply, 0.08, true, padCost) })
   } else if (tp.tip) {
     const apply = (x: number[]) => chainPose(THUMB, axesT, [x[2], x[3], x[4]].map(deg), M => { hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h) })
     reach(THUMB, tp.tip, [tp.oppose, tp.abduct, ...tp.curl], [-60, -60, -20, -20, -10], [90, 70, 60, 70, 80], apply, 0.08)
