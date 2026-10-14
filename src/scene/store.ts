@@ -1,6 +1,6 @@
 // Scene store: every device in the scene keeps its own settings, hand and screens; camera, lighting, background,
 // effects, style and export are global and sit alongside. Stage 1 has one device; the shape is ready for several.
-import { useMemo, useRef, useState, type SetStateAction } from 'react'
+import { useEffect, useMemo, useRef, useState, type SetStateAction } from 'react'
 import type * as THREE from 'three'
 import type { DeviceId, DeviceOptions } from '../types'
 import type { HandPose } from '../hands/Hands'
@@ -71,7 +71,26 @@ export const newDevice = (model: DeviceId = 'ip18'): DeviceState => ({
   name: '', hidden: false, xf: XF0,
 })
 const GLOBAL0: GlobalState = { pose: POSE, light: LIGHT, fx: FX, style: 'photo', sk: SKETCH_DEFAULTS, bgMode: 'gradient', bg1: '#dfe7ff', bg2: '#f7d9e8', angle: 135, transparent: false, scale: 2 }
-const init = (): SceneState => { const d = newDevice(); return { devices: [d], selected: d.uid, global: GLOBAL0 } }
+/** The device list and each device's settings persist (not screen media or the logo, which do not fit in storage). Device ids
+ *  are kept, so per-device keyframes and screen clips still match after a reload. */
+const SKEY = 'om-scene-v1'
+const SAVE_SKIP = ['media', 'mediaOuter'] as const
+function loadDevices(): { devices: DeviceState[]; selected: string } | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(SKEY) || 'null'); if (!v || !Array.isArray(v.devices) || !v.devices.length) return null
+    const devices: DeviceState[] = v.devices.filter((d: Partial<DeviceState>) => d && typeof d.uid === 'string' && typeof d.model === 'string').map((d: DeviceState) => {
+      const base = newDevice(d.model)
+      return { ...base, ...d, media: null, mediaOuter: null, opts: { ...base.opts, ...d.opts, logo: null, trans: null }, xf: { ...base.xf, ...d.xf } } })
+    if (!devices.length) return null
+    // carry on numbering after the highest saved id
+    n = Math.max(n, ...devices.map(d => +(d.uid.match(/(\d+)$/)?.[1] ?? 0)))
+    return { devices, selected: devices.some(d => d.uid === v.selected) ? v.selected : devices[0].uid }
+  } catch { return null }
+}
+function saveDevices(s: SceneState) {
+  try { localStorage.setItem(SKEY, JSON.stringify({ selected: s.selected, devices: s.devices.map(d => { const o: Record<string, unknown> = { ...d }; for (const k of SAVE_SKIP) delete o[k]; o.opts = { ...d.opts, logo: null, trans: null }; return o }) })) } catch { /* storage full: this session only */ }
+}
+const init = (): SceneState => { const l = loadDevices(); if (l) return { ...l, global: GLOBAL0 }; const d = newDevice(); return { devices: [d], selected: d.uid, global: GLOBAL0 } }
 
 type Setter<T> = (v: SetStateAction<T>) => void
 const resolve = <T,>(v: SetStateAction<T>, old: T) => typeof v === 'function' ? (v as (o: T) => T)(old) : v
@@ -81,6 +100,8 @@ const resolve = <T,>(v: SetStateAction<T>, old: T) => typeof v === 'function' ? 
 export function useScene() {
   const [scene, setScene] = useState<SceneState>(init)
   const ref = useRef(scene); ref.current = scene
+  // save the devices a moment after they change (not every frame of a drag)
+  useEffect(() => { const t = setTimeout(() => saveDevices(scene), 300); return () => clearTimeout(t) }, [scene.devices, scene.selected])
   const api = useMemo(() => {
     const dev = <K extends keyof DeviceState>(k: K): Setter<DeviceState[K]> => v => setScene(s => {
       const i = s.devices.findIndex(d => d.uid === s.selected); if (i < 0) return s

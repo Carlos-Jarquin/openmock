@@ -223,7 +223,7 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, devs, op
         <button className="icon" onClick={playing ? pause : play} title={playing ? 'Pause' : 'Play'} aria-label={playing ? 'Pause' : 'Play'} disabled={rec}><Ico d={playing ? I.pause : I.play} /></button>
         <button className={`icon ${loop ? 'on' : ''}`} onClick={() => setLoop(!loop)} title="Loop" aria-pressed={loop} aria-label="Loop"><Ico d={I.loop} /></button>
         <span ref={time} className="tl-time">{fmt(0)} / {fmt(T)}</span>
-        {editing >= 0 && !playing && <span className="tl-editing" role="status" title="Changes to the phone, hand, thumb or camera go into this keyframe">Editing keyframe {editing + 1}</span>}
+        {editing >= 0 && !playing && <span className="tl-editing" role="status" title={`Editing keyframe ${editing + 1}. Changes to the phone, hand, thumb or camera go into this keyframe.`}>Editing KF {editing + 1}</span>}
         <span className="tl-sp" />
         <button className="ghost" aria-label="Clear timeline" onClick={clear} disabled={rec || (keys.length <= 1 && clips.length === 0)} title="Remove all keyframes and screen clips, keeping the current pose as keyframe 1"><Ico d={I.del} /> Clear</button>
         <span className="tl-seg2" role="group" aria-label="Frame rate">{([30, 60] as const).map(f => <button key={f} className={fps === f ? 'on' : ''} aria-pressed={fps === f} onClick={() => setFps(f)}>{f} fps</button>)}</span>

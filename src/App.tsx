@@ -154,6 +154,8 @@ function Rig({ zoom, fov }: { zoom: number; fov: number }) {
 const mixMedia = (m: { on: boolean; tex: THREE.Texture; aspect: number }): Media | null => m.on ? { texture: m.tex, aspect: m.aspect, kind: 'image', name: 'Screen track', live: true } : null
 const D2R = THREE.MathUtils.degToRad
 /** Rough width of each model in scene units, for placing new devices and the layout presets. */
+/** Rough height of each model in scene units, for zoom-to-fit. */
+const HEIGHT: Partial<Record<DeviceId, number>> = { ip18: 1.5, ip18max: 1.63, duo: 1.55, phone: 1.5, ipmini: 1.96, ippro11: 2.5, ippro13: 2.85, browser: 1.75 }
 const WIDTH: Partial<Record<DeviceId, number>> = { ip18: 0.72, ip18max: 0.78, duo: 1.5, phone: 0.75, ipmini: 1.38, ippro11: 1.8, ippro13: 2.2, browser: 2.6 }
 const widthOf = (d: DeviceState) => d.model === 'duo' && d.opts.fold < 90 ? 0.75 : WIDTH[d.model] ?? 0.8
 /** The hand fit each device's gesture was last scaled for, so switching model rescales only that device's gesture. */
@@ -166,8 +168,8 @@ export function devNames(devs: DeviceState[]) {
 }
 
 /** One device in the scene: its own screen composite, screen-track mixers, fold state, hand and placement. */
-const DeviceRig = memo(function DeviceRig({ d, active, multi, sketch, sk, islandLook, screenGen, onGesture, onGrab, reg }: {
-  d: DeviceState; active: boolean; multi: boolean; sketch: boolean; sk: typeof SKETCH_DEFAULTS; islandLook: ReturnType<typeof islandSketch> | undefined; screenGen: number
+const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, screenGen, onGesture, onGrab, reg }: {
+  d: DeviceState; active: boolean; sketch: boolean; sk: typeof SKETCH_DEFAULTS; islandLook: ReturnType<typeof islandSketch> | undefined; screenGen: number
   onGesture: (g: DeviceState['gesture']) => void; onGrab: (uid: string, e: PointerEvent) => void; reg: (uid: string, g: THREE.Group | null) => void
 }) {
   const def = DEVICES.find(x => x.id === d.model)!, D = def.Component, opts = d.opts, device = d.model
@@ -190,7 +192,7 @@ const DeviceRig = memo(function DeviceRig({ d, active, multi, sketch, sk, island
   if (d.hidden) return null
   return (
     <group ref={ref} position={pos} rotation={rot}
-      onPointerDown={multi ? e => { if (e.button !== 0 || e.shiftKey || e.intersections.some(i => onGizmo(i.object))) return; e.stopPropagation(); sceneHit.current = true; onGrab(d.uid, e.nativeEvent) } : undefined}>
+      onPointerDown={e => { if (e.button !== 0 || e.shiftKey || e.altKey || e.intersections.some(i => onGizmo(i.object))) return; e.stopPropagation(); sceneHit.current = true; onGrab(d.uid, e.nativeEvent) }}>
       <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, screenTex.texture, d.hands.pose]}>
         <HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={HAND_FITS[device] ?? null} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle}>
           <SketchStyle on={sketch} o={sk}><D uid={d.uid} texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
@@ -220,6 +222,19 @@ function SelBox({ get, el }: { get: () => THREE.Object3D | null; el: React.RefOb
       const x = (v.x + 1) / 2 * size.width, y = (1 - v.y) / 2 * size.height; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y) }
     const p = 10; d.style.display = 'block'
     d.style.transform = `translate(${x0 - p}px, ${y0 - p}px)`; d.style.width = `${x1 - x0 + 2 * p}px`; d.style.height = `${y1 - y0 + 2 * p}px`
+  })
+  return null
+}
+
+/** Frame rate readout (hidden toggle: palette "View › Frame rate meter", or ?fps in the address). Counts rendered frames, twice a second. */
+function FpsMeter({ el }: { el: React.RefObject<HTMLDivElement | null> }) {
+  const { gl } = useThree(), t = useRef({ n: 0, t0: performance.now(), worst: 0, last: performance.now() })
+  useFrame(() => {
+    const c = t.current, now = performance.now(); c.n++; c.worst = Math.max(c.worst, now - c.last); c.last = now
+    if (now - c.t0 < 500 || !el.current) return
+    const fps = c.n * 1000 / (now - c.t0), r = gl.info.render
+    el.current.textContent = `${fps.toFixed(0)} fps · worst ${c.worst.toFixed(0)} ms · ${r.calls} draws · ${(r.triangles / 1000).toFixed(0)}k tris`
+    c.n = 0; c.t0 = now; c.worst = 0
   })
   return null
 }
@@ -386,6 +401,10 @@ export default function App() {
   // Screen track: while a clip covers a screen, its mixer canvas is that screen's media
   const [screenGen, bumpScreen] = useState(0)
   useEffect(() => { screenLive.onShape = () => bumpScreen(n => n + 1); return () => { screenLive.onShape = null } }, [])
+  const [fpsOn, setFpsOn] = useState(() => /[?&]fps\b/.test(location.search) || localStorage.getItem('om-fps') === '1')
+  useEffect(() => { try { localStorage.setItem('om-fps', fpsOn ? '1' : '0') } catch { /* off */ } }, [fpsOn])
+  const fpsEl = useRef<HTMLDivElement>(null)
+  const moved = (Object.keys(XF0) as (keyof Xf)[]).some(k => D0.xf[k] !== 0)
   const devices = S.scene.devices, multi = devices.length > 1, names = devNames(devices)
   const [renaming, setRenaming] = useState<{ uid: string; text: string } | null>(null)
   const [addModel, setAddModel] = useState<DeviceId>('ip18')
@@ -427,6 +446,12 @@ export default function App() {
     else { const cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols), cw = Math.max(...ws) + gap, ch = 1.75
       out = ds.map((_, i) => ({ ...XF0, x: r2((i % cols - (cols - 1) / 2) * cw), y: r2(((rows - 1) / 2 - Math.floor(i / cols)) * ch) })) }
     ds.forEach((d, i) => S.devAt(d.uid, 'xf', out[i]))
+    // zoom to fit: the layout's extent against the view (4.2 units away at 30 degrees shows about 2.25 units of height)
+    let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9
+    ds.forEach((d, i) => { const w = ws[i] / 2, h = (HEIGHT[d.model] ?? 1.6) / 2; x0 = Math.min(x0, out[i].x - w); x1 = Math.max(x1, out[i].x + w); y0 = Math.min(y0, out[i].y - h); y1 = Math.max(y1, out[i].y + h) })
+    const st = document.querySelector('main.stage') as HTMLElement | null, asp = st ? st.clientWidth / Math.max(1, st.clientHeight) : 1.6
+    const viewH = 2.25 * 0.7, zoom = clamp(Math.min(viewH / (y1 - y0), viewH * asp / (x1 - x0)), 0.3, 1.6)
+    goView({ ...poseRef.current, zoom: Math.round(zoom * 1000) / 1000, panX: 0, panY: 0 })
     flash(kind === 'row' ? 'Devices side by side.' : kind === 'fan' ? 'Devices fanned out.' : 'Devices in a grid.')
   }
 
@@ -654,7 +679,7 @@ export default function App() {
       {multi ? <>
         <span className="om-sub-h">Layout</span>
         <div className="seg"><button onClick={() => layout('row')}>Side by side</button><button onClick={() => layout('fan')}>Fanned</button><button onClick={() => layout('grid')}>Grid</button></div>
-        <p className="hint">Click a device in the view or the list to select it. Drag a device to move it; drag empty space to orbit.</p>
+        <p className="hint">Click a device in the view or the list to select it. Drag a device to move it; drag empty space, or hold Alt, to orbit.</p>
       </> : <p className="hint">Add a second device to show several in one scene.</p>}
     </> },
     { id: 'preset', side: 'scene', title: 'Preset', icon: 'preset', settings: ['Violet silhouette'], render: () => <>
@@ -738,7 +763,7 @@ export default function App() {
       <p className="hint">Uses ComfyUI on this Mac to repaint only the hands. The phone stays exactly as rendered.</p>
     </> : <p className="hint">Turn on a hand under Device › Hand first. {handOk ? '' : 'Hands are available for the iPhone 18 Pro and 18 Pro Max.'}</p> },
     // DEVICE rail
-    ...(multi ? [{ id: 'place', side: 'device' as const, title: 'Position', icon: 'move', settings: ['Across', 'Up and down', 'Depth', 'Turn', 'Tilt', 'Roll', 'Reset position'], render: () => { const xf = D0.xf, set = (k: keyof Xf) => (n: number) => S.dev.xf(o => ({ ...o, [k]: n }))
+    ...(multi || moved ? [{ id: 'place', side: 'device' as const, title: 'Position', icon: 'move', settings: ['Across', 'Up and down', 'Depth', 'Turn', 'Tilt', 'Roll', 'Reset position'], render: () => { const xf = D0.xf, set = (k: keyof Xf) => (n: number) => S.dev.xf(o => ({ ...o, [k]: n }))
       return <>
         {slider('Across', +xf.x.toFixed(2), -4, 4, 0.01, set('x'))}
         {slider('Up and down', +xf.y.toFixed(2), -4, 4, 0.01, set('y'))}
@@ -868,8 +893,8 @@ export default function App() {
       { id: 'lay-row', group: 'scene' as const, section: 'devices', label: 'Layout › Side by side', meta: 'APPLY' as const, run: () => layout('row') },
       { id: 'lay-fan', group: 'scene' as const, section: 'devices', label: 'Layout › Fanned', meta: 'APPLY' as const, run: () => layout('fan') },
       { id: 'lay-grid', group: 'scene' as const, section: 'devices', label: 'Layout › Grid', meta: 'APPLY' as const, run: () => layout('grid') },
-      { id: 'xf0', group: 'device' as const, section: 'place', label: 'Position › Reset position', meta: 'APPLY' as const, run: () => S.dev.xf(XF0) },
     ] : []),
+    ...(multi || moved ? [{ id: 'xf0', group: 'device' as const, section: 'place', label: 'Position › Reset position', meta: 'APPLY' as const, run: () => S.dev.xf(XF0) }] : []),
     { id: 'violet', group: 'scene', section: 'preset', label: 'Preset › Violet silhouette', meta: 'APPLY', run: violetScene },
     { id: 'photo', group: 'scene', section: 'style', label: 'Style › Photo', meta: style === 'photo' ? 'CURRENT' : 'APPLY', run: () => setStyle('photo') },
     { id: 'sketch', group: 'scene', section: 'style', label: 'Style › Sketch', meta: sketch ? 'CURRENT' : 'APPLY', run: () => { setStyle('sketch'); setBgMode('solid'); setBg1(SKETCH_PAPER); setTransparent(false) } },
@@ -883,6 +908,7 @@ export default function App() {
     { id: 'dof', group: 'scene', section: 'effects', label: 'Effects › Depth of field', meta: 'TOGGLE', run: () => setFx(x => ({ ...x, dof: !x.dof })) },
     { id: 'bloom', group: 'scene', section: 'effects', label: 'Effects › Soft bloom', meta: 'TOGGLE', run: () => setFx(x => ({ ...x, bloom: !x.bloom })) },
     { id: 'grain', group: 'scene', section: 'effects', label: 'Effects › Film grain', meta: 'TOGGLE', run: () => setFx(x => ({ ...x, grain: !x.grain })) },
+    { id: 'fps', group: 'view', label: 'View › Frame rate meter', meta: 'TOGGLE', run: () => setFpsOn(v => !v) },
     { id: 'png', group: 'view', label: 'Export › PNG', meta: 'APPLY', run: exportPng },
     { id: 'svg', group: 'view', label: 'Export › SVG', meta: 'APPLY', run: exportSvg },
     { id: 'video', group: 'view', label: 'Export › Video', meta: 'APPLY', run: () => tlApi.current?.record() },
@@ -975,9 +1001,10 @@ export default function App() {
             <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
           </>}
           <group ref={devGroup} position={devPos} rotation={devRot}>
-            {devices.map(d => <DeviceRig key={d.uid} d={d} active={d.uid === D0.uid} multi={multi} sketch={sketch} sk={sk} islandLook={islandLook} screenGen={screenGen}
+            {devices.map(d => <DeviceRig key={d.uid} d={d} active={d.uid === D0.uid} sketch={sketch} sk={sk} islandLook={islandLook} screenGen={screenGen}
               onGesture={setGesture} onGrab={onGrab} reg={reg} />)}
           </group>
+          {fpsOn && <FpsMeter el={fpsEl} />}
           {multi && <SelBox get={() => rigs.current.get(D0.uid) ?? null} el={selBox} />}
           {light.shadowOn && light.shadow > 0 && (() => {
             // light.floor is the phone's height above the floor in cm (0.1 units per cm, phone about 1.6 units tall).
@@ -985,8 +1012,12 @@ export default function App() {
             // phone were that high: softer, larger and fainter as it rises. 1.5 cm gives the original look.
             const d = 0.95, k = (0.8 + light.floor / 10) / 0.95
             const base = sketch ? { color: SKETCH_SHADOW, opacity: light.shadow * 0.6, blur: 3 } : { color: '#000000', opacity: light.shadow, blur: 2.6 }
-            return <ContactShadows position={[pose.panX, pose.panY - d, 0]} color={base.color} opacity={base.opacity / k}
-              scale={6 * (1 + (k - 1) * 0.6)} blur={base.blur * Math.pow(k, 1.2)} far={2.5} resolution={1024} frames={Infinity} />
+            // several devices: the floor sits under the lowest one and spreads under all of them, so it never cuts through a device
+            const vis = devices.filter(x => !x.hidden), low = Math.min(0, ...vis.map(x => x.xf.y - ((HEIGHT[x.model] ?? 1.5) - 1.5) / 2))
+            const spread = vis.length > 1 ? Math.max(...vis.map(x => Math.abs(x.xf.x) + widthOf(x) / 2)) * 2 : 0
+            const sc = Math.max(6, spread + 2)
+            return <ContactShadows key={vis.length > 1 ? 'multi' : 'one'} position={[pose.panX, pose.panY - d + low, 0]} color={base.color} opacity={base.opacity / k}
+              scale={sc * (1 + (k - 1) * 0.6)} blur={base.blur * Math.pow(k, 1.2)} far={2.5} resolution={1024} frames={Infinity} />
           })()}
           {!transparent && <SceneBg mode={bgMode} c1={bg1} c2={bg2} angle={angle} />}
           {(fx.dof || fx.bloom || fx.grain || !transparent) && (
@@ -1000,6 +1031,7 @@ export default function App() {
             </EffectComposer>)}
         </Canvas>
         </ErrorBoundary>
+        {fpsOn && <div ref={fpsEl} className="om-fps" role="status" aria-label="Frame rate">…</div>}
         {multi && <div ref={selBox} className="om-selbox" aria-hidden="true" />}
         {ai.url && <img className="ai-overlay" src={ai.url} alt="" />}
         {dragging && <div className="dropnote">Drop to use as the screen</div>}
