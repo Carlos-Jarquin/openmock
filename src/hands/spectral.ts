@@ -260,7 +260,7 @@ function edgesOf(geo: THREE.BufferGeometry): Edges {
   const r = { tris, edges: new Uint32Array(out) }; edgeCache.set(geo, r); return r
 }
 
-interface LineState { skinned: Float32Array; creases: Float32Array; rings: Float32Array[]; lines: LineSegments2; thumb: LineSegments2; ghosts: LineSegments2[]; camKey: string }
+interface LineState { prep: Prepared; skinned: Float32Array; creases: Float32Array; rings: Float32Array[]; lines: LineSegments2; thumb: LineSegments2; ghosts: LineSegments2[]; camKey: string }
 /** Rebuilds the skinned positions and the crease and fingertip lines for the current pose (on each re-solve). */
 export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: SpectralMats) {
   for (const c of [...mesh.children]) if (c.userData.spectral && !c.userData.spectralHull) { mesh.remove(c); (c as THREE.Mesh).geometry?.dispose() }
@@ -283,7 +283,23 @@ export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: Spect
   // thenar bulge it runs past) can hide it; with its 7 mm pull it also clears the frame it rests on.
   const thumb = new LineSegments2(new LineSegmentsGeometry(), m.line); thumb.renderOrder = 8
   thumb.userData = { spectral: true, noBounds: true }; thumb.layers.set(LINE_LAYER); thumb.frustumCulled = false; mesh.add(thumb)
-  mesh.userData.spectralLines = { skinned: sk, creases: new Float32Array(cr), rings, lines, thumb, ghosts, camKey: '' } as LineState
+  mesh.userData.spectralLines = { prep, skinned: sk, creases: new Float32Array(cr), rings, lines, thumb, ghosts, camKey: '' } as LineState
+}
+
+/** Re-skins the lines in place for the pose the bones hold now. The hand's motion layer springs the bones after each
+ *  solve, so lines baked only at the solve were left at an old pose: stacked, stale thumb outlines over the moving skin. */
+export function reskinSpectral(mesh: THREE.SkinnedMesh) {
+  const st = mesh.userData.spectralLines as LineState | undefined; if (!st || !st.lines.parent) return
+  let top: THREE.Object3D = mesh; while (top.parent) top = top.parent
+  top.updateMatrixWorld(true); mesh.skeleton.update()
+  const sk = st.skinned, N = sk.length / 3, v = new THREE.Vector3()
+  for (let i = 0; i < N; i++) { mesh.getVertexPosition(i, v); sk[i * 3] = v.x; sk[i * 3 + 1] = v.y; sk[i * 3 + 2] = v.z }
+  const cr = st.creases; let o = 0
+  const P = (i: number, j: number, t: number) => { for (let k = 0; k < 3; k++) cr[o++] = sk[i * 3 + k] + (sk[j * 3 + k] - sk[i * 3 + k]) * t }
+  for (const g of st.prep.segs) { P(g[0], g[1], g[2]); P(g[3], g[4], g[5]) }
+  for (const [a, b, c, u, w] of st.prep.bary) for (let k = 0; k < 3; k++) cr[o++] = sk[a * 3 + k] * (1 - u - w) + sk[b * 3 + k] * u + sk[c * 3 + k] * w
+  st.prep.rings.forEach((r, ri) => { const a = st.rings[ri]; r.forEach(([x, y, z, u, w], i) => { for (let k = 0; k < 3; k++) a[i * 3 + k] = sk[x * 3 + k] * (1 - u - w) + sk[y * 3 + k] * u + sk[z * 3 + k] * w }) })
+  st.camKey = ''   // the silhouette is redrawn on the next updateSpectral
 }
 
 const _cam = new THREE.Vector3(), _inv = new THREE.Matrix4()

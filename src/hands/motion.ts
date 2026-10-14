@@ -49,8 +49,9 @@ export class HandMotion {
   /** Displayed pose before a solve overwrote it (kept so capture can restore it). */
   snapshot() { for (const s of this.st) { const x = s as St & { dq?: THREE.Quaternion; dp?: THREE.Vector3 }; (x.dq ??= new THREE.Quaternion()).copy(s.o.quaternion); (x.dp ??= new THREE.Vector3()).copy(s.o.position) } }
   restore() { for (const s of this.st) { const x = s as St & { dq?: THREE.Quaternion; dp?: THREE.Vector3 }; if (x.dq) { s.o.quaternion.copy(x.dq); s.o.position.copy(x.dp!) } } }
-  step(dt: number, time: number, idle: IdleLevel) {
-    if (!this.root || (this.settled && idle === 'off')) return
+  /** Returns true when the pose on screen changed this frame. */
+  step(dt: number, time: number, idle: IdleLevel): boolean {
+    if (!this.root || (this.settled && idle === 'off')) return false
     dt = Math.min(dt, 1 / 30)
     const amp = IDLE_AMP[idle]
     // the hand's own turn this frame, which the fingers resist a little (drag)
@@ -82,5 +83,6 @@ export class HandMotion {
     if (this.arm) { this.root.updateMatrix(); this.arm.matrix.multiplyMatrices(this.root.matrix, this.armRel); this.arm.matrix.decompose(this.arm.position, this.arm.quaternion, this.arm.scale) }
     this.root.updateMatrixWorld(true)
     this.settled = !moving
+    return true
   }
 }

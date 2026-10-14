@@ -7,7 +7,7 @@
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { useGLTF } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
-import { spectralMaterials, buildSpectral, updateSpectral, addHull, removeHull, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
+import { spectralMaterials, buildSpectral, reskinSpectral, updateSpectral, addHull, removeHull, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
 import { LINE_LAYER } from '../sketch/Sketch'
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
@@ -481,7 +481,6 @@ export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTR
 
 function Hands({ pose, tone, fit, gesture, sp, rot, idle }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture; sp: SpectralOptions; rot: HandRot; idle: IdleLevel }) {
   const motion = useMemo(() => ({ right: new HandMotion(), left: new HandMotion() }), [])
-  useFrame(({ clock }, dt) => { motion.right.step(dt, clock.elapsedTime, idle); motion.left.step(dt, clock.elapsedTime, idle) })
   const right = useGLTF(URL_R), left = useGLTF(URL_L)
   const group = useRef<THREE.Group>(null)
   const rigs = useMemo(() => ({ right: makeRig(right.scene), left: makeRig(left.scene) }), [right.scene, left.scene])
@@ -496,6 +495,9 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle }: { pose: HandPose; to
     const u = spm.body.uniforms; u.uAlpha.value = 1 - sp.transparency; u.uGlimmer.value = sp.glimmer ? 1 : 0; u.uShimmer.value = sp.shimmer ? 1 : 0; u.uStars.value = sp.stars ? 1 : 0
   }, [spm, sp.tint, sp.line, sp.seeBlur, sp.transparency, sp.glimmer, sp.shimmer, sp.stars])
   const { size, gl } = useThree()
+  useFrame(({ clock }, dt) => {
+    for (const side of ['right', 'left'] as const) if (motion[side].step(dt, clock.elapsedTime, idle) && spm && rigs[side].root.parent) reskinSpectral(rigs[side].mesh)
+  })
   useFrame(({ clock, camera }) => { if (!spm) return
     spm.frame(size.width, size.height, gl.getPixelRatio(), clock.elapsedTime)
     for (const side of ['right', 'left'] as const) if (rigs[side].root.parent) updateSpectral(rigs[side].mesh, camera) })
