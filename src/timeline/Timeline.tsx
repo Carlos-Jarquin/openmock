@@ -203,7 +203,7 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duo
         <input ref={scrub} className="tl-scrub" type="range" min={0} max={1000} defaultValue={0} aria-label="Scrub" onInput={e => seek(+(e.target as HTMLInputElement).value / 1000 * T)} />
         <span ref={time} className="tl-time">{fmt(0)} / {fmt(T)}</span>
         <span className="tl-sp" />
-        <button className="ghost" onClick={clear} disabled={rec || (keys.length <= 1 && clips.length === 0)} title="Remove all keyframes and screen clips, keeping the current pose as keyframe 1"><Ico d={I.del} /> Clear timeline</button>
+        <button className="ghost" aria-label="Clear timeline" onClick={clear} disabled={rec || (keys.length <= 1 && clips.length === 0)} title="Remove all keyframes and screen clips, keeping the current pose as keyframe 1"><Ico d={I.del} /> Clear</button>
         <select value={fps} onChange={e => setFps(+e.target.value as 30 | 60)} aria-label="Frame rate"><option value={30}>30 fps</option><option value={60}>60 fps</option></select>
         <select value={fmtOut} onChange={e => setFmtOut(e.target.value as 'webm' | 'mp4')} aria-label="Video format"><option value="webm">WebM</option>{mp4ok && <option value="mp4">MP4</option>}</select>
         <button onClick={record} disabled={rec} title="Play once from the start and save a video"><Ico d={I.rec} /> {rec ? 'Recording' : 'Export video'}</button>
