@@ -11,9 +11,13 @@ export interface KfState {
   hands: { pose: string; tone: string }
   handRot: { tilt: number; spin: number; roll: number }
   tap: { x: number; y: number }
+  /** the rest of the gesture (swipe path, progress, pinch spread and angle, typing keys); missing on keyframes saved before it was added */
+  ges?: Partial<Record<GesKey, number>>
   light: { intensity: number; azimuth: number; elevation: number; floor: number }
   fx: { focus: number; blur: number }
 }
+export const GES_KEYS = ['sx', 'sy', 'ex', 'ey', 'progress', 'spread', 'angle', 'kx', 'ky', 'kx2', 'ky2'] as const
+export type GesKey = typeof GES_KEYS[number]
 export interface Keyframe { id: string; dur: number; ease: Ease; s: KfState }
 
 export const ease = (e: Ease, t: number) => {
@@ -39,8 +43,8 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
 /** Interpolated frame at time t: rotation as a quaternion (slerp, the shortest way, never flips), the rest lerped.
  *  seg/half say which segment and which half of it we are in, for the discrete values. */
-export interface Frame { q: THREE.Quaternion; pan: [number, number]; zoom: number; fov: number; fold: number | null; seg: number; disc: KfState; k: number }
-const out: Frame = { q: new THREE.Quaternion(), pan: [0, 0], zoom: 1, fov: 30, fold: null, seg: 0, disc: null as unknown as KfState, k: 0 }
+export interface Frame { handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges: Partial<Record<GesKey, number>>; q: THREE.Quaternion; pan: [number, number]; zoom: number; fov: number; fold: number | null; seg: number; disc: KfState; k: number }
+const out: Frame = { handRot: { tilt: 0, spin: 0, roll: 0 }, tap: { x: 0, y: 0 }, ges: {}, q: new THREE.Quaternion(), pan: [0, 0], zoom: 1, fov: 30, fold: null, seg: 0, disc: null as unknown as KfState, k: 0 }
 export function sample(k: Keyframe[], t: number): Frame | null {
   if (!k.length) return null
   const st = starts(k)
@@ -55,6 +59,12 @@ function fill(a: KfState, b: KfState, e: number) {
   out.pan[0] = lerp(a.pose.panX, b.pose.panX, e); out.pan[1] = lerp(a.pose.panY, b.pose.panY, e)
   // zoom in log space so equal times give equal apparent scale changes
   out.zoom = Math.exp(lerp(Math.log(a.pose.zoom), Math.log(b.pose.zoom), e)); out.fov = lerp(a.pose.fov, b.pose.fov, e)
+  // the hand smart-animates too: touch point, hand rotation and the rest of the gesture, so the whole hand travels with the thumb
+  out.tap.x = lerp(a.tap.x, b.tap.x, e); out.tap.y = lerp(a.tap.y, b.tap.y, e)
+  out.handRot.tilt = lerp(a.handRot.tilt, b.handRot.tilt, e); out.handRot.spin = lerp(a.handRot.spin, b.handRot.spin, e); out.handRot.roll = lerp(a.handRot.roll, b.handRot.roll, e)
+  const g: Partial<Record<GesKey, number>> = {}
+  for (const k of GES_KEYS) { const x = a.ges?.[k], y = b.ges?.[k]; if (x != null || y != null) g[k] = x == null ? y! : y == null ? x : lerp(x, y, e) }
+  out.ges = g
   out.fold = a.fold == null || b.fold == null ? (b.fold ?? a.fold) : lerp(a.fold, b.fold, e)
 }
 /** The pose sliders' angles for a quaternion (for handing the final frame back to the UI). */
@@ -77,6 +87,8 @@ export const tlLive = {
   /** called when the discrete part (hand pose, rotation, tap, light, effects) changes keyframe, i.e. at midpoints */
   onDisc: null as null | ((s: KfState) => void),
   disc: null as KfState | null,
+  /** called every frame with the interpolated hand (touch point, rotation, gesture) */
+  onHand: null as null | ((f: Frame) => void),
   /** frame timing log for checks: performance.now() of each applied frame */
   log: null as number[] | null,
 }

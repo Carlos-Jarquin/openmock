@@ -108,7 +108,7 @@ export function GestureControls({ pose, fit, g, set }: { pose: GesturePose; fit:
   const s = screenOf(fit)
   // Reach report from the solver: a digit that stops short of its target says so.
   const [reach, setReach] = useState<Record<string, number>>({})
-  useEffect(() => { const on = (e: Event) => setReach(r => ({ ...r, ...(e as CustomEvent).detail })); window.addEventListener(REACH_EVENT, on); return () => window.removeEventListener(REACH_EVENT, on) }, [])
+  useEffect(() => { const on = (e: Event) => { const d = (e as CustomEvent).detail as Record<string, number>; setReach(r => Object.keys(d).every(k => (r as Record<string, number>)[k] === d[k]) ? r : { ...r, ...d }) }; window.addEventListener(REACH_EVENT, on); return () => window.removeEventListener(REACH_EVENT, on) }, [])
   const short = Math.max(0, ...Object.values(reach)), digit = pose === 'thumb' || pose === 'thumbswipe' || pose === 'type' ? 'thumb' : 'finger'
   const num = (label: string, v: number, max: number, k: keyof Gesture) => (
     <label>{label} <input type="number" min={0} max={max} value={Math.round(v as number)} style={{ width: 64 }}

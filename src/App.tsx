@@ -23,7 +23,7 @@ import { StatusBarControls } from './statusbar/Panel'
 import { useStatusComposite } from './statusbar/composite'
 import { islandSketch } from './statusbar/StatusBar'
 import { Timeline, TimelineDriver } from './timeline/Timeline'
-import { quatPose, tlLive, type Frame, type KfState } from './timeline/tlCore'
+import { GES_KEYS, quatPose, tlLive, type Frame, type KfState } from './timeline/tlCore'
 
 type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement; svg?: string }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -243,13 +243,17 @@ export default function App() {
   const devGroup = useRef<THREE.Group>(null)
   const live = useRef({ pose, opts, hands, handRot, gesture, light, fx, device })
   live.current = { pose, opts, hands, handRot, gesture, light, fx, device }
+  // Stable transform props: the timeline moves devGroup directly each frame, and the per-frame hand updates re-render App,
+  // so fresh arrays here would snap the phone back to the slider pose on every frame (the hand then looked detached).
+  const devPos = useMemo(() => [pose.panX, pose.panY, 0] as [number, number, number], [pose.panX, pose.panY])
+  const devRot = useMemo(() => [THREE.MathUtils.degToRad(pose.tiltX), THREE.MathUtils.degToRad(pose.tiltY), THREE.MathUtils.degToRad(pose.rotZ)] as [number, number, number], [pose.tiltX, pose.tiltY, pose.rotZ])
   const tlSnapshot = useCallback((): KfState => { const v = live.current; return {
-    pose: { ...v.pose }, fold: v.device === 'duo' ? v.opts.fold : null, hands: { ...v.hands }, handRot: { ...v.handRot }, tap: { x: v.gesture.x, y: v.gesture.y },
+    pose: { ...v.pose }, fold: v.device === 'duo' ? v.opts.fold : null, hands: { ...v.hands }, handRot: { ...v.handRot }, tap: { x: v.gesture.x, y: v.gesture.y }, ges: Object.fromEntries(GES_KEYS.map(k => [k, v.gesture[k]])),
     light: { intensity: v.light.intensity, azimuth: v.light.azimuth, elevation: v.light.elevation, floor: v.light.floor }, fx: { focus: v.fx.focus, blur: v.fx.blur } } }, [])
   const tlDisc = useCallback((k: KfState) => {
     setHands(h => h.pose === k.hands.pose && h.tone === k.hands.tone ? h : { pose: k.hands.pose as HandPose, tone: k.hands.tone })
     setHandRot(r => r.tilt === k.handRot.tilt && r.spin === k.handRot.spin && r.roll === k.handRot.roll ? r : { ...k.handRot })
-    setGesture(g => g.x === k.tap.x && g.y === k.tap.y ? g : { ...g, x: k.tap.x, y: k.tap.y })
+    setGesture(g => ({ ...g, ...k.ges, x: k.tap.x, y: k.tap.y }))
     setLight(l => ({ ...l, ...k.light })); setFx(f => ({ ...f, ...k.fx }))
   }, [])
   const tlApply = useCallback((k: KfState) => {
@@ -261,6 +265,13 @@ export default function App() {
     if (f.fold != null && live.current.device === 'duo') setOpts(o => ({ ...o, fold: f.fold!, screen: f.fold! >= 90 ? 'inner' : 'outer' }))
   }, [])
   const tlSide = useCallback((inner: boolean) => { if (live.current.device === 'duo') setOpts(o => o.screen === (inner ? 'inner' : 'outer') ? o : { ...o, screen: inner ? 'inner' : 'outer' }) }, [])
+  // per frame while the timeline runs: the interpolated touch point, hand rotation and gesture, so the hand moves with the thumb
+  const tlHand = useCallback((f: Frame) => {
+    const r = f.handRot, t = f.tap, gs = f.ges
+    setHandRot(o => o.tilt === r.tilt && o.spin === r.spin && o.roll === r.roll ? o : { ...r })
+    setGesture(o => o.x === t.x && o.y === t.y && GES_KEYS.every(k => gs[k] == null || o[k] === gs[k]) ? o : { ...o, ...gs, x: t.x, y: t.y })
+  }, [])
+  useEffect(() => { tlLive.onHand = tlHand; return () => { tlLive.onHand = null } }, [tlHand])
   useEffect(() => { tlLive.onDisc = tlDisc; return () => { tlLive.onDisc = null } }, [tlDisc])
   const flash = useCallback((text: string, error = false) => { setToast({ text, error }); setStatus(text); clearTimeout(toastTimer.current); toastTimer.current = window.setTimeout(() => setToast(null), error ? 4000 : 1800) }, [])
   // Photoreal status sits right under its button (the main status line is at the bottom of the panel, often out of view)
@@ -686,7 +697,7 @@ export default function App() {
             <rectAreaLight args={['#ffffff', 0.9 * light.intensity, 0.6, 3.5]} position={[-2.8, 0.3, -0.8]} onUpdate={l => l.lookAt(0, 0, 0)} />
             <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
           </>}
-          <group ref={devGroup} position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
+          <group ref={devGroup} position={devPos} rotation={devRot}>
             <Centred off={device === 'duo'} deps={[device, ...(device === 'duo' ? [] : [opts.fold, opts.screen]), screenTex.texture, hands.pose]}>
               <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture} rot={handRot}>
                 <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}

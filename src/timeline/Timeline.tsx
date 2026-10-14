@@ -26,6 +26,7 @@ export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefOb
     // the Duo shows the inner content when open past 90 degrees, the outer when closed (both are dissolved at 90)
     if (f.fold != null) { const s = f.fold >= 90; if (s !== side.current) { side.current = s; onSide(s) } }
     if (f.disc !== L.disc) { L.disc = f.disc; L.onDisc?.(f.disc) }
+    L.onHand?.(f)
     const u = L.ui, p = T > 0 ? L.t / T : 0
     if (u.scrub) u.scrub.value = String(p * 1000)
     if (u.time) u.time.textContent = `${fmt(L.t)} / ${fmt(T)}`

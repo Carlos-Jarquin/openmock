@@ -483,6 +483,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot }: { pose: HandPose; tone: st
   // Only the gesture fields the pose uses, so moving a marker re-solves just the touching hand.
   const ges = isGesture(pose) ? gesture : undefined
   const solved = useRef<Record<string, string>>({})
+  const lastRep = useRef('')
   const arms = useMemo(() => ({ right: new THREE.Mesh(forearmGeometry()), left: new THREE.Mesh(forearmGeometry()) }), [])
   useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = m.receiveShadow = true; m.userData.hand = true } }, [arms, mat])
   useEffect(() => {
@@ -498,7 +499,8 @@ function Hands({ pose, tone, fit, gesture, sp, rot }: { pose: HandPose; tone: st
     // Reach report for the panel, in mm (model unit is 100 mm), only for digits that touch.
     const rep: Record<string, number> = { right: 0, left: 0 }
     for (const pl of list) if (rigs[pl.side].root.userData.touchError !== undefined && isFinite(rigs[pl.side].root.userData.touchError)) rep[pl.side] = rigs[pl.side].root.userData.touchError * 100
-    window.dispatchEvent(new CustomEvent(REACH_EVENT, { detail: rep }))
+    // only when the report changes: during timeline playback the hand re-solves every frame
+    const repKey = JSON.stringify(rep); if (lastRep.current !== repKey) { lastRep.current = repKey; window.dispatchEvent(new CustomEvent(REACH_EVENT, { detail: rep })) }
     for (const side of ['right', 'left'] as const) if (!used.has(rigs[side].root)) { g.remove(rigs[side].root, arms[side]); delete solved.current[side] }
   }, [pose, fit, rigs, ges, arms, rot])
   // Spectral: outlines, inner lines and stars follow each re-solve; the hands leave the shadow pass (line layer) and cast none.
