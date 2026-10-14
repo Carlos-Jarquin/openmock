@@ -130,7 +130,8 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
       // Thumb and index spread on the glass about the centre, along the pinch axis (the thumb on the lower left end).
       const a = deg(ges.angle), dx = Math.cos(a) * ges.spread / 2, dy = -Math.sin(a) * ges.spread / 2
       const ti = P(ges.x + dx, ges.y + dy), tt = P(ges.x - dx, ges.y - dy), c = ti.clone().add(tt).multiplyScalar(0.5)
-      return [{ side: 'right', knuckle: c.clone().add(apZ.off), F: apZ.F, N: v3(0.1, 0.45, -1), follow: true,
+      // the knuckle is placed from the index pad (not the pinch centre), so the index lies flat enough to land on its pad
+      return [{ side: 'right', knuckle: ti.clone().add(apZ.off), F: apZ.F, N: v3(0.1, 0.45, -1), follow: true,
         fingers: [{ curl: [0, 20, 20, 10], spread: 4, tip: ti, touch: true }, ...fist],
         thumb: { oppose: 20, abduct: 40, curl: [0, 10, 10], tip: tt, touch: true } }]
     }
@@ -394,6 +395,13 @@ function setBone(rig: Rig, name: string, M: THREE.Matrix4) {
 // (index widest); knuckle (MCP) a touch of hyperextension at most, middle joint none.
 const DIP_K = 2 / 3, SPREAD = [15, 10, 10, 14], MCP_LO = [-8, 0], MCP_HI = [92, 105]
 const PAD_SIGN = 1, PAD_FACE = 0.85, PAD_W = 2e-2
+/** Pad contact: touching fingers bend the outer joint back this far (degrees, plus more with longer nails), and every
+ *  touching digit keeps its nail's free edge at least NAIL_CLEAR (1.5 mm) plus 1 mm per unit of nail length off the glass. */
+/** touching gestures always come in a little flatter than a fingertip poke, so the pad (not the tip) lands */
+const PAD_FLAT = 0.3
+const DIP_HYPER = 8, NAIL_CLEAR = 0.015
+const padK = () => ({ flat: PAD_FLAT, w: 0, hyper: DIP_HYPER, ...(import.meta.env.DEV ? (globalThis as { __padK?: object }).__padK : {}) }) as { flat: number; w: number; hyper: number; patch?: number; dipk?: number }
+export const nailNeed = (nail: number) => NAIL_CLEAR + 0.01 * nail
 function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
   const R = rig.rest, P = (n: string) => R[n].p
   const h = plan.side === 'right' ? 1 : -1
@@ -472,6 +480,12 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     const tipD = Math.min(0, sdf(rig.bones[names[names.length - 1]].getWorldPosition(_v), fit))
     for (const p of e) { const pen = tipD + 0.001 - sdf(_v.copy(p).applyMatrix4(bm), fit); if (pen > 0) c += 40 * pen * pen }
     return c }
+  // touching digits: the nail's free edge stays the visible clearance off the glass (a soft cost, so the pad still lands)
+  const need = nailNeed(nail)
+  const nailLift = (names: string[]) => { const dn = names.find(n => n.endsWith('phalanx-distal')), e = dn && nailEdge[dn]; if (!e) return 0
+    const bm = rig.bones[dn].matrixWorld; let c = 0
+    for (const p of e) { const pen = need - sdf(_v.copy(p).applyMatrix4(bm), fit); if (pen > 0) c += padK().w * pen * pen }
+    return c }
   const reach = (names: string[], target: THREE.Vector3, x0: number[], lo: number[], hi: number[], apply: (x: number[]) => void, radius: number, free = false, extra0?: () => number) => {
     // a touching digit gets its nail clearance from the flatter plan instead, so the pen never pulls the pad off its target
     const extra = () => (extra0?.() ?? 0) + (free ? 0 : nailPen(names))
@@ -505,7 +519,9 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     apply(x); update()
   }
   // Touching digits, placed after the rest of the hand by the contact pass.
-  const touches: { owners: Set<string>; surf: THREE.Vector3; aim: THREE.Vector3; run: (aim: THREE.Vector3) => void }[] = []
+  // bend: extra extension (degrees) of the digit's outer joint, raised after the contact pass while its nail edge sits
+  // closer to the glass than the clearance
+  const touches: { owners: Set<string>; surf: THREE.Vector3; aim: THREE.Vector3; run: (aim: THREE.Vector3) => void; nail?: string; bend: number }[] = []
   const mcpOf: number[] = []; let lastMcp = 0
   FINGERS.forEach((fn, i) => {
     const fp = plan.fingers[i], names = JOINTS.map(j => `${fn}-${j}`)
@@ -516,10 +532,12 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     const pre0 = fp.spread ? (M: THREE.Matrix4) => hinge(M, P(names[1]), N0, deg(fp.spread!) * h) : undefined
     if (fp.tip && fp.touch) {
       chainPose(names, axes, angles, pre0); update()
-      touches.push({ owners: new Set([names[3], names[4]]), surf: fp.tip.clone(), aim: fp.tip.clone(), run: aim => {
-        const apply = (x: number[]) => { lastMcp = x[1]; chainPose(names, axes, [0, x[1], x[2], x[2] * DIP_K].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h)) }
-        reach(names.slice(1), aim, [fp.spread ?? 0, ...fp.curl.slice(1, 3)], [-SPREAD[i], ...MCP_LO], [SPREAD[i], ...MCP_HI], apply, 0.07, true, couple)
-      } })
+      const t: (typeof touches)[number] = { owners: new Set([names[3], names[4]]), surf: fp.tip.clone(), aim: fp.tip.clone(), nail: names[3], bend: 0, run: aim => {
+        // pad down: the outer joint bends back a little (as a fingertip does when it presses), so the nail tilts up off the glass
+        const apply = (x: number[]) => { lastMcp = x[1]; chainPose(names, axes, [0, x[1], x[2], x[2] * DIP_K * (padK().dipk ?? 0) - padK().hyper - 6 * nail - t.bend].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h)) }
+        reach(names.slice(1), aim, [fp.spread ?? 0, ...fp.curl.slice(1, 3)], [-SPREAD[i], ...MCP_LO], [SPREAD[i], ...MCP_HI], apply, 0.07, true, () => (couple?.() ?? 0) + nailLift(names))
+      } }
+      touches.push(t)
       return
     }
     if (fp.tip) {
@@ -546,22 +564,24 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     // A sixth angle rolls the thumb's two phalanges about their own long axis at the proximal joint (the tip stays
     // near that axis, so the contact barely moves), so the pad, not the side of the thumb, faces the glass. The reach
     // cost asks for the pad to face into the glass (nail up and away), leaning back a little the way a real thumb taps.
+    let tt: (typeof touches)[number] | undefined
     const rollAxis = P(THUMB[3]).clone().sub(P(THUMB[1])).normalize()
     const dDist = P(THUMB[3]).clone().sub(P(THUMB[2])).normalize(), padRest = axesT[2].clone().cross(dDist).multiplyScalar(PAD_SIGN).normalize()
     const apply = (x: number[]) => {
       const M = new THREE.Matrix4(); hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h)
-      const a = [x[2], x[3], x[4]].map(deg)
+      const a = [x[2], x[3], x[4] - (tt?.bend ?? 0)].map(deg)
       THUMB.forEach((n, i) => { if (i < 3) hinge(M, P(n), axesT[i], a[i]); if (i === 1) hinge(M, P(n), rollAxis, deg(x[5]) * h); setBone(rig, n, M); boneM[n] = M.clone() })
     }
     const pad = () => padRest.clone().transformDirection(boneM[THUMB[2]]).transformDirection(rig.root.matrixWorld)
     if (import.meta.env.DEV) (globalThis as { __thumbPad?: () => THREE.Vector3 }).__thumbPad = pad
     const face = PAD_FACE + 0.05 * nail + (plan.thumbFace ?? 0), padW = PAD_W, tn = nailEdge[THUMB[2]]
     // a touching thumb with long nails also keeps its nail's free edge out of the glass (gently, so the pad still lands)
-    const thumbNail = () => { if (!tn || nail <= 0) return 0; const m = rig.bones[THUMB[2]].matrixWorld; let c = 0
-      for (const p of tn) { const pen = 0.001 - sdf(_v.copy(p).applyMatrix4(m), fit); if (pen > 0) c += 20 * pen * pen } return c }
+    const thumbNail = () => { if (!tn) return 0; const m = rig.bones[THUMB[2]].matrixWorld; let c = 0
+      for (const p of tn) { const pen = need - sdf(_v.copy(p).applyMatrix4(m), fit); if (pen > 0) c += 20 * pen * pen } return c }
     const padCost = () => { const z = pad().z + face; return (z > 0 ? padW * z * z : 0) + thumbNail() }
-    touches.push({ owners: new Set([THUMB[2], THUMB[3]]), surf: tp.tip.clone(), aim: tp.tip.clone(), run: aim =>
-      reach(THUMB, aim, [tp.oppose, tp.abduct, ...tp.curl, 0], [-60, -60, -30, -30, -20, -75], [100, 80, 70, 80, 90, 75], apply, 0.08, true, padCost) })
+    tt = { owners: new Set([THUMB[2], THUMB[3]]), surf: tp.tip.clone(), aim: tp.tip.clone(), bend: 0, run: aim =>
+      reach(THUMB, aim, [tp.oppose, tp.abduct, ...tp.curl, 0], [-60, -60, -30, -30, -20, -75], [100, 80, 70, 80, 90, 75], apply, 0.08, true, padCost)}
+    touches.push(tt)
   } else if (tp.tip) {
     const apply = (x: number[]) => chainPose(THUMB, axesT, [x[2], x[3], x[4]].map(deg), M => { hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h) })
     reach(THUMB, tp.tip, [tp.oppose, tp.abduct, ...tp.curl], [-60, -60, -20, -20, -10], [90, 70, 60, 70, 80], apply, 0.08)
@@ -576,20 +596,30 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
   if (!touches.length) { armFrame(rig, F1, N1); return }
   const GAP = 0.0003   // 0.03 mm
   // The glass is the plane z = T / 2, so the contact is the pad's lowest skin point.
+  // The contact point is the centroid of the pad's patch (the skin within 2.5 mm of its lowest point), not the very tip:
+  // that is where a pressed pad meets the glass.
   const contact = (owners: Set<string>, glass: number) => {
-    let best = Infinity; const c = new THREE.Vector3()
+    let best = Infinity; const pts: number[] = []
     for (let i = 0; i < pos.count; i++) {
       if (!owners.has(rig.owner[i])) continue
       _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); _v.applyMatrix4(rig.mesh.matrixWorld)
-      if (_v.z < best) { best = _v.z; c.copy(_v) }
+      pts.push(_v.x, _v.y, _v.z); if (_v.z < best) best = _v.z
     }
+    const c = new THREE.Vector3(); let n = 0
+    for (let k = 0; k < pts.length; k += 3) if (pts[k + 2] < best + (padK().patch ?? 0.025)) { c.x += pts[k]; c.y += pts[k + 1]; n++ }
+    if (n) c.multiplyScalar(1 / n); c.z = best
     return { c, d: best - glass }
   }
   let worst = Infinity
   const iters = import.meta.env.DEV ? (globalThis as { __touchIters?: number }).__touchIters ?? 10 : 10
+  const clearOf = (t: (typeof touches)[number]) => { const e = t.nail && nailEdge[t.nail]; if (!e) return Infinity; const m = rig.bones[t.nail!].matrixWorld
+    let c1 = Infinity; for (const q of e) c1 = Math.min(c1, sdf(_v.copy(q).applyMatrix4(m), fit)); return c1 }
+  for (let round = 0; round < 7; round++) {
+  if (round) { let more = false; for (const t of touches) if (clearOf(t) < need && t.bend < 40) { t.bend += 6; more = true } if (!more) break }
   for (let it = 0; it < iters; it++) {
     const errs = touches.map(t => { t.run(t.aim); update(); const { c, d } = contact(t.owners, t.surf.z); return v3(t.surf.x - c.x, t.surf.y - c.y, GAP - d) })
     worst = Math.max(...errs.map(e => e.length()))
+    if (import.meta.env.DEV) (globalThis as { __touchEach?: unknown }).__touchEach = errs.map((e, k) => [[...touches[k].owners][0], +(e.length() * 100).toFixed(2), +(e.z * 100).toFixed(2), touches[k].bend, +(clearOf(touches[k]) * 100).toFixed(2)])
     if (worst < 0.0005) break
     const mean = errs.reduce((a, e) => a.add(e), v3(0, 0, 0)).multiplyScalar(1 / errs.length)
     // Damped, and kept within 15 mm of the point, so a digit that cannot reach does not wander off.
@@ -606,6 +636,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       const lift = Math.max(0, fit.T / 2 + 0.03 - low)
       rig.root.position.add(v3(mean.x, mean.y, lift).clampLength(0, 0.3)); update()
     } else if (plan.follow === 'y') { rig.root.position.y += Math.max(-0.05, Math.min(0.05, mean.y)); update() }
+  }
   }
   rig.root.userData.touchError = worst   // model units; 0.001 is 0.1 mm
   // How far the touching digits' nail free edges sit above the glass (model units); the caller flattens the approach
@@ -736,7 +767,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = true; m.receiveShadow = true; m.userData.hand = true; m.userData.sketchEdges = false; m.userData.armOff = armOff } }, [arms, mat, armOff])
   useEffect(() => {
     const g = group.current; if (!g) return
-    const mk = (flat: number) => plans(pose, fit, ges, nailLen, flat, look.size).map(pl => rotatePlan(pl, rot))
+    const mk = (flat: number) => plans(pose, fit, ges, nailLen, flat + padK().flat, look.size).map(pl => rotatePlan(pl, rot))
     const list = mk(nailLen)
     const used = new Set<THREE.Object3D>()
     for (let li = 0; li < list.length; li++) { let pl = list[li]
@@ -749,9 +780,9 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
         // long nails: while a touching nail's free edge is within 1 mm of the glass, come in flatter (and turn the thumb's
         // pad further into the glass) and solve again
         // and solve again. Each try is scored on touch error plus any clearance shortfall; the best one is kept.
-        const score = () => (r.root.userData.touchError ?? 0) + Math.max(0, 0.01 - (r.root.userData.nailClear ?? 1)) * 0.5
+        const need = nailNeed(nailLen), score = () => (r.root.userData.touchError ?? 0) + Math.max(0, need - (r.root.userData.nailClear ?? 1)) * 0.5
         let best = { s: score(), pl }
-        for (let k = 1, flat = nailLen; nailLen > 0 && k <= 4 && (r.root.userData.nailClear ?? 1) < 0.01; k++) {
+        for (let k = 1, flat = nailLen; nailsOn && k <= 4 && (r.root.userData.nailClear ?? 1) < need; k++) {
           flat += 0.3; pl = { ...mk(flat)[li], thumbFace: 0.08 * k }; solve(r, pl, fit, look.size, nailLen); const sc = score(); if (sc < best.s) best = { s: sc, pl } }
         if (best.pl !== pl) { pl = best.pl; solve(r, pl, fit, look.size, nailLen) }
         solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); arms[pl.side].scale.set(build * look.size, look.size, build * look.size); if (!armOff) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
