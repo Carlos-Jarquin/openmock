@@ -7,8 +7,8 @@ import * as THREE from 'three'
 export type NailShape = 'round' | 'square' | 'oval' | 'almond' | 'stiletto' | 'coffin'
 export const NAIL_SHAPES: [NailShape, string][] = [['round', 'Round'], ['square', 'Square'], ['oval', 'Oval'], ['almond', 'Almond'], ['stiletto', 'Stiletto'], ['coffin', 'Coffin']]
 /** How each device's hand looks: size (0.5 to 1.15), build (girth: 0.75 slender to 1.3 robust, length unchanged), nail length (0 = short and flush, 1 = long), shape and colour (null = natural). */
-export interface HandLook { size: number; build: number; nailLen: number; nailShape: NailShape; nailColor: string | null }
-export const HAND_LOOK0: HandLook = { size: 1, build: 1, nailLen: 0, nailShape: 'round', nailColor: null }
+export interface HandLook { size: number; build: number; /** forearm shown (false: the hand fades out just past the wrist) */ arm: boolean; nailLen: number; nailShape: NailShape; nailColor: string | null }
+export const HAND_LOOK0: HandLook = { size: 1, build: 1, arm: true, nailLen: 0, nailShape: 'round', nailColor: null }
 export const NAIL_SWATCHES = ['#f2d4cf', '#c8102e', '#7a1f3d', '#1d1d22', '#e9c7a8', '#d7b8f0']
 
 /** Half-width (0 to 1) of the nail's free part at t (0 where the shaping starts, 1 at the very tip). */
@@ -60,6 +60,10 @@ export function nailGeometry(f: NailFit, len: number, shape: NailShape): NailBui
   for (const j of [0, NX]) for (let i = 0; i < NY; i++) { const a = at(0, j, i), d = at(0, j, i + 1), A = at(1, j, i), D = at(1, j, i + 1); if (j === 0) idx.push(a, A, d, d, A, D); else idx.push(a, d, A, d, D, A) }
   const geo = new THREE.BufferGeometry()
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals()
+  // the Spectral body shader reads smoothNormal and the effect data (a nail is thin: low mass, never arm or wrist rim)
+  const nv = geo.getAttribute('position').count
+  geo.setAttribute('smoothNormal', geo.getAttribute('normal').clone()); geo.setAttribute('aMass', new THREE.BufferAttribute(new Float32Array(nv).fill(0.1), 1))
+  geo.setAttribute('aArm', new THREE.BufferAttribute(new Float32Array(nv), 1)); geo.setAttribute('aCut', new THREE.BufferAttribute(new Float32Array(nv), 1))
   const edge: THREE.Vector3[] = []
   for (let j = Math.floor(NX * 0.55); j <= NX; j += 2) for (const i of [0, NY / 2, NY]) edge.push(new THREE.Vector3(...pos.slice(at(1, j, i) * 3, at(1, j, i) * 3 + 3) as [number, number, number]))
   const outline: number[] = [], loop: number[] = []

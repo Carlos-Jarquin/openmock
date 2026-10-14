@@ -8,8 +8,10 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LINE_LAYER } from '../sketch/Sketch'
 
-export interface SpectralOptions { tint: string; line: string; transparency: number; glimmer: boolean; stars: boolean; shimmer: boolean; seeBlur: number }
-export const SPECTRAL_DEFAULTS: SpectralOptions = { tint: '#206DD0', line: '#206DD0', transparency: 0.98, seeBlur: 0.85, glimmer: false, stars: false, shimmer: false }
+/** mass: 0 to 1, darker and denser where the hand has more volume. glow: a soft inner light where it is thin (fingertips,
+ *  webbing). rim: a crisp white edge light. contours: faint level lines across the skin. Older saves lack the new keys. */
+export interface SpectralOptions { tint: string; line: string; transparency: number; glimmer: boolean; stars: boolean; shimmer: boolean; seeBlur: number; mass?: number; glow?: boolean; rim?: boolean; contours?: boolean }
+export const SPECTRAL_DEFAULTS: SpectralOptions = { tint: '#206DD0', line: '#206DD0', transparency: 0.98, seeBlur: 0.85, glimmer: false, stars: false, shimmer: false, mass: 0, glow: false, rim: false, contours: false }
 export const SPECTRAL_OUTER = 2.4, SPECTRAL_INNER = 0.75 // CSS px, like Sketch's outer and inner lines
 
 const SKIN_PARS = /* glsl */`
@@ -25,16 +27,17 @@ const SKIN_BODY = /* glsl */`
 #include <project_vertex>
 `
 const bodyVert = `${SKIN_PARS}
-attribute vec3 smoothNormal;
-varying vec3 vN; varying vec3 vV; varying vec3 vW; varying vec3 vB;
+attribute vec3 smoothNormal; attribute float aMass; attribute float aArm;
+varying vec3 vN; varying vec3 vV; varying vec3 vW; varying vec3 vB; varying float vMass; varying float vArm;
 void main() {
+  vMass = aMass; vArm = aArm;
 ${SKIN_BODY.replace('#include <beginnormal_vertex>', 'vec3 objectNormal = smoothNormal;')}
   vN = normalize(normalMatrix * objectNormal); vV = -mvPosition.xyz; vW = (modelMatrix * vec4(transformed, 1.0)).xyz;
   vB = position; // bind-pose position: glints stay put on the skin as the hand poses
 }`
 const bodyFrag = /* glsl */`
-uniform vec3 uTint; uniform float uAlpha, uGlimmer, uShimmer, uStars, uTime, uPx;
-varying vec3 vN; varying vec3 vV; varying vec3 vW; varying vec3 vB;
+uniform vec3 uTint; uniform float uAlpha, uGlimmer, uShimmer, uStars, uTime, uPx, uMass, uGlow, uRim, uContours, uArmFade;
+varying vec3 vN; varying vec3 vV; varying vec3 vW; varying vec3 vB; varying float vMass; varying float vArm;
 vec3 hash3(vec3 p) { p = fract(p * vec3(443.897, 441.423, 437.195)); p += dot(p, p.yxz + 19.19); return fract((p.xxy + p.yxx) * p.zyx); }
 /** Stars: sparse glints on a 3D cell grid in bind space (cell ~2.5 mm), each a tiny four-point glint that twinkles on its own clock. */
 float glints(vec3 b) {
@@ -68,26 +71,42 @@ void main() {
   a += uShimmer * (0.05 + 0.18 * band * (0.4 + 0.6 * f));
   float st = uStars > 0.0 ? glints(vB) : 0.0;
   col = mix(col, mix(uTint, vec3(1.0), 0.35), min(1.0, st * 1.6)); a = max(a, min(1.0, st * 1.6));
+  // Mass: deeper tint and a little more body where the hand is thick (palm, base of the thumb, forearm)
+  col = mix(col, col * 0.42, uMass * vMass); a += uMass * vMass * 0.22;
+  // Inner glow: thin parts let light through, so they glow a pale tint, most towards the edges
+  float thin = 1.0 - vMass;
+  col = mix(col, mix(uTint, vec3(1.0), 0.65), uGlow * thin * thin * (0.45 + 0.55 * f)); a += uGlow * thin * thin * 0.16;
+  // Rim light: a crisp white edge, narrower and brighter than Glimmer
+  float rl = pow(f, 7.0); col = mix(col, vec3(1.0), uRim * rl * 0.85); a += uRim * rl * 0.55;
+  // Contours: faint level lines every 4 mm on the skin (bind space, so they ride with it), one pixel wide
+  float ch = vB.y + 0.35 * vB.x, cg = abs(fract(ch / 0.004) - 0.5) * 0.004, cw = fwidth(ch) * 0.8;
+  float cl = 1.0 - smoothstep(0.0, max(cw, 1e-6), cg); col = mix(col, mix(uTint, vec3(1.0), 0.2), uContours * cl * 0.7); a += uContours * cl * 0.25;
+  // Arm off: the forearm fades out from 3 to 30 mm past the wrist (vArm is in model units, 100 mm)
+  a *= 1.0 - uArmFade * smoothstep(0.03, 0.3, vArm);
   gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
   #include <colorspace_fragment>
 }`
 const hullVert = `${SKIN_PARS}
-uniform float uWidth; uniform vec2 uRes;
+uniform float uWidth; uniform vec2 uRes; attribute float aArm; attribute float aCut; varying float vArm; varying float vCut;
 void main() {
+  vArm = aArm; vCut = aCut;
 ${SKIN_BODY}
   vec4 nc = projectionMatrix * vec4(normalMatrix * objectNormal, 0.0);
   vec2 d = nc.xy; float l = length(d); d = l > 1e-6 ? d / l : vec2(0.0);
   gl_Position.xy += d * uWidth / uRes * 2.0 * gl_Position.w;
 }`
-const hullFrag = /* glsl */`uniform vec3 uTint; void main() { gl_FragColor = vec4(uTint, 1.0);
+// vCut: the hand mesh's open wrist rim, whose hull read as a ring where the forearm joins, so hand and arm draw as one
+// outline. With the arm off, the forearm's outline fades with its body.
+const hullFrag = /* glsl */`uniform vec3 uTint; uniform float uArmFade; varying float vArm; varying float vCut;
+void main() { if (vCut > 0.5) discard; float k = 1.0 - uArmFade * smoothstep(0.03, 0.3, vArm); if (k < 0.02) discard; gl_FragColor = vec4(uTint, k);
   #include <colorspace_fragment>
 }`
 export function spectralMaterials(o: SpectralOptions) {
   const tint = new THREE.Color(o.tint), lineCol = new THREE.Color(o.line ?? o.tint), res = new THREE.Vector2(1, 1)
   const body = new THREE.ShaderMaterial({ vertexShader: bodyVert, fragmentShader: bodyFrag, transparent: true, depthWrite: true,
-    uniforms: { uTint: { value: tint }, uAlpha: { value: 1 - o.transparency }, uGlimmer: { value: o.glimmer ? 1 : 0 }, uShimmer: { value: o.shimmer ? 1 : 0 }, uStars: { value: o.stars ? 1 : 0 }, uTime: { value: 0 }, uPx: { value: 0.0005 } } })
+    uniforms: { uTint: { value: tint }, uAlpha: { value: 1 - o.transparency }, uGlimmer: { value: o.glimmer ? 1 : 0 }, uShimmer: { value: o.shimmer ? 1 : 0 }, uStars: { value: o.stars ? 1 : 0 }, uTime: { value: 0 }, uPx: { value: 0.0005 }, uMass: { value: o.mass ?? 0 }, uGlow: { value: o.glow ? 1 : 0 }, uRim: { value: o.rim ? 1 : 0 }, uContours: { value: o.contours ? 1 : 0 }, uArmFade: { value: 0 } } })
   const hull = new THREE.ShaderMaterial({ vertexShader: hullVert, fragmentShader: hullFrag, side: THREE.BackSide, transparent: true, depthWrite: false,
-    uniforms: { uTint: { value: lineCol }, uWidth: { value: SPECTRAL_OUTER }, uRes: { value: res } } })
+    uniforms: { uTint: { value: lineCol }, uWidth: { value: SPECTRAL_OUTER }, uRes: { value: res }, uArmFade: { value: 0 } } })
   const line = new LineMaterial({ color: o.line ?? o.tint, linewidth: SPECTRAL_INNER, worldUnits: false, transparent: true, opacity: 0.85, depthWrite: false })
   // See-through layers: the same lines where they sit behind the nearest skin (depth test inverted against the body's depth
   // prepass), drawn as three stacked strokes, wider and fainter as the blur rises, which reads as a soft, out-of-focus line.

@@ -353,6 +353,24 @@ function applyBuild(rig: Rig, build: number) {
   m.geometry = geo; m.userData.build = build
 }
 
+/** Per-vertex effect data on the current hand geometry. aMass (0 to 1): how far the skin sits from its bone, so the
+ *  palm, thumb base and wrist read as having more volume than the fingers. aCut: the open rim where the hand mesh ends
+ *  at the wrist, left out of the Spectral outline so the hand runs straight into the forearm. */
+function annotate(rig: Rig) {
+  const m = rig.mesh, geo = m.geometry; if (geo.userData.annotated) return
+  const pos = geo.getAttribute('position'), bones = m.skeleton.bones, n = pos.count, mass = new Float32Array(n), cut = new Float32Array(n)
+  const J = (k: string) => { const i = bones.findIndex(b => b.name === k); return new THREE.Vector3().setFromMatrixPosition(m.skeleton.boneInverses[i].clone().invert()) }
+  const seg: Record<string, [THREE.Vector3, THREE.Vector3]> = {}
+  for (const k of Object.keys(NEXT)) if (rig.bones[k] && rig.bones[NEXT[k]]) seg[k] = [J(k), J(NEXT[k])]
+  for (const f of [...FINGERS, 'thumb']) seg[`${f}-tip`] = seg[`${f}-phalanx-distal`]
+  const W = J('wrist'), out = W.clone().sub(J('middle-finger-phalanx-proximal')).normalize(), v = new THREE.Vector3(), ab = new THREE.Vector3()
+  for (let i = 0; i < n; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(m.bindMatrix); const sg = seg[rig.owner[i]]
+    if (sg) { ab.subVectors(sg[1], sg[0]); const t = Math.max(0, Math.min(1, v.clone().sub(sg[0]).dot(ab) / Math.max(1e-9, ab.lengthSq())))
+      const r = v.distanceTo(sg[0].clone().addScaledVector(ab, t)); mass[i] = THREE.MathUtils.smoothstep(r, 0.007, 0.021) }
+    cut[i] = rig.owner[i] === 'wrist' && v.clone().sub(W).dot(out) > -0.004 ? 1 : 0 }
+  geo.setAttribute('aMass', new THREE.BufferAttribute(mass, 1)); geo.setAttribute('aCut', new THREE.BufferAttribute(cut, 1)); geo.userData.annotated = true
+}
+
 const _m = new THREE.Matrix4(), _t = new THREE.Matrix4(), _r = new THREE.Matrix4(), _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3()
 /** Rotation by ang about an axis through pivot, appended to M. */
 function hinge(M: THREE.Matrix4, pivot: THREE.Vector3, axis: THREE.Vector3, ang: number) {
@@ -612,6 +630,11 @@ function forearmGeometry() {
   for (let i = 1; i <= 12; i++) { const t = i / 12; pts.push(new THREE.Vector2(0.21 + 0.13 * Math.min(1, t * 2.5) - 0.02 * t, 0.1 + 2.5 * t)) }
   armGeo = new THREE.LatheGeometry(pts, 32)
   armGeo.scale(1, 1, 0.78)   // flatter front to back, like a wrist
+  // effect data: the arm reads as solid (aMass), aArm is the distance past the wrist for the Arm off fade, aCut is unused
+  const ap = armGeo.getAttribute('position'), aa = new Float32Array(ap.count)
+  for (let i = 0; i < ap.count; i++) aa[i] = Math.max(0, ap.getY(i))
+  armGeo.setAttribute('aArm', new THREE.BufferAttribute(aa, 1)); armGeo.setAttribute('aMass', new THREE.BufferAttribute(new Float32Array(ap.count).fill(0.85), 1))
+  armGeo.setAttribute('aCut', new THREE.BufferAttribute(new Float32Array(ap.count), 1))
   return armGeo
 }
 const _ax = new THREE.Vector3(), _ay = new THREE.Vector3(), _az = new THREE.Vector3(), _mb = new THREE.Matrix4()
@@ -650,7 +673,9 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   useEffect(() => { if (!spm) return
     spm.tint.set(sp.tint); spm.setLine(sp.line ?? sp.tint); spm.setBlur(sp.seeBlur ?? 0.85)
     const u = spm.body.uniforms; u.uAlpha.value = 1 - sp.transparency; u.uGlimmer.value = sp.glimmer ? 1 : 0; u.uShimmer.value = sp.shimmer ? 1 : 0; u.uStars.value = sp.stars ? 1 : 0
-  }, [spm, sp.tint, sp.line, sp.seeBlur, sp.transparency, sp.glimmer, sp.shimmer, sp.stars])
+    u.uMass.value = sp.mass ?? 0; u.uGlow.value = sp.glow ? 1 : 0; u.uRim.value = sp.rim ? 1 : 0; u.uContours.value = sp.contours ? 1 : 0
+    const fade = look.arm === false ? 1 : 0; u.uArmFade.value = fade; spm.hull.uniforms.uArmFade.value = fade
+  }, [spm, sp.tint, sp.line, sp.seeBlur, sp.transparency, sp.glimmer, sp.shimmer, sp.stars, sp.mass, sp.glow, sp.rim, sp.contours, look.arm])
   const { size, gl } = useThree()
   useFrame(({ clock }, dt) => {
     for (const side of ['right', 'left'] as const) if (motion[side].step(dt, clock.elapsedTime, idle) && spm && rigs[side].root.parent) reskinSpectral(rigs[side].mesh)
@@ -663,7 +688,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const ges = isGesture(pose) ? gesture : undefined
   // Nails: measured on each hand at rest (before any solve), rebuilt when length or shape change, riding on the distal bones
   const build = Math.max(0.75, Math.min(1.3, look.build ?? 1))
-  const spots = useMemo(() => { applyBuild(rigs.right, build); applyBuild(rigs.left, build)
+  const spots = useMemo(() => { applyBuild(rigs.right, build); applyBuild(rigs.left, build); annotate(rigs.right); annotate(rigs.left)
     return { right: measureNails(rigs.right, 'right'), left: measureNails(rigs.left, 'left') } }, [rigs, build])
   const nailMat = useMemo(() => spm ? spm.body : nailMaterial(SKIN_TONES[tone]?.color ?? SKIN_TONES.fair.color, look.nailColor ?? (tone === 'silhouette' ? SKIN_TONES.silhouette?.color ?? null : null)), [spm, tone, look.nailColor])
   useEffect(() => () => { if (!spm) nailMat.dispose() }, [nailMat, spm])
@@ -687,7 +712,16 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const solved = useRef<Record<string, string>>({})
   const lastRep = useRef('')
   const arms = useMemo(() => ({ right: new THREE.Mesh(forearmGeometry()), left: new THREE.Mesh(forearmGeometry()) }), [])
-  useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = m.receiveShadow = true; m.userData.hand = true } }, [arms, mat])
+  // Arm off (photo): the forearm takes a copy of the skin that fades out past the wrist; Sketch hides it (its flat
+  // shading has no fade). Spectral fades through its own uniform above.
+  const armOff = look.arm === false
+  const armMat = useMemo(() => { if (spm || !armOff) return mat
+    const m2 = (mat as THREE.MeshPhysicalMaterial).clone(); m2.transparent = true; m2.depthWrite = false
+    m2.onBeforeCompile = sh => { sh.vertexShader = 'attribute float aArm; varying float vArm;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvArm = aArm;')
+      sh.fragmentShader = 'varying float vArm;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.a *= 1.0 - smoothstep(0.03, 0.3, vArm);') }
+    m2.customProgramCacheKey = () => 'arm-fade'; return m2 }, [mat, spm, armOff])
+  useEffect(() => () => { if (armMat !== mat) armMat.dispose() }, [armMat, mat])
+  useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = armMat; m.castShadow = !armOff; m.receiveShadow = true; m.userData.hand = true; m.userData.sketchEdges = false; m.userData.sketchHide = armOff } }, [arms, armMat, armOff])
   useEffect(() => {
     const g = group.current; if (!g) return
     const mk = (flat: number) => plans(pose, fit, ges, look.nailLen, flat, look.size).map(pl => rotatePlan(pl, rot))
