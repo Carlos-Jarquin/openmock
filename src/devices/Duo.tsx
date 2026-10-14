@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { DeviceProps } from '../types'
 import { DEFAULT_LOGO_TINT } from './shared'
 import { RearLens, Pressable } from './IPhonePro'
@@ -453,9 +454,8 @@ function updateFoldStrip(g: THREE.BufferGeometry, swing: number) {
 // (which stand EO = 0.48 mm out), so the two frame rails wrap a narrower inset spine as in the closed reference
 const SPINE_FLAT = 0.03
 const spineGeos = new Map<number, THREE.BufferGeometry>()
-function spineAt(swing: number) {
+export function spineAt(swing: number) {
   const key = Math.round(THREE.MathUtils.radToDeg(swing) * 2)   // 0.5 degree steps
-  if (key < 1) return null
   let g = spineGeos.get(key)
   if (!g) { g = spineGeo(THREE.MathUtils.degToRad(key / 2)); spineGeos.set(key, g) }
   return g
@@ -465,25 +465,32 @@ function spineGeo(phi: number) {
   // back planes in by c (0 when open, so the cover stays tangent to both backs; RAIL.c when closed, so the panel shows
   // between the rails); a p-norm soft minimum rounds the panel's long edges
   const R = T + GAP - 0.0003, r0 = R * 0.45, a = phi / 2, d = R * Math.cos(a) + R * SPINE_FLAT * Math.sin(a) * Math.sin(a)
-  const dmax = Math.max(d, R * Math.cos(a) + 0.0001), del = THREE.MathUtils.degToRad(1.5), N = 128
-  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 150, 180), cIn = RAIL.c * cl, P = 10
+  // c (back planes pulled in) ramps in over the first 60 degrees, so the cover is recessed between the rails at every
+  // angle beyond that; near flat it widens (del) into a strip just under the backs that closes the rails' V groove
+  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 0, 60), cIn = RAIL.c * cl, P = 16, BS = 0.0005
+  const dmax = Math.max(d, R * Math.cos(a) + 0.0001), del = THREE.MathUtils.degToRad(1.5 + 30 * (1 - cl)), N = 160
   const outer: [number, number][] = [], inner: [number, number][] = []
   for (let i = 0; i <= N; i++) {
     const t = -del + (phi + 2 * del) * i / N
     // distance limits along direction t: cylinder R, bisector plane, and the two back planes (normals at t = 0 and phi)
     const lim = [R, ...[[t - a, dmax], [t, R - cIn], [t - phi, R - cIn]].map(([u, D]) => Math.cos(u) > 1e-4 ? D / Math.cos(u) : 1)]
-    const rho = cl > 0 ? Math.pow(lim.reduce((s, v) => s + Math.pow(v, -P), 0), -1 / P) : Math.min(...lim)
+    const rho = Math.pow(lim.reduce((s, v) => s + Math.pow(v, -P), 0), -1 / P) - BS   // BS: the extrude bevel grows it back
     const ri = Math.min(r0, rho * 0.5)
     outer.push([-Math.sin(t) * rho, -Math.cos(t) * rho]); inner.push([-Math.sin(t) * ri, -Math.cos(t) * ri])
   }
   const sh = new THREE.Shape(outer.map(([x, z]) => new THREE.Vector2(x, -z)).concat(inner.reverse().map(([x, z]) => new THREE.Vector2(x, -z))))
-  // ends: a small rounded cap 1.6 mm inside the top and bottom faces
-  const L = H - 0.0032, b = 0.0016
-  const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: 0.0005, bevelSegments: 4, curveSegments: 4 })
-  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return g
+  // ends: a small rounded cap 0.8 mm inside the frame's top and bottom faces (y = +-(H/2 + EO))
+  const L = H + 2 * EO - 0.0016, b = 0.0008
+  const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: BS, bevelSegments: 4, curveSegments: 4 })
+  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return smooth(g)
+}
+/** Extrusions come with faceted normals; weld and recompute so rounded parts shade smoothly like the frame. */
+function smooth(g: THREE.BufferGeometry) {
+  g.deleteAttribute('normal'); g.deleteAttribute('uv')
+  const m = mergeVertices(g, 1e-6); m.computeVertexNormals(); g.dispose(); return m
 }
 /** Hinge-side rails: RB back-corner radius, k slab inset, c how far the closed spine panel is pulled in from each back. */
-const RAIL = { RB: 0.018, k: 0.019, c: 0.032 }
+const RAIL = { RB: 0.02, k: 0.021, c: 0.033 }
 /** One half's rail along y, side +1 right half (x >= 0), -1 left. Profile in (x, z), back at z = -T/2: a fully rounded
  *  back corner reaching x = -EO (flush with the other frame edges), rolling back in to the hinge face at x = 0, which runs
  *  flat to a 0.5 mm screen-side corner; overlaps the slab by 4 mm. */
@@ -496,7 +503,7 @@ function railGeo(side: number) {
   const sh = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(side * x, -z)))
   const L = H + 2 * EO
   const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * bv, bevelEnabled: true, bevelThickness: bv, bevelSize: bv, bevelSegments: 4, curveSegments: 4 })
-  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * bv) / 2, 0); return g
+  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * bv) / 2, 0); return smooth(g)
 }
 
 // Inline JSX shapes cached by parameters so re-renders don't rebuild geometry.
