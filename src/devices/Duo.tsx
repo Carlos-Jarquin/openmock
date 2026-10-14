@@ -121,8 +121,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
   // The fold is applied every frame from refs (no React state per frame): the hinge angle, the self-centring shift,
   // the spine and the three screen materials all read one eased timeline while a transition runs (foldLive.anim),
   // else the Fold slider.
-  const root = useRef<THREE.Group>(null), swingG = useRef<THREE.Group>(null), spineG = useRef<THREE.Group>(null), spineM = useRef<THREE.Mesh>(null)
-  const grooves = useRef<(THREE.Mesh | null)[]>([]), spineP = useRef<THREE.Mesh>(null)
+  const root = useRef<THREE.Group>(null), swingG = useRef<THREE.Group>(null), spineM = useRef<THREE.Mesh>(null)
   const mats = useMemo(() => ({ fixed: screenMaterial(), moving: screenMaterial(), outer: screenMaterial(OUTER_PROJ), strip: screenMaterial() }), [])
   const strip = useMemo(() => foldStripGeometry(), [])
   useEffect(() => () => strip.dispose(), [strip])
@@ -172,10 +171,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     root.current?.position.set(-(W / 2) * kc, 0, -(T / 2 + GAP) * kc)
     swingG.current?.rotation.set(0, swing, 0)
     const sp = spineAt(swing)
-    if (spineG.current && spineM.current) {
-      spineG.current.visible = !!sp
-      if (sp) { spineG.current.matrix.copy(sp.m); spineM.current.geometry = sp.g; grooves.current.forEach(g => g?.scale.set(sp.w * 0.98, 1, 1)); spineP.current?.scale.set(Math.max(0.001, sp.w - 0.016), 1, 1) }
-    }
+    if (spineM.current) { spineM.current.visible = !!sp; if (sp) spineM.current.geometry = sp }
     // the bent fold region of the inner screen follows the hinge (flat and seamless at 180)
     if (stripFold.current !== fold) { stripFold.current = fold; updateFoldStrip(strip, swing) }
     // screens: the dissolve is a function of the hinge angle alone, so it is in step with the fold whether it is
@@ -229,8 +225,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       <mesh name="screen" geometry={g.scrR} position={[0, 0, zf + E]}><primitive object={mats.fixed} attach="material" /></mesh>
       {/* the screen's bent fold region: rebuilt per frame from the hinge angle, joins both halves without a seam */}
       <mesh name="screen" geometry={strip} frustumCulled={false}><primitive object={mats.strip} attach="material" /></mesh>
-      {/* square hinge faces: fill the edge chamfer on the hinge side so the halves butt flush when open */}
-      <HingeFill x={HR / 2}>{frameMat}</HingeFill>
+      {/* hinge-side frame edges keep the body's rounded edge (no square fill): they are the rails either side of the spine */}
       {/* inner under-display FaceTime camera (Dynamic Island area): 34 mm from hinge, 12.7 mm from top */}
       <mesh geometry={g.udc} position={[0.34, H / 2 - 0.127, zf + E * 3]} renderOrder={2}>
         <meshBasicMaterial color="#000" transparent opacity={0.45} polygonOffset polygonOffsetFactor={-2} /></mesh>
@@ -282,22 +277,12 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       {/* bottom edge mic holes (reference), 35 and 51 mm from the hinge, on both halves */}
       {[0.354, 0.51].map(x => (
         <mesh key={x} position={[x, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}><circleGeometry args={[0.0055, 16]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
-      {/* hinge spine (after Carlos's reference and Apple's imagery): a thin, flat, polished titanium strip the full height
-          of the hinge edge with rounded ends and two break lines. It sits on the bisector of the two halves and spans
-          the chord between their back corners, so it is always joined to both: flush with both frames when closed,
-          narrowing as the phone opens and tucked away inside the hinge when flat. */}
-      <group ref={spineG} matrixAutoUpdate={false}>
-        <mesh ref={spineM} castShadow>{frameMat}</mesh>
-        {/* recessed-looking centre panel between two rails, as in the reference */}
-        <mesh ref={spineP} position={[0, 0, SPINE_TH + 0.0009]}><planeGeometry args={[1, H - 0.08]} />
-          <meshPhysicalMaterial color={new THREE.Color(f.frame).multiplyScalar(0.82)} metalness={0.6} roughness={0.4} polygonOffset polygonOffsetFactor={-1} /></mesh>
-        {[1, -1].map((k, i) => <mesh key={k} ref={el => { grooves.current[i] = el }} position={[0, k * (H / 2 - 0.1), SPINE_TH + 0.0010]}><planeGeometry args={[1, 0.0035]} /><meshStandardMaterial color="#5c6068" metalness={0.3} roughness={0.6} /></mesh>)}
-      </group>
+      {/* internal hinge spine: a rounded cover on the pivot axis, revealed between the halves as they fold (see spineGeo) */}
+      <mesh ref={spineM} position={[0, 0, T / 2 + GAP]} castShadow>{frameMat}</mesh>
       {/* ---------- left half (swings) ---------- */}
       <group ref={swingG} position={[0, 0, T / 2 + GAP]} rotation={[0, THREE.MathUtils.degToRad(180 - opts.fold), 0]}>
         <group position={[0, 0, -T / 2 - GAP]}>
           <mesh geometry={g.leftBody} castShadow>{frameMat}</mesh>
-          <HingeFill x={-HR / 2}>{frameMat}</HingeFill>
           <mesh geometry={g.leftBody} material={bandMat} renderOrder={1} />
           {[-0.354, -0.51].map(x => (
             <mesh key={x} position={[x, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}><circleGeometry args={[0.0055, 16]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
@@ -449,35 +434,43 @@ function updateFoldStrip(g: THREE.BufferGeometry, swing: number) {
   }
   p.needsUpdate = true
 }
-/** Square-off of a half's hinge edge: two boxes that fill the chamfer (front/back and top/bottom) beside the hinge. */
-function HingeFill({ x, children }: { x: number; children: React.ReactNode }) {
-  return <mesh position={[x, 0, 0]}><boxGeometry args={[HR, H - 0.0004, T - 0.0004]} />{children}</mesh>
-}
 
-const SPINE_TH = 0.004   // 0.4 mm plate (after Carlos's closed and half-open reference: a thin flat plate, flush)
-/** Spine plate for a swing angle: on the bisector of the two halves, its inner face on the chord between their
- * hinge-side back corners (the body edge sits EO outside its outline, so each corner is at (-EO, -(T + GAP)) from the
- * hinge axis), so it is always joined to both halves and, closed, exactly as wide as the stack (2T + 2GAP) and only
- * SPINE_TH proud of the hinge faces. Returns the geometry, its width and the placement matrix (x across the plate,
- * y along the hinge, z outward). */
+/** Internal hinge (after Carlos's half-open reference). Both halves turn about one pivot axis at (x 0, z T/2 + GAP),
+ * just in front of the screens. Each half's back face is at distance R = T + GAP from that axis and meets its hinge end
+ * at the foot of the perpendicular, so a cylinder of radius R about the axis is tangent to both backs. The spine is
+ * the wedge of that cylinder between the two halves' hinge ends (an annular sector, hollow inside, overlapping a
+ * degree into each body): hidden when flat, progressively revealed as the phone folds, always a smooth rounded
+ * corner continuous with both backs and never past them. Its outside is flattened by a plane on the bisector
+ * (at R cos(a) + SPINE_FLAT R sin^2(a) from the axis, a = half the fold: SPINE_FLAT R when closed, R when flat), so closed it reads as the reference's flat
+ * spine face, as wide as the stack, only about 0.8 mm proud of the hinge ends. */
+// closed, the flat sits 0.29 mm out from the hinge ends' line, i.e. recessed behind the frames' rounded hinge edges
+// (which stand EO = 0.48 mm out), so the two frame rails wrap a narrower inset spine as in the closed reference
+const SPINE_FLAT = 0.055
 const spineGeos = new Map<number, THREE.BufferGeometry>()
-const _n = new THREE.Vector3(), _t = new THREE.Vector3(), _c = new THREE.Vector3(), _y = new THREE.Vector3(0, 1, 0), _sm = new THREE.Matrix4()
-const spineW = (a: number) => 2 * ((T + GAP) * Math.sin(a) - EO * Math.cos(a))
-/** Per-frame spine: geometry cached by width in 0.25 mm steps, placement computed exactly. */
 function spineAt(swing: number) {
-  const R = T + GAP, a = swing / 2, w = spineW(a)
-  if (w < 0.006) return null
-  const key = Math.round(w / 0.0025); let g = spineGeos.get(key)
-  if (!g) { g = spinePlate(key * 0.0025); spineGeos.set(key, g) }
-  _n.set(-Math.sin(a), 0, -Math.cos(a)); _t.set(-Math.cos(a), 0, Math.sin(a))
-  _c.set(0, 0, T / 2 + GAP).addScaledVector(_n, R * Math.cos(a) + EO * Math.sin(a) - 0.0008)
-  return { g, w: key * 0.0025, m: _sm.makeBasis(_t, _y, _n).setPosition(_c) }
+  const key = Math.round(THREE.MathUtils.radToDeg(swing) * 2)   // 0.5 degree steps
+  if (key < 1) return null
+  let g = spineGeos.get(key)
+  if (!g) { g = spineGeo(THREE.MathUtils.degToRad(key / 2)); spineGeos.set(key, g) }
+  return g
 }
-/** The plate: small rounded end caps (radius a quarter of its width), soft edges, starting 0.08 mm inside the bodies. */
-function spinePlate(w: number) {
-  const rEnd = w * 0.25, shape = rrect(w, H - 0.002, [rEnd, rEnd, rEnd, rEnd])
-  const b = 0.001, g = new THREE.ExtrudeGeometry(shape, { depth: SPINE_TH + 0.0008 - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: b * 0.6, bevelSegments: 3, curveSegments: 12 })
-  g.translate(0, 0, b); return g
+function spineGeo(phi: number) {
+  // R is 0.03 mm inside the backs, so the spine reads inset between the rails
+  const R = T + GAP - 0.0003, r0 = R * 0.55, a = phi / 2, d = R * Math.cos(a) + R * SPINE_FLAT * Math.sin(a) * Math.sin(a)
+  const dmax = Math.max(d, R * Math.cos(a) + 0.0006), del = THREE.MathUtils.degToRad(1.5), N = 64
+  // direction t (from the right half's back-corner direction, t = 0, to the left half's, t = phi): (-sin t, -cos t) in (x, z)
+  const outer: [number, number][] = [], inner: [number, number][] = []
+  for (let i = 0; i <= N; i++) {
+    const t = -del + (phi + 2 * del) * i / N, c = Math.cos(t - a)
+    const rho = c > 1e-6 ? Math.min(R, dmax / c) : R
+    outer.push([-Math.sin(t) * rho, -Math.cos(t) * rho]); const ri = Math.min(r0, rho * 0.5)   // hollow stays inside the clipped outline (closed, the flat is nearer the axis than r0)
+    inner.push([-Math.sin(t) * ri, -Math.cos(t) * ri])
+  }
+  // shape in (X = x, Y = -z) so that after rotateX(-90 deg) the extrusion runs along +y and z comes out right
+  const sh = new THREE.Shape(outer.map(([x, z]) => new THREE.Vector2(x, -z)).concat(inner.reverse().map(([x, z]) => new THREE.Vector2(x, -z))))
+  const L = H - 0.004, b = 0.0012
+  const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: 0.0003, bevelSegments: 3, curveSegments: 4 })
+  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); g.computeVertexNormals(); return g
 }
 
 // Inline JSX shapes cached by parameters so re-renders don't rebuild geometry.
