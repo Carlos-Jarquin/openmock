@@ -89,19 +89,54 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duo
   }
   const pause = () => { tlLive.playing = false; tlLive.pending = true; setPlaying(false) }
   const seek = (t: number) => { tlLive.t = Math.max(0, Math.min(T, t)); tlLive.disc = null; tlLive.active = true; if (!tlLive.playing) tlLive.pending = true }
+  // Where Add puts the next keyframe after the last one (the dashed bar after the last diamond)
+  const [gap, setGap] = useState(1.5)
+  const near = (t: number, ks: Keyframe[] = keys) => { const s0 = starts(ks); return s0.findIndex(x => Math.abs(x - t) < 0.02) }
+  const showHead = (at: number, next: Keyframe[]) => {
+    const T2 = total(next); tlLive.t = at
+    const u = tlLive.ui; if (u.scrub) u.scrub.value = String(T2 ? at / T2 * 1000 : 0); if (u.head) u.head.style.left = `${(at - tlLive.view0) / (tlLive.view || viewSpan(T2, gap)) * 100}%`; if (u.time) u.time.textContent = `${fmt(at)} / ${fmt(T2)}`
+  }
+  /** New keyframe from the current scene at time `at`: appended after the last one, or splitting the segment it lands in. */
+  const insertAt = (at: number, s: KfState, ks: Keyframe[]) => {
+    const s0 = starts(ks), k: Keyframe = { id: uid(), dur: 0, ease: 'inout', s }
+    let i = s0.findIndex(x => x > at); if (i < 0) i = ks.length
+    const next = ks.map(x => ({ ...x }))
+    k.dur = Math.round((at - s0[i - 1]) * 100) / 100
+    if (i < ks.length) next[i].dur = Math.round((s0[i] - at) * 100) / 100
+    next.splice(i, 0, k); return { next, i, k }
+  }
   const add = () => {
     const s = snapshot()
-    const i = sel ? keys.findIndex(x => x.id === sel) + 1 : keys.length
-    // a keyframe identical to its neighbour animates nothing, which reads as Play being broken
-    const prev = keys[i - 1]
-    if (prev && JSON.stringify(prev.s) === JSON.stringify(s)) { flash(`Nothing has changed since keyframe ${i}. Move the phone, hand or thumb first, then add a keyframe.`, true); return }
-    const k: Keyframe = { id: uid(), dur: i ? 1.5 : 0, ease: 'inout', s }
-    const next = [...keys.slice(0, i), k, ...keys.slice(i)]; setKeys(next); setSel(k.id)
-    // move the playhead to the new keyframe so the ruler shows where it went (the view already matches it)
-    const at = starts(next)[i], T2 = total(next); tlLive.t = at
-    const u = tlLive.ui; if (u.scrub) u.scrub.value = String(T2 ? at / T2 * 1000 : 0); if (u.head) u.head.style.left = `${(at - tlLive.view0) / (tlLive.view || viewSpan(T2)) * 100}%`; if (u.time) u.time.textContent = `${fmt(at)} / ${fmt(T2)}`
-    flash(next.length < 2 ? 'Keyframe 1 added. Now change the phone, hand or thumb and add another.' : `Keyframe ${i + 1} added at ${fmt(at)}. Press Play to animate.`)
+    if (!keys.length) { const k: Keyframe = { id: uid(), dur: 0, ease: 'inout', s }; setKeys([k]); setSel(k.id); showHead(0, [k]); return }
+    const T0 = total(keys), t = tlLive.t
+    // on or before the last keyframe: the new one goes the gap after it (between keyframes, just change the pose to key it there)
+    const at = t > T0 + 0.01 ? t : T0 + gap
+    const { next, i, k } = insertAt(Math.round(at * 100) / 100, s, keys)
+    setKeys(next); setSel(k.id); showHead(starts(next)[i], next)
+    flash(`Keyframe ${i + 1} added at ${fmt(starts(next)[i])}. Change the pose, then press Play.`)
   }
+  // Auto-key: watch the scene; a change by Carlos updates the keyframe under the playhead, or creates one there
+  const [editing, setEditing] = useState(-1)
+  const watch = useRef({ last: '', quietUntil: 0 })
+  const live = useRef({ keys, gap }); live.current = { keys, gap }
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const W = watch.current, now = performance.now(), ks = live.current.keys
+      // the timeline itself is driving the scene (playing or just scrubbed): take its result as the new baseline
+      if (tlLive.active || tlLive.playing || tlLive.pending) W.quietUntil = now + 450
+      const s = snapshot(), j = JSON.stringify(s), changed = W.last !== '' && j !== W.last; W.last = j
+      const at = near(tlLive.t, ks); setEditing(at)
+      if (!ks.length) { const k: Keyframe = { id: uid(), dur: 0, ease: 'inout', s }; setKeys([k]); setSel(k.id); return }
+      if (!changed || now < W.quietUntil) return
+      if (at >= 0) { if (JSON.stringify(ks[at].s) !== j) setKeys(ks.map((x, i) => i === at ? { ...x, s } : x)); return }
+      const T0 = total(ks); if (tlLive.t > T0) return
+      // between keyframes: After Effects style, the change becomes a new keyframe at the playhead
+      const { next, i, k } = insertAt(Math.round(tlLive.t * 100) / 100, s, ks); setKeys(next); setSel(k.id); setEditing(i)
+      flash(`Keyframe ${i + 1} added at ${fmt(tlLive.t)} for your change.`)
+    }, 200)
+    return () => window.clearInterval(id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot, setKeys, flash])
   const upd = (id: string, p: Partial<Keyframe>) => setKeys(keys.map(k => k.id === id ? { ...k, ...p } : k))
   const move = (i: number, d: number) => { const j = i + d; if (j < 0 || j >= keys.length) return; const n = [...keys]; [n[i], n[j]] = [n[j], n[i]]; setKeys(n) }
   const jump = (i: number) => { setSel(keys[i].id); if (playing) pause(); apply(keys[i].s); tlLive.t = st[i]; seek(st[i]) }
@@ -145,6 +180,7 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duo
       <div className="tl-bar">
         <button className="ghost icon" onClick={() => setOpen(!open)} aria-expanded={open} title={open ? 'Hide timeline' : 'Show timeline'}><span style={{ display: 'inline-flex', transform: open ? '' : 'rotate(-90deg)' }}><Ico d={I.chev} /></span></button>
         <strong>Timeline</strong>
+        {editing >= 0 && !playing && <span className="tl-editing" role="status" title="Changes to the phone, hand, thumb or camera go into this keyframe">Editing keyframe {editing + 1}</span>}
         <button onClick={add} title="Add a keyframe from the current view"><Ico d={I.add} /> Add keyframe</button>
         <button className="icon" onClick={() => seek(0)} title="Go to start" aria-label="Go to start"><Ico d={I.start} /></button>
         <button className="icon" onClick={playing ? pause : play} title={playing ? 'Pause' : 'Play'} aria-label={playing ? 'Pause' : 'Play'} disabled={rec}><Ico d={playing ? I.pause : I.play} /></button>
@@ -159,10 +195,11 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duo
         <label className="ghost icon btnlike" title="Load keyframes from JSON" aria-label="Load keyframes from JSON"><Ico d={I.up} /><input type="file" accept="application/json,.json" hidden onChange={e => { const f = e.target.files?.[0]; if (f) importJson(f); e.target.value = '' }} /></label>
       </div>
       {open && <>
-        <Track keys={keys} sel={sel} setKeys={setKeys} seek={seek} onSelect={i => { setSel(keys[i].id); if (playing) pause() }}
+        <Track gap={gap} setGap={setGap} keys={keys} sel={sel} setKeys={setKeys} seek={seek} onSelect={i => { setSel(keys[i].id); if (playing) pause() }}
           below={(span, pct) => <ScreenLane clips={clips} setClips={setClips} span={span} T={T} duo={duo} defTarget={duoScreen} current={current} flash={flash} pct={pct} />} />
         <div className="tl-cards">
-          {keys.length === 0 && <p className="hint">Set up the phone, hand and thumb, then press Add keyframe. Change them, add another keyframe, then press Play to animate between them.</p>}
+          {keys.length === 1 && <p className="hint">Move the phone or hand, add a keyframe, change the pose, then press Play.</p>}
+          {keys.length === 0 && <p className="hint">Move the phone or hand, add a keyframe, change the pose, then press Play.</p>}
           {keys.map((x, i) => (
             <div key={x.id} className={`tl-card ${x.id === sel ? 'sel' : ''}`} onClick={() => jump(i)}>
               <div className="tl-card-h"><b>{i + 1}</b><span>{fmt(st[i])}</span></div>

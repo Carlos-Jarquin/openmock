@@ -14,11 +14,11 @@ export function parseTime(v: string): number | null {
   m = t.match(/^(\d*\.?\d+)\s*(?:s|sec|secs|seconds?)?$/); return m ? +m[1] : null
 }
 /** Seconds the track shows: the timeline plus room to drag it longer. */
-export const viewSpan = (T: number) => Math.max(2, Math.ceil(T * 1.25 + 0.5))
+export const viewSpan = (T: number, gap = 1.5) => Math.max(2, Math.ceil((T + gap) * 1.15 + 0.3))
 /** Tick step that gives labels roughly every 60 px. */
 function step(span: number, px: number) { const want = span * 60 / Math.max(1, px); return [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60].find(s => s >= want) ?? 60 }
 
-type Drag = { kind: 'key' | 'edge' | 'end' | 'head'; i: number; x0: number; keys: Keyframe[]; span: number; v0: number; px: number; left: number }
+type Drag = { kind: 'key' | 'edge' | 'end' | 'head' | 'gap'; i: number; gap0?: number; x0: number; keys: Keyframe[]; span: number; v0: number; px: number; left: number }
 const MIN_VIEW = 1
 // Our own line icons on a 24 grid (1.75 stroke, round caps and joins, currentColor)
 const ChgIco = ({ d }: { d: string }) => <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
@@ -37,7 +37,8 @@ const changesOf = (a: Keyframe['s'], b: Keyframe['s']) => {
   return out
 }
 
-export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
+export function Track({ keys, sel, setKeys, onSelect, seek, below, gap = 1.5, setGap }: {
+  gap?: number; setGap?: (g: number) => void
   below?: (span: number, pct: (t: number) => string) => React.ReactNode
   keys: Keyframe[]; sel: string | null; setKeys: (k: Keyframe[]) => void; onSelect: (i: number) => void; seek: (t: number) => void
 }) {
@@ -65,7 +66,7 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
   // View window [v0, v0 + span] in seconds. Fit (zoom null) shows the whole timeline plus room to drag it longer;
   // pinch or Cmd/Ctrl + scroll zooms about the pointer between 1 s and the duration + 10 s, sideways scroll pans.
   const [zoom, setZoom] = useState<{ v0: number; vs: number } | null>(null)
-  const maxView = Math.max(MIN_VIEW * 2, T + 10), fit = viewSpan(T)
+  const maxView = Math.max(MIN_VIEW * 2, T + 10), fit = viewSpan(T, gap)
   const clampView = (v0: number, vs: number) => { vs = Math.min(maxView, Math.max(MIN_VIEW, vs)); const range = Math.max(fit, vs, T + 10); return { v0: Math.min(Math.max(0, v0), Math.max(0, range - vs)), vs } }
   const cur = zoom ? clampView(zoom.v0, zoom.vs) : { v0: 0, vs: fit }
   // frozen while dragging so the track doesn't rescale under the pointer
@@ -98,7 +99,7 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
     e.stopPropagation(); e.preventDefault()
     const r = box.current!.getBoundingClientRect()
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    setDrag({ kind, i, x0: e.clientX, keys, span, v0, px: r.width, left: r.left })
+    setDrag({ kind, i, gap0: gap, x0: e.clientX, keys, span, v0, px: r.width, left: r.left })
     if (kind === 'head') moveHead(e.clientX, r.left, r.width, span, v0)
   }
   const moveHead = (x: number, left: number, px: number, sp: number, o: number) => {
@@ -109,6 +110,10 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
     if (d.kind === 'head') { moveHead(e.clientX, d.left, d.px, d.span, d.v0); return }
     const dt = (e.clientX - d.x0) / d.px * d.span, k = d.keys.map(x => ({ ...x })), s0 = starts(d.keys), T0 = total(d.keys)
     let at = 0
+    if (d.kind === 'gap') {
+      // where Add will put the next keyframe, measured from the last one
+      const g = Math.min(30, Math.max(MIN, snap((d.gap0 ?? 1.5) + dt))); setGap?.(r1(g)); setTip({ x: (T0 + g - d.v0) / d.span * d.px, text: `Next keyframe ${g.toFixed(1)} s later` }); return
+    }
     if (d.kind === 'key') {
       // retime one keyframe between its neighbours; the ones after it stay where they are
       const lo = s0[d.i - 1] + MIN, hi = d.i < k.length - 1 ? s0[d.i + 1] - MIN : MAX_T
@@ -149,6 +154,11 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
             <span>{+x.dur.toFixed(2)} s</span>
             <i className="tl-edge" onPointerDown={e => begin(e, 'edge', i)} title="Drag to change this part's length" />
           </div>) })}
+        {keys.length > 0 && <div className="tl-seg tl-next" style={{ left: pct(T), width: `${gap / span * 100}%` }} onPointerDown={e => e.stopPropagation()}
+          title={`Add keyframe puts the next one ${gap.toFixed(1)} s after keyframe ${keys.length}. Drag the edge to change it.`}>
+          <span>{+gap.toFixed(1)} s</span>
+          <i className="tl-edge" onPointerDown={e => begin(e, 'gap', 0)} title="Drag to set how long the move to the next keyframe takes" />
+        </div>}
         {keys.map((x, i) => <button key={x.id} className={`tl-dia ${x.id === sel ? 'sel' : ''}`} style={{ left: pct(st[i]) }} aria-label={`Keyframe ${i + 1} at ${fmt(st[i])}`}
           title={i ? `Keyframe ${i + 1} at ${fmt(st[i])}. Drag to retime, or double-click to type a time.` : 'Keyframe 1 at the start'}
           onDoubleClick={e => { e.stopPropagation(); setDrag(null); setTip(null); if (i) setEdit({ kind: 'key', i, text: String(r2(st[i])), err: '' }) }}

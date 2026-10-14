@@ -105,3 +105,7 @@ button.ghost { background: #fff; color: #1d1d22; }
 .tl-chg-i.phone { color: #4a5bd4; }
 .tl-chg-i.hand { color: #b8621b; }
 .tl-chg-i.camera { color: #2f8a5b; }
+
+.tl-editing { font-size: 11px; color: #3445a8; background: #eef1ff; border: 1px solid #d3daff; border-radius: 10px; padding: 1px 8px; white-space: nowrap; }
+.tl-seg.tl-next { background: transparent; border: 1px dashed #b4c0ff; cursor: default; }
+.tl-seg.tl-next span { color: #7d88c4; }
