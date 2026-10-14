@@ -79,7 +79,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
   // else the Fold slider.
   const root = useRef<THREE.Group>(null), swingG = useRef<THREE.Group>(null), spineG = useRef<THREE.Group>(null), spineM = useRef<THREE.Mesh>(null)
   const grooves = useRef<(THREE.Mesh | null)[]>([])
-  const mats = useMemo(() => ({ fixed: screenMaterial(), moving: screenMaterial(), outer: screenMaterial(), strip: screenMaterial() }), [])
+  const mats = useMemo(() => ({ fixed: screenMaterial(), moving: screenMaterial(), outer: screenMaterial(OUTER_PROJ), strip: screenMaterial() }), [])
   const strip = useMemo(() => foldStripGeometry(), [])
   useEffect(() => () => strip.dispose(), [strip])
   const stripFold = useRef(-1)
@@ -133,15 +133,23 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     const set = (m: THREE.ShaderMaterial, on: number, blur: number, dark: number, fadeOut: number, proj: number) => {
       const u = m.uniforms; u.has.value = on * (m === mats.outer ? hasOut : hasIn); u.m.value = blur; u.md.value = dark; u.fo.value = fadeOut; u.proj.value = proj
       u.crease.value = m === mats.outer ? 0 : crease
-      if (root.current) u.toRoot.value.copy(_inv.copy(root.current.matrixWorld).invert())
+      if (root.current) {
+        u.toRoot.value.copy(_inv.copy(root.current.matrixWorld).invert())
+        // pass-through projection from the actual viewer: the content holds still on screen while the panel turns.
+        // A camera behind (or nearly in) the target plane falls back to a fixed eye straight in front of it.
+        const cam = _cam.copy(camera.position).applyMatrix4(_inv), pl = u.plane.value as number
+        if (cam.z - pl > 0.3) u.eye.value.copy(cam); else u.eye.value.set(u.cx.value, 0, pl + 4)
+      }
     }
     if (!dis) {
       const i = o.screen === 'inner' ? 1 : 0
       set(mats.fixed, i, 0, 0, 0, 0); set(mats.moving, i, 0, 0, 0, 0); set(mats.strip, i, 0, 0, 0, 0); set(mats.outer, 1 - i, 0, 0, 0, 0)
     } else {
       const dIn = smoother((180 - fold) / 80), dOut = smoother(fold / 80)
-      const foIn = smoother((70 - fold) / 60), foOut = smoother((fold - 110) / 60), proj = smoother((fold - 20) / 150)
-      set(mats.fixed, 1, 0, 0, foIn, 0); set(mats.moving, 1, dIn, dIn, foIn, proj); set(mats.strip, 1, 0, dIn, foIn, 0); set(mats.outer, 1, dOut, dOut, foOut, 0)
+      // the outer screen is the exact mirror of the inner moving half: projected fixed in space onto the closed outer
+      // screen's plane (full at 0, gone by 160), frosting and darkening as the hinge leaves 0, idle as it faces away
+      const foIn = smoother((70 - fold) / 60), foOut = smoother((fold - 110) / 60), proj = smoother((fold - 20) / 150), projO = smoother((160 - fold) / 150)
+      set(mats.fixed, 1, 0, 0, foIn, 0); set(mats.moving, 1, dIn, dIn, foIn, proj); set(mats.strip, 1, 0, dIn, foIn, 0); set(mats.outer, 1, 0.6 * dOut, 1.3 * dOut, foOut, projO)   // Apple's outer screen darkens more and frosts less
     }
   })
   const zf = T / 2 + E          // front face layers
@@ -254,17 +262,18 @@ export const foldWidth = (f: number) => 1 + Math.max(0, -Math.cos(f * Math.PI / 
  * clears it); the blur covers the half (ramping in over the 30% nearest the hinge) and the darkening runs from 35% at the hinge to 80% at the free edge. Blur radius is in screen heights. */
 const SCREEN_VS = `uniform mat4 toRoot; varying vec2 vUv; varying vec3 vRoot;
 void main() { vUv = uv; vRoot = (toRoot * modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`
-const SCREEN_FS = `uniform sampler2D map; uniform float has, blur, m, md, fo, proj, aspect, plane, sw, sh, crease; uniform vec2 rep, off, band; uniform vec3 eye;
+const SCREEN_FS = `uniform sampler2D map; uniform float has, blur, m, md, fo, proj, aspect, plane, sw, sh, cx, eo, crease; uniform vec2 rep, off, band; uniform vec3 eye;
 varying vec2 vUv; varying vec3 vRoot;
 void main() {
   vec3 idle = vec3(0.0024, 0.0027, 0.0037), c = idle;
   if (has > 0.5) {
-    vec2 st = vUv; float e = vUv.x;
+    // e: 0 at the hinge side, 1 at the free edge (inner moving half: u 0.5 to 0; outer screen: u 0 to 1)
+    vec2 st = vUv; float e = eo > 0.5 ? vUv.x : clamp(1.0 - 2.0 * vUv.x, 0.0, 1.0);
     if (proj > 0.001) {
       // fixed front-view projection onto the open inner-screen plane: the image holds still while the half turns.
       // Blended in from 70 to 160 degrees; nearer edge-on the projection would smear, so it uses the panel's own uv.
       float d = (plane - eye.z) / (vRoot.z - eye.z); vec2 p = eye.xy + (vRoot.xy - eye.xy) * d;
-      st = mix(vUv, vec2(p.x / (2.0 * sw) + 0.5, p.y / sh + 0.5), proj); e = clamp(1.0 - 2.0 * vUv.x, 0.0, 1.0);
+      st = mix(vUv, vec2((p.x - cx) / (2.0 * sw) + 0.5, p.y / sh + 0.5), proj);
     }
     float r = blur * m * smoothstep(0.0, 0.3, e);
     float dark = min(0.8, md * (0.35 + 0.6 * smoothstep(0.0, 1.0, e)));
@@ -294,12 +303,17 @@ void main() {
   gl_FragColor = vec4(c, 1.0);
   #include <colorspace_fragment>
 }`
-const _inv = new THREE.Matrix4()
-function screenMaterial() {
+const _inv = new THREE.Matrix4(), _cam = new THREE.Vector3()
+/** Projection target of a screen: its rest plane (root z), centre x and half width / height there. */
+interface ProjTarget { plane: number; cx: number; sw: number; sh: number; eo: number }
+const INNER_PROJ: ProjTarget = { plane: T / 2 + E * 2, cx: 0, sw: SW, sh: SH, eo: 0 }
+// the closed outer screen: the swing half turned 180 degrees about the hinge axis (0, T/2 + GAP)
+const OUTER_PROJ: ProjTarget = { plane: 2 * (T / 2 + GAP) + T / 2 + E * 2, cx: W / 2, sw: OW / 2, sh: OH, eo: 1 }
+function screenMaterial(pt: ProjTarget = INNER_PROJ) {
   return new THREE.ShaderMaterial({ vertexShader: SCREEN_VS, fragmentShader: SCREEN_FS, toneMapped: false, uniforms: {
     crease: { value: 0 }, band: { value: new THREE.Vector2(0, 0) },
     map: { value: null }, has: { value: 0 }, blur: { value: 0 }, m: { value: 0 }, md: { value: 0 }, fo: { value: 0 }, proj: { value: 0 }, aspect: { value: 1 }, rep: { value: new THREE.Vector2(1, 1) }, off: { value: new THREE.Vector2() },
-    toRoot: { value: new THREE.Matrix4() }, eye: { value: new THREE.Vector3(0, 0, 4) }, plane: { value: T / 2 + E * 2 }, sw: { value: SW }, sh: { value: SH } } })
+    toRoot: { value: new THREE.Matrix4() }, eye: { value: new THREE.Vector3(pt.cx, 0, pt.plane + 4) }, plane: { value: pt.plane }, sw: { value: pt.sw }, sh: { value: pt.sh }, cx: { value: pt.cx }, eo: { value: pt.eo } } })
 }
 
 /** Half-width of the screen's bent fold region (3 mm each side of the hinge line), about a real foldable's fold zone. */
