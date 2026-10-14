@@ -8,8 +8,8 @@ import * as THREE from 'three'
 import { sceneHit } from '../devices/shared'
 import type { HandFit, HandPose } from './Hands'
 
-export type GesturePose = 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap'
-export const GESTURE_POSES: GesturePose[] = ['tap', 'swipe', 'zoom', 'thumb', 'thumbswipe', 'type', 'hover', 'holdtap']
+export type GesturePose = 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap' | 'rest'
+export const GESTURE_POSES: GesturePose[] = ['tap', 'swipe', 'zoom', 'thumb', 'thumbswipe', 'type', 'hover', 'holdtap', 'rest']
 const isPath = (p: GesturePose) => p === 'swipe' || p === 'thumbswipe'
 /** Hand rotation relative to the phone, in degrees: tilt about the phone's x axis, spin about the screen normal, roll
  * about the hand's own wrist-to-knuckle axis. The pivot is the touching point or the grip, so contacts hold. */

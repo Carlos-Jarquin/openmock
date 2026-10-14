@@ -14,11 +14,12 @@ import { loadLogo, loadLocalLogo } from './localLogo'
 import { Env, retryEnvironment } from './Env'
 import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type Guide } from './hands/aiHands'
 import { IDLE_LEVELS } from './hands/motion'
-import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
+import { HandRig, HAND_POSES, SKIN_TONES, posesFor, poseOk, type HandFit, type HandPose } from './hands/Hands'
 import { SPECTRAL_DEFAULTS } from './hands/spectral'
 import { HAND_LOOK0, NAIL_SHAPES, NAIL_SWATCHES } from './hands/nails'
 import { GestureControls, HAND_ROT0, isGesture, rescale, screenOf } from './hands/gestures'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
+import { IPAD_MINI, IPAD_PRO_11, IPAD_PRO_129 } from './devices/ipadSpecs'
 import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER, SKETCH_SHADOW } from './sketch/Sketch'
 import { SB_DEFAULT } from './statusbar/config'
 import { StatusBarControls } from './statusbar/Panel'
@@ -46,9 +47,24 @@ const VIEW_PRESETS: [string, Pose][] = [
 ]
 const APPLE_HERO = { tiltX: -18.438, tiltY: 230.375, rotZ: -3.125, zoom: 1.937, panX: 0.347, panY: -0.307, fov: 21.375 }
 // Device bodies the hands can grip, in model units (1 = 100 mm).
-const fitOf = (s: typeof IPHONE_18_PRO): HandFit => ({ W: s.body.w / 100, H: s.body.h / 100, T: s.body.t / 100, R: s.body.cornerR / 100, E: s.body.edge / 100,
-  SW: s.active.w / 100, SH: s.active.h / 100, PW: Math.round(s.px.w / 3), PH: Math.round(s.px.h / 3) })
-const HAND_FITS: Partial<Record<DeviceId, HandFit>> = { ip18: fitOf(IPHONE_18_PRO), ip18max: fitOf(IPHONE_18_PRO_MAX) }
+type BodySpec = { body: { w: number; h: number; t: number; cornerR: number; edge: number }; active: { w: number; h: number }; px: { w: number; h: number } }
+// points: iPhones are @3x, iPads @2x
+const fitOf = (s: BodySpec, scale = 3, kind: HandFit['kind'] = 'phone'): HandFit => ({ W: s.body.w / 100, H: s.body.h / 100, T: s.body.t / 100, R: s.body.cornerR / 100, E: s.body.edge / 100,
+  SW: s.active.w / 100, SH: s.active.h / 100, PW: Math.round(s.px.w / scale), PH: Math.round(s.px.h / scale), kind })
+const HAND_FITS: Partial<Record<DeviceId, HandFit>> = { ip18: fitOf(IPHONE_18_PRO), ip18max: fitOf(IPHONE_18_PRO_MAX),
+  ipmini: fitOf(IPAD_MINI, 2, 'tablet'), ippro11: fitOf(IPAD_PRO_11, 2, 'tablet'), ippro13: fitOf(IPAD_PRO_129, 2, 'tablet') }
+// iPhone Duo (devices/Duo.tsx): open 164.6 x 117.8 x 5.2 mm, centred on the hinge, the inner screen across both halves;
+// closed 82.3 x 117.8 mm, two halves (10.5 mm) with the outer display in front. With the fold camera off the closed
+// stack is not re-centred, so its centre sits half a width right of the hinge and half a body forward.
+const DUO_T = 0.052, DUO_GAP = 0.0012, DUO_W = 0.823
+const DUO_OPEN: HandFit = { W: 2 * DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005, SW: 1.11 * INNER_PX.w / INNER_PX.h, SH: 1.11, PW: Math.round(INNER_PX.w / 3), PH: Math.round(INNER_PX.h / 3), kind: 'tablet' }
+const DUO_CLOSED: HandFit = { W: DUO_W, H: 1.178, T: 2 * DUO_T + DUO_GAP, R: 0.127, E: 0.005, SW: 1.136 * OUTER_PX.w / OUTER_PX.h, SH: 1.136, PW: Math.round(OUTER_PX.w / 3), PH: Math.round(OUTER_PX.h / 3), kind: 'phone' }
+const DUO_CLOSED_OFF: HandFit = { ...DUO_CLOSED, cx: DUO_W / 2, cz: DUO_T / 2 + DUO_GAP }
+/** The body the hands grip, or null: the Duo only while it rests fully open or closed (not mid-fold). */
+function fitFor(d: Pick<DeviceState, 'model' | 'opts' | 'foldFollow'>): HandFit | null {
+  if (d.model !== 'duo') return HAND_FITS[d.model] ?? null
+  return d.opts.fold >= 180 ? DUO_OPEN : d.opts.fold <= 0 ? (d.foldFollow ? DUO_CLOSED : DUO_CLOSED_OFF) : null
+}
 /** Violet silhouette scene: a hand held up from the lower right against a violet backdrop with light streaks. */
 const VIOLET_CAMERA = { tiltX: 4, tiltY: -16, rotZ: -11, zoom: 1.1, panX: -0.11, panY: 0.1, fov: 26 }
 const VIOLET_BG = { c1: '#7c68ea', c2: '#a996ff', angle: 110 }
@@ -196,7 +212,7 @@ const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, s
     <group ref={ref} position={pos} rotation={rot}
       onPointerDown={e => { if (e.button !== 0 || e.shiftKey || e.altKey || e.intersections.some(i => onGizmo(i.object))) return; e.stopPropagation(); sceneHit.current = true; onGrab(d.uid, e.nativeEvent) }}>
       <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, screenTex.texture, d.hands.pose]}>
-        <HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={HAND_FITS[device] ?? null} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle} look={d.look}>
+        <HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={fitFor(d)} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle} look={d.look}>
           <SketchStyle on={sketch} o={sk}><D uid={d.uid} texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
             {...(device === 'duo' ? { textureOuter: shownOuter?.texture ?? null, mediaAspectOuter: shownOuter?.aspect } : {})} /></SketchStyle>
         </HandRig>
@@ -316,9 +332,10 @@ export default function App() {
   const handRot = D0.handRot, setHandRot = S.dev.handRot
   const idle = D0.idle, setIdle = S.dev.idle
   const look = D0.look, setLook = S.dev.look
-  useEffect(() => { const f = HAND_FITS[device], was = fitOfDev.get(D0.uid) ?? HAND_FITS.ip18!
+  const fitNow = fitFor(D0)
+  useEffect(() => { const f = fitNow, was = fitOfDev.get(D0.uid) ?? HAND_FITS.ip18!
     if (f && f !== was) setGesture(g => rescale(g, screenOf(was), screenOf(f)))
-    if (f) fitOfDev.set(D0.uid, f) }, [device, D0.uid])
+    if (f) fitOfDev.set(D0.uid, f) }, [fitNow, D0.uid])
   // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
   const [ai, setAi] = useState<{ guide: Guide; shadows: boolean; busy: boolean; url: string | null }>({ guide: 'depth', shadows: false, busy: false, url: null })
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
@@ -613,7 +630,7 @@ export default function App() {
   const violetScene = () => {
     setLight(l => ({ ...l, preset: 'violet', intensity: 1.6, shadow: 0 }))
     setBgMode('streaks'); setBg1(VIOLET_BG.c1); setBg2(VIOLET_BG.c2); setAngle(VIOLET_BG.angle); setTransparent(false)
-    if (HAND_FITS[device]) setHands({ pose: 'hold', tone: 'silhouette' })
+    if (fitNow) setHands({ pose: 'hold', tone: 'silhouette' })
     else { setDevice('ip18'); setHands({ pose: 'hold', tone: 'silhouette' }) }
     setOpts(o => ({ ...o, finish: 'black' })); setPose(VIOLET_CAMERA)
   }
@@ -643,7 +660,7 @@ export default function App() {
   const tlApi = useRef<TlApi | null>(null)
   const [tlInfo, setTlInfo] = useState<TlInfo>({ fps: 60, fmtOut: 'webm', mp4ok: false, rec: false, keys: 0 })
   const [dropOver, setDropOver] = useState(false)
-  const handOk = !!HAND_FITS[device]
+  const handOk = !!fitNow, poses = posesFor(fitNow)
   const tones = Object.entries(SKIN_TONES)
   const finishColour = (v: unknown) => (v as { back?: string; frame?: string }).back ?? (v as { frame?: string }).frame ?? '#c9ccd1'
   const pickFile = (to: 'inner' | 'outer') => { setMediaTo(to); fileInput.current?.click() }
@@ -765,7 +782,7 @@ export default function App() {
       {ai.url && <button className="ghost" onClick={() => setAi(a => { URL.revokeObjectURL(a.url!); return { ...a, url: null } })}>Back to 3D hands</button>}
       <button className="ghost" onClick={exportAiPasses}>Export for AI hands</button>
       <p className="hint">Uses ComfyUI on this Mac to repaint only the hands. The phone stays exactly as rendered.</p>
-    </> : <p className="hint">Turn on a hand under Device › Hand first. {handOk ? '' : 'Hands are available for the iPhone 18 Pro and 18 Pro Max.'}</p> },
+    </> : <p className="hint">Turn on a hand under Device › Hand first. {handOk ? '' : device === 'duo' ? 'Hands hold the iPhone Duo fully open or closed. Finish the fold to see them.' : 'Hands are available for the iPhones and iPads, and the iPhone Duo open or closed.'}</p> },
     // DEVICE rail
     ...(multi || moved ? [{ id: 'place', side: 'device' as const, title: 'Position', icon: 'move', settings: ['Across', 'Up and down', 'Depth', 'Turn', 'Tilt', 'Roll', 'Reset position'], render: () => { const xf = D0.xf, set = (k: keyof Xf) => (n: number) => S.dev.xf(o => ({ ...o, [k]: n }))
       return <>
@@ -836,13 +853,14 @@ export default function App() {
       <p className="hint">Switching screens swings the hinge in 0.9 s at 1×. Each screen frosts and darkens as it leaves its rest and is clear as the hinge settles. Untick Dissolve while folding for a sharp still at any angle.</p>
     </> }] : []),
     { id: 'hand', side: 'device', title: 'Hand', icon: 'hand', settings: ['Hand size', 'Nail length', 'Nail shape', 'Nail colour', ...NAIL_SHAPES.map(([, l]) => `${l} nails`), 'Grip', 'Gesture', ...HAND_POSES.map(([, l]) => l), 'Touch target', 'Show marker', 'Skin tone', ...tones.map(([, t]) => t.label), 'Tint', 'Transparency', 'Glimmer', 'Rotation', 'Tilt', 'Spin', 'Roll', 'Idle motion', 'Reset hand', 'Hand size', 'Nail length', 'Nail shape'], render: () => handOk ? <>
+      {!poseOk(fitNow, hands.pose) && <p className="hint warn">{HAND_POSES.find(([k]) => k === hands.pose)?.[1]} does not suit this device, so the hand is hidden. Pick another grip or gesture.</p>}
       <div className="om-sub"><h3>Grip</h3>
-        <div className="seg wrap">{HAND_POSES.filter(([k]) => !isGesture(k)).map(([k, l]) => <button key={k} className={hands.pose === k ? 'on' : ''} aria-pressed={hands.pose === k} onClick={() => setHands({ ...hands, pose: k })}>{l}</button>)}</div></div>
+        <div className="seg wrap">{poses.filter(([k]) => !isGesture(k)).map(([k, l]) => <button key={k} className={hands.pose === k ? 'on' : ''} aria-pressed={hands.pose === k} onClick={() => setHands({ ...hands, pose: k })}>{l}</button>)}</div></div>
       <div className="om-sub"><h3>Gesture</h3>
-        <div className="seg wrap">{HAND_POSES.filter(([k]) => isGesture(k)).map(([k, l]) => <button key={k} className={hands.pose === k ? 'on' : ''} aria-pressed={hands.pose === k} onClick={() => setHands({ ...hands, pose: k })}>{l}</button>)}</div>
+        <div className="seg wrap">{poses.filter(([k]) => isGesture(k)).map(([k, l]) => <button key={k} className={hands.pose === k ? 'on' : ''} aria-pressed={hands.pose === k} onClick={() => setHands({ ...hands, pose: k })}>{l}</button>)}</div>
         <p className="hint">A gesture replaces the grip. Pick Off under Grip to hide the hand.</p></div>
       {hands.pose !== 'off' && <>
-        {isGesture(hands.pose) && <div className="om-sub"><GestureControls pose={hands.pose} fit={HAND_FITS[device]!} g={gesture} set={setGesture} /></div>}
+        {isGesture(hands.pose) && <div className="om-sub"><GestureControls pose={hands.pose} fit={fitNow!} g={gesture} set={setGesture} /></div>}
         <div className="om-sub"><h3>Skin tone</h3>
           <div className="seg wrap">{tones.map(([k, t]) => <button key={k} className={hands.tone === k ? 'on' : ''} title={t.label} onClick={() => setHands({ ...hands, tone: k })}>
             <span className="swatch" style={{ background: t.color }} />{t.label}</button>)}</div>
@@ -879,7 +897,7 @@ export default function App() {
           <input type="color" aria-label="Custom nail colour" value={look.nailColor ?? '#f2d4cf'} onChange={e => setLook(o => ({ ...o, nailColor: e.target.value }))} /></div>
         <button className="ghost" onClick={() => setLook(HAND_LOOK0)}>Reset appearance</button>
         <p className="hint">Size and nails belong to this device's hand and go into keyframes. Long nails keep clear of the glass; the finger lands on its pad.</p></div>
-    </> : <p className="hint">Hands are available for the iPhone 18 Pro and 18 Pro Max.</p> },
+    </> : <p className="hint">{device === 'duo' ? 'Hands hold the iPhone Duo fully open or closed. Finish the fold to see them.' : 'Hands are available for the iPhones and iPads, and the iPhone Duo open or closed.'}</p> },
   ]
 
   // Palette commands that apply straight away
@@ -889,7 +907,7 @@ export default function App() {
     ...(def.finishes ? Object.entries(def.finishes).map(([k, v]) => ({ id: `fin-${k}`, group: 'device' as const, section: 'finish', label: `Finish › ${v.label}`, meta: (opts.finish === k ? 'CURRENT' : 'APPLY') as Cmd['meta'], run: () => setOpts(o => ({ ...o, finish: k })) })) : []),
     ...((device === 'ip18' || device === 'ip18max') ? [{ id: 'sim', group: 'device' as const, section: 'finish', label: 'Finish › SIM tray', meta: 'TOGGLE' as const, run: () => setOpts(o => ({ ...o, simTray: !o.simTray })) }] : []),
     ...(sbSize ? [{ id: 'sb', group: 'device' as const, section: 'statusbar', label: 'Status bar › Show status bar', meta: 'TOGGLE' as const, run: () => setSbOn(v => !v) }] : []),
-    ...(handOk ? HAND_POSES.map(([k, l]) => ({ id: `pose-${k}`, group: 'device' as const, section: 'hand', label: `Hand › ${isGesture(k) ? 'Gesture' : 'Grip'} › ${l}`, meta: (hands.pose === k ? 'CURRENT' : 'APPLY') as Cmd['meta'], run: () => setHands(h => ({ ...h, pose: k })) })) : []),
+    ...(handOk ? poses.map(([k, l]) => ({ id: `pose-${k}`, group: 'device' as const, section: 'hand', label: `Hand › ${isGesture(k) ? 'Gesture' : 'Grip'} › ${l}`, meta: (hands.pose === k ? 'CURRENT' : 'APPLY') as Cmd['meta'], run: () => setHands(h => ({ ...h, pose: k })) })) : []),
     ...(handOk ? tones.map(([k, t]) => ({ id: `tone-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Skin tone › ${t.label}`, meta: 'APPLY' as const, run: () => setHands(h => ({ ...h, tone: k })) })) : []),
     ...(def.foldable ? [{ id: 'fold-in', group: 'device' as const, section: 'fold', label: 'Fold › Open (inner screen)', meta: 'APPLY' as const, run: () => { stopFold(false); foldTo('inner') } },
       { id: 'fold-out', group: 'device' as const, section: 'fold', label: 'Fold › Close (outer screen)', meta: 'APPLY' as const, run: () => { stopFold(false); foldTo('outer') } }] : []),
@@ -904,7 +922,7 @@ export default function App() {
       { id: 'lay-grid', group: 'scene' as const, section: 'devices', label: 'Layout › Grid', meta: 'APPLY' as const, run: () => layout('grid') },
     ] : []),
     ...(multi || moved ? [{ id: 'xf0', group: 'device' as const, section: 'place', label: 'Position › Reset position', meta: 'APPLY' as const, run: () => S.dev.xf(XF0) }] : []),
-    ...(HAND_FITS[device] ? NAIL_SHAPES.map(([k, l]) => ({ id: `nail-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Nails › ${l}`, meta: look.nailShape === k ? 'CURRENT' as const : 'APPLY' as const, run: () => setLook(o => ({ ...o, nailShape: k, nailLen: Math.max(o.nailLen, 0.5) })) })) : []),
+    ...(fitNow ? NAIL_SHAPES.map(([k, l]) => ({ id: `nail-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Nails › ${l}`, meta: look.nailShape === k ? 'CURRENT' as const : 'APPLY' as const, run: () => setLook(o => ({ ...o, nailShape: k, nailLen: Math.max(o.nailLen, 0.5) })) })) : []),
     { id: 'violet', group: 'scene', section: 'preset', label: 'Preset › Violet silhouette', meta: 'APPLY', run: violetScene },
     { id: 'photo', group: 'scene', section: 'style', label: 'Style › Photo', meta: style === 'photo' ? 'CURRENT' : 'APPLY', run: () => setStyle('photo') },
     { id: 'sketch', group: 'scene', section: 'style', label: 'Style › Sketch', meta: sketch ? 'CURRENT' : 'APPLY', run: () => { setStyle('sketch'); setBgMode('solid'); setBg1(SKETCH_PAPER); setTransparent(false) } },
