@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { DeviceProps } from '../types'
 import { DEFAULT_LOGO_TINT } from './shared'
-import { RearLens } from './IPhonePro'
+import { RearLens, Pressable } from './IPhonePro'
 // iPhone Duo: unofficial procedural model. Overall size and screen sizes from Apple's published specs;
 // details (bezels, island, buttons, camera) are estimates from Apple's product imagery.
 // Scale: 1 unit = 100 mm. Open 164.6 x 117.8 x 5.2 mm, closed 84.1 x 117.8 x 11.3 mm.
@@ -20,7 +20,9 @@ export const INNER_ASPECT = INNER_PX.w / INNER_PX.h
 export const OUTER_ASPECT = OUTER_PX.w / OUTER_PX.h
 const SH = 1.11, SW = (SH * INNER_ASPECT) / 2   // one half of the inner screen (bezel about 3.4 mm)
 const SCR = 0.113                                // inner screen outer corner radius, about 11.3 mm
-const OH = 1.122, OW = OH * OUTER_ASPECT, OCR = 0.105
+// outer display (after Carlos's closed front reference): about 2 mm bezel all round, large 9.8 mm corners on the free
+// side and near-square 0.8 mm corners on the hinge side, so the glass runs close to the hinge
+const OH = 1.136, OW = OH * OUTER_ASPECT, OCR = 0.098, OCR_H = 0.008
 const ISL = { w: 0.056, h: 0.085 }               // outer Dynamic Island: vertical pill near the top free corner
 export const FINISHES = {
   night: { frame: '#3a3f4b', back: '#1d212b', label: 'Night Sky' },
@@ -56,7 +58,7 @@ function Overlay({ geo, z, color = '#000', order = 2 }: { geo: THREE.BufferGeome
   </mesh>
 }
 
-/** Antenna bands (after Carlos's iPhone Duo reference): light, matte resin bands crossing the frame. Positions in model
+/** Antenna bands (positions after Carlos's iPhone Duo reference; material and colour as on our 18 Pro): matte resin bands crossing the frame. Positions in model
  *  units (1 = 100 mm) as distance from the hinge for the top and bottom edges (the same on both halves, so they line up
  *  when closed), and as y on the free short edges. Band width 1.5 mm. */
 const BANDS = { top: [0.165, 0.703], bottom: [0.295, 0.565], side: [H / 2 - 0.123, -H / 2 + 0.13], w: 0.015 }
@@ -77,6 +79,8 @@ function bandMaterial(colour: THREE.Color) {
   return m
 }
 /** Pill (stadium) face of length len and height h, extruded d out of the surface along +z with a soft edge. */
+/** Button sizes from our iPhone 18 Pro (iphoneSpecs btn): width, protrusion, sink into the frame, press travel. */
+const BTN = { w: 0.0266, prot: 0.0045, sink: 0.003, press: 0.003 }
 const pillCache = new Map<string, THREE.BufferGeometry>()
 function pillGeo(len: number, h: number, d: number) {
   const k = `${len}|${h}|${d}`, hit = pillCache.get(k); if (hit) return hit
@@ -99,22 +103,26 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     const FO = FC - 0.0005, hw = SW - FO, uF = FO / (2 * SW)
     const scrR = flat(rrect(hw, SH, [0.0001, SCR, SCR, 0.0001], FO + hw / 2), hw, SH, 0.5 + uF, 1, FO + hw / 2)
     const scrL = flat(rrect(hw, SH, [SCR, 0.0001, 0.0001, SCR], -FO - hw / 2), hw, SH, 0, 0.5 - uF, -FO - hw / 2)
-    const outer = flat(rrect(OW, OH, [OCR, OCR, OCR, OCR]), OW, OH)
+    const outer = flat(rrect(OW, OH, [OCR_H, OCR, OCR, OCR_H]), OW, OH)   // [bl, br, tr, tl]: local -x is the hinge side
     const island = new THREE.ShapeGeometry(pill(ISL.w, ISL.h), 16)
     const udc = new THREE.CircleGeometry(0.014, 24)
     return { rightBody, leftBody, bezelR, bezelL, scrR, scrL, outer, island, udc }
   }, [])
   useEffect(() => () => Object.values(g).forEach(x => x.dispose()), [g])
   const frameMat = <meshPhysicalMaterial color={f.frame} metalness={0.9} roughness={0.28} clearcoat={0.3} />
-  // antenna band resin: the frame colour pulled to a light neutral, as in the reference
-  const bandMat = useMemo(() => bandMaterial(new THREE.Color(f.frame).lerp(new THREE.Color('#eceef0'), 0.7)), [f.frame])
+  // antenna band resin, exactly as on our iPhone 18 Pro (IPhonePro.tsx): the frame colour pulled toward a neutral grey
+  // (7% on dark finishes, 30% on light ones), matte and non-metallic, so the bands read low-contrast
+  const bandMat = useMemo(() => {
+    const darkF = new THREE.Color(f.frame).getHSL({ h: 0, s: 0, l: 0 }).l < 0.35
+    return bandMaterial(new THREE.Color(f.frame).lerp(new THREE.Color('#77797e'), darkF ? 0.07 : 0.3))
+  }, [f.frame])
   useEffect(() => () => bandMat.dispose(), [bandMat])
   const glassBack = <meshPhysicalMaterial color={f.back} metalness={0.1} roughness={0.55} clearcoat={0.6} clearcoatRoughness={0.4} />
   // The fold is applied every frame from refs (no React state per frame): the hinge angle, the self-centring shift,
   // the spine and the three screen materials all read one eased timeline while a transition runs (foldLive.anim),
   // else the Fold slider.
   const root = useRef<THREE.Group>(null), swingG = useRef<THREE.Group>(null), spineG = useRef<THREE.Group>(null), spineM = useRef<THREE.Mesh>(null)
-  const grooves = useRef<(THREE.Mesh | null)[]>([])
+  const grooves = useRef<(THREE.Mesh | null)[]>([]), spineP = useRef<THREE.Mesh>(null)
   const mats = useMemo(() => ({ fixed: screenMaterial(), moving: screenMaterial(), outer: screenMaterial(OUTER_PROJ), strip: screenMaterial() }), [])
   const strip = useMemo(() => foldStripGeometry(), [])
   useEffect(() => () => strip.dispose(), [strip])
@@ -166,7 +174,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     const sp = spineAt(swing)
     if (spineG.current && spineM.current) {
       spineG.current.visible = !!sp
-      if (sp) { spineG.current.matrix.copy(sp.m); spineM.current.geometry = sp.g; grooves.current.forEach(g => g?.scale.set(sp.w * 0.98, 1, 1)) }
+      if (sp) { spineG.current.matrix.copy(sp.m); spineM.current.geometry = sp.g; grooves.current.forEach(g => g?.scale.set(sp.w * 0.98, 1, 1)); spineP.current?.scale.set(Math.max(0.001, sp.w - 0.016), 1, 1) }
     }
     // the bent fold region of the inner screen follows the hinge (flat and seamless at 180)
     if (stripFold.current !== fold) { stripFold.current = fold; updateFoldStrip(strip, swing) }
@@ -247,16 +255,24 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
           <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : f.back} metalness={0.55} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.6}
             alphaMap={logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
         </mesh>)}
-      {/* volume up/down on the top edge (reference): raised pills, 38.9 to 49.9 mm and 53.4 to 64.8 mm from the hinge */}
+      {/* Buttons as on our iPhone 18 Pro: 2.66 mm wide pills standing 0.45 mm proud (0.3 mm sunk into the frame so no gap
+          shows), clickable with the 18 Pro's press (Pressable: 0.3 mm in, spring back). Local +x of each Pressable is
+          outward. Volume up/down on the top edge (reference): 38.9 to 49.9 mm and 53.4 to 64.8 mm from the hinge. */}
       {[[0.444, 0.11], [0.591, 0.114]].map(([x, len]) => (
-        <mesh key={x} position={[x, H / 2 + EO - 0.0005, 0]} rotation={[-Math.PI / 2, 0, 0]} geometry={pillGeo(len, T * 0.44, 0.0045)} castShadow>{frameMat}</mesh>))}
-      {/* free edge (reference): two dark pill buttons, the side button 31.8 to 50.6 mm and Camera Control 77 to 95.2 mm
-          from the top, each in a thin frame-coloured surround */}
-      {[[H / 2 - 0.412, 0.188], [H / 2 - 0.861, 0.182]].map(([y, len]) => (
-        <group key={y} position={[W + EO - 0.0005, y, 0]} rotation={[0, Math.PI / 2, 0]}>
-          <mesh rotation={[0, 0, Math.PI / 2]} geometry={pillGeo(len + 0.012, T * 0.5, 0.002)}>{frameMat}</mesh>
-          <mesh rotation={[0, 0, Math.PI / 2]} geometry={pillGeo(len, T * 0.38, 0.0032)}><meshPhysicalMaterial color="#0c0d10" metalness={0.2} roughness={0.12} clearcoat={1} /></mesh>
-        </group>))}
+        <Pressable key={x} depth={BTN.press} position={[x, H / 2 + EO, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <mesh position={[-BTN.sink, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, len, BTN.prot + BTN.sink)} castShadow>{frameMat}</mesh>
+        </Pressable>))}
+      {/* free edge (reference): the side button, 31.8 to 50.6 mm from the top, a dark pill proud like the 18 Pro's buttons;
+          and Camera Control, 77 to 95.2 mm from the top, flush as on the 18 Pro (dark crystal in a thin frame-coloured
+          ring, 0.1 mm press) */}
+      <Pressable depth={BTN.press} position={[W + EO, H / 2 - 0.412, 0]}>
+        <mesh position={[-BTN.sink, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, 0.188, BTN.prot + BTN.sink)} castShadow>
+          <meshPhysicalMaterial color="#0c0d10" metalness={0.2} roughness={0.12} clearcoat={1} /></mesh>
+      </Pressable>
+      <Pressable depth={0.001} position={[W + EO, H / 2 - 0.861, 0]}>
+        <mesh position={[-0.0002, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w + 0.006, 0.188, 0.0004)}>{frameMat}</mesh>
+        <mesh position={[-0.0002, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, 0.182, 0.0005)}><meshPhysicalMaterial color="#0c0d10" metalness={0.2} roughness={0.06} clearcoat={1} /></mesh>
+      </Pressable>
       {/* antenna bands on both halves (see BANDS) */}
       <mesh geometry={g.rightBody} material={bandMat} renderOrder={1} />
       {/* bottom edge speaker grilles, 16 to 23 mm and 60 to 68 mm from the hinge */}
@@ -271,8 +287,11 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
           the chord between their back corners, so it is always joined to both: flush with both frames when closed,
           narrowing as the phone opens and tucked away inside the hinge when flat. */}
       <group ref={spineG} matrixAutoUpdate={false}>
-        <mesh ref={spineM}><meshPhysicalMaterial color={f.frame} metalness={1} roughness={0.14} clearcoat={0.4} /></mesh>
-        {[1, -1].map((k, i) => <mesh key={k} ref={el => { grooves.current[i] = el }} position={[0, k * (H / 2 - 0.1), SPINE_TH + 0.0002]}><planeGeometry args={[1, 0.0035]} /><meshStandardMaterial color="#5c6068" metalness={0.3} roughness={0.6} /></mesh>)}
+        <mesh ref={spineM} castShadow>{frameMat}</mesh>
+        {/* recessed-looking centre panel between two rails, as in the reference */}
+        <mesh ref={spineP} position={[0, 0, SPINE_TH + 0.0009]}><planeGeometry args={[1, H - 0.08]} />
+          <meshPhysicalMaterial color={new THREE.Color(f.frame).multiplyScalar(0.82)} metalness={0.6} roughness={0.4} polygonOffset polygonOffsetFactor={-1} /></mesh>
+        {[1, -1].map((k, i) => <mesh key={k} ref={el => { grooves.current[i] = el }} position={[0, k * (H / 2 - 0.1), SPINE_TH + 0.0010]}><planeGeometry args={[1, 0.0035]} /><meshStandardMaterial color="#5c6068" metalness={0.3} roughness={0.6} /></mesh>)}
       </group>
       {/* ---------- left half (swings) ---------- */}
       <group ref={swingG} position={[0, 0, T / 2 + GAP]} rotation={[0, THREE.MathUtils.degToRad(180 - opts.fold), 0]}>
@@ -435,32 +454,30 @@ function HingeFill({ x, children }: { x: number; children: React.ReactNode }) {
   return <mesh position={[x, 0, 0]}><boxGeometry args={[HR, H - 0.0004, T - 0.0004]} />{children}</mesh>
 }
 
-const SPINE_TH = 0.012   // 1.2 mm thick strip
-/** Spine strip for a swing angle: on the bisector of the two halves, its inner face on the chord between their back
- * corners (both at radius T + GAP from the hinge axis), so its width is that chord. Returns the geometry, its width
- * and the placement matrix (x across the strip, y along the hinge, z outward). */
+const SPINE_TH = 0.004   // 0.4 mm plate (after Carlos's closed and half-open reference: a thin flat plate, flush)
+/** Spine plate for a swing angle: on the bisector of the two halves, its inner face on the chord between their
+ * hinge-side back corners (the body edge sits EO outside its outline, so each corner is at (-EO, -(T + GAP)) from the
+ * hinge axis), so it is always joined to both halves and, closed, exactly as wide as the stack (2T + 2GAP) and only
+ * SPINE_TH proud of the hinge faces. Returns the geometry, its width and the placement matrix (x across the plate,
+ * y along the hinge, z outward). */
 const spineGeos = new Map<number, THREE.BufferGeometry>()
 const _n = new THREE.Vector3(), _t = new THREE.Vector3(), _c = new THREE.Vector3(), _y = new THREE.Vector3(0, 1, 0), _sm = new THREE.Matrix4()
+const spineW = (a: number) => 2 * ((T + GAP) * Math.sin(a) - EO * Math.cos(a))
 /** Per-frame spine: geometry cached by width in 0.25 mm steps, placement computed exactly. */
 function spineAt(swing: number) {
-  const R = T + GAP, a = swing / 2, w = 2 * R * Math.sin(a)
+  const R = T + GAP, a = swing / 2, w = spineW(a)
   if (w < 0.006) return null
   const key = Math.round(w / 0.0025); let g = spineGeos.get(key)
-  if (!g) { g = hingeSpine(swing)!.g; spineGeos.set(key, g) }
+  if (!g) { g = spinePlate(key * 0.0025); spineGeos.set(key, g) }
   _n.set(-Math.sin(a), 0, -Math.cos(a)); _t.set(-Math.cos(a), 0, Math.sin(a))
-  _c.set(0, 0, T / 2 + GAP).addScaledVector(_n, R * Math.cos(a) - 0.0005)
+  _c.set(0, 0, T / 2 + GAP).addScaledVector(_n, R * Math.cos(a) + EO * Math.sin(a) - 0.0008)
   return { g, w: key * 0.0025, m: _sm.makeBasis(_t, _y, _n).setPosition(_c) }
 }
-function hingeSpine(swing: number) {
-  const R = T + GAP, a = swing / 2, w = 2 * R * Math.sin(a)
-  if (w < 0.006) return null
-  const wq = Math.round(w / 0.0025) * 0.0025, rEnd = Math.min(wq / 2, 0.035), shape = rrect(wq, H - 0.002, [rEnd, rEnd, rEnd, rEnd])
-  const g = new THREE.ExtrudeGeometry(shape, { depth: SPINE_TH - 0.003, bevelEnabled: true, bevelThickness: 0.0015, bevelSize: 0.0012, bevelSegments: 3, curveSegments: 12 })
-  g.translate(0, 0, 0.0015)
-  const n = new THREE.Vector3(-Math.sin(a), 0, -Math.cos(a)), t = new THREE.Vector3(-Math.cos(a), 0, Math.sin(a))
-  const c = new THREE.Vector3(0, 0, T / 2 + GAP).addScaledVector(n, R * Math.cos(a) - 0.0005)
-  const m = new THREE.Matrix4().makeBasis(t, new THREE.Vector3(0, 1, 0), n).setPosition(c)
-  return { g, w, m }
+/** The plate: small rounded end caps (radius a quarter of its width), soft edges, starting 0.08 mm inside the bodies. */
+function spinePlate(w: number) {
+  const rEnd = w * 0.25, shape = rrect(w, H - 0.002, [rEnd, rEnd, rEnd, rEnd])
+  const b = 0.001, g = new THREE.ExtrudeGeometry(shape, { depth: SPINE_TH + 0.0008 - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: b * 0.6, bevelSegments: 3, curveSegments: 12 })
+  g.translate(0, 0, b); return g
 }
 
 // Inline JSX shapes cached by parameters so re-renders don't rebuild geometry.

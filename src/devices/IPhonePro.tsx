@@ -229,7 +229,7 @@ function useClickable(onPress: () => void) {
   }
 }
 /** Child geometry extrudes along local +x (outward). Pressing moves it inward by `depth`. */
-function Pressable({ depth, children, ...rest }: { depth: number; children: ReactNode; position: [number, number, number]; rotation?: [number, number, number] }) {
+export function Pressable({ depth, children, ...rest }: { depth: number; children: ReactNode; position: [number, number, number]; rotation?: [number, number, number] }) {
   const inner = useRef<THREE.Group>(null), t0 = useRef(-1e9)
   const h = useClickable(() => { t0.current = performance.now() })
   useFrame(() => { if (inner.current) inner.current.position.x = -depth * pressCurve(performance.now() - t0.current) })
