@@ -16,9 +16,9 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { HandMotion, type IdleLevel } from './motion'
 import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, HAND_ROT0, REACH_EVENT, type Gesture, type HandRot } from './gestures'
 
-export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap' | 'flat' | 'twohand' | 'rest'
+export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap' | 'flat' | 'twohand' | 'rest' | 'keys'
 export const HAND_POSES: [HandPose, string][] = [['off', 'Off'], ['right', 'Right hand'], ['left', 'Left hand'], ['landscape', 'Two hands'], ['pinch', 'Present'], ['hold', 'Hold up'],
-  ['tap', 'Tap'], ['swipe', 'Swipe'], ['zoom', 'Pinch to zoom'], ['thumb', 'Thumb tap'], ['thumbswipe', 'Thumb scroll'], ['type', 'Two-thumb typing'], ['hover', 'Point / hover'], ['holdtap', 'Hold and tap'], ['flat', 'Flat in palm'], ['twohand', 'Two hands upright'], ['rest', 'On a surface']]
+  ['tap', 'Tap'], ['swipe', 'Swipe'], ['zoom', 'Pinch to zoom'], ['thumb', 'Thumb tap'], ['thumbswipe', 'Thumb scroll'], ['type', 'Two-thumb typing'], ['hover', 'Point / hover'], ['holdtap', 'Hold and tap'], ['flat', 'Flat in palm'], ['twohand', 'Two hands upright'], ['rest', 'On a surface'], ['keys', 'Typing on keys']]
 export const SKIN_TONES: Record<string, { label: string; color: string; sheen: string }> = {
   light: { label: 'Light', color: '#f0c8ae', sheen: '#ffd9cf' },
   fair: { label: 'Fair', color: '#dfa98a', sheen: '#ffcbb8' },
@@ -32,11 +32,19 @@ export const SKIN_TONES: Record<string, { label: string; color: string; sheen: s
 /** Device body in model units (1 = 100 mm): width, height, thickness, corner radius, edge fillet. */
 /** kind: tablets (and the open Duo) get their own grips; cx, cz: where the body's centre sits in the device's frame
  *  when the model is not centred on it (the closed Duo with the fold camera off). */
-export interface HandFit { W: number; H: number; T: number; R: number; E: number; SW?: number; SH?: number; PW?: number; PH?: number; kind?: 'phone' | 'tablet'; cx?: number; cz?: number }
+export interface HandFit { W: number; H: number; T: number; R: number; E: number; SW?: number; SH?: number; PW?: number; PH?: number; kind?: 'phone' | 'tablet' | 'laptop' | 'desktop'; cx?: number; cz?: number
+  /** where the hands' frame sits in the device (laptop: the base, turned flat; desktop: the display, tilted) */
+  cy?: number; rx?: number
+  /** touch surface centre in the frame when it is not the body centre (laptop: the trackpad) */
+  OX?: number; OY?: number
+  /** laptop keyboard: home row key centres (frame units) for the typing hands, left to right A S D F and J K L ;, the space bar and key pitch */
+  keys?: { home: [number, number][]; space: [number, number]; pitch: number; top: number } }
 const PHONE_ONLY: HandPose[] = ['right', 'left', 'hold', 'pinch', 'thumb', 'thumbswipe', 'type']
 /** The grips and gestures that make sense for a device: a tablet is too wide for one-handed wraps and thumb reaches,
  *  and a phone does not need the upright two-handed hold. */
-export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] => !f ? [] : HAND_POSES.filter(([k]) => f.kind === 'tablet' ? !PHONE_ONLY.includes(k) : k !== 'twohand')
+const LAPTOP: HandPose[] = ['off', 'keys', 'tap', 'swipe', 'hover'], DESKTOP: HandPose[] = ['off', 'tap', 'swipe', 'hover']
+export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] => !f ? [] : HAND_POSES.filter(([k]) =>
+  f.kind === 'laptop' ? LAPTOP.includes(k) : f.kind === 'desktop' ? DESKTOP.includes(k) : k === 'keys' ? false : f.kind === 'tablet' ? !PHONE_ONLY.includes(k) : k !== 'twohand')
 export const poseOk = (f: HandFit | null | undefined, p: HandPose) => p === 'off' || posesFor(f).some(([k]) => k === p)
 
 import { HAND_LOOK0, nailGeometry, nailMaterial, type HandLook, type NailFit } from './nails'
@@ -101,6 +109,17 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
       thumb: { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: v3(ex - 0.045, y0 + 0.1, et + 0.004) } } }
   if (tablet && pose === 'twohand') { const r = tabHold(hw, -hh * 0.1, ht); return [r, mirror(r)] }
   if (pose === 'right') return [grip]
+  if (pose === 'keys' && f.keys) {
+    // Typing on a laptop: both hands over the home row, palms down, fingertip pads resting on A S D F and J K L ;
+    // and the thumbs on the space bar. Built for the right hand, the left is its mirror.
+    const k = f.keys, top = ht + k.top, s = size
+    const hand = (home: [number, number][], thumbX: number): HandPlan => { const cx = (home[0][0] + home[3][0]) / 2
+      return { side: 'right', knuckle: v3(cx + 0.06 * s, home[1][1] - 0.62 * s, top + 0.42 * s), F: v3(-0.12, 1, -0.32), N: v3(-0.12, 0.3, -1),
+        fingers: home.map(([x, y], i) => ({ curl: [0, 35, 45, 20] as [number, number, number, number], spread: [2, 0, -3, -6][i], tip: v3(x, y, top), touch: i < 2 })),
+        thumb: { oppose: 15, abduct: 30, curl: [10, 15, 10], tip: v3(thumbX, k.space[1], top) } } }
+    const R = k.home.slice(4, 8), L = k.home.slice(0, 4).reverse().map(([x, y]) => [-x, y] as [number, number])
+    return [hand(R, k.space[0] + 0.32 * s), mirror(hand(L, -(k.space[0] - 0.32 * s)))]
+  }
   if (isGesture(pose)) {
     const P = (x: number, y: number) => ptToDevice(f, x, y), u = screenOf(f).unit
     // Middle, ring and little finger loosely closed into the palm, clear of the glass.
@@ -689,7 +708,7 @@ export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTR
   return (
     <group rotation={[on && pose === 'rest' ? -deg(72) : 0, 0, on && pose === 'landscape' ? Math.PI / 2 : 0]} userData={{ handRig: true }}>
       {children}
-      <group position={[fit?.cx ?? 0, 0, fit?.cz ?? 0]}>
+      <group position={[fit?.cx ?? 0, fit?.cy ?? 0, fit?.cz ?? 0]} rotation={[fit?.rx ?? 0, 0, 0]}>
         {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} gesture={gesture} sp={spectral} rot={rot} idle={idle} look={look} /></Suspense>}
         {on && isGesture(pose) && gesture && onGesture && <ScreenTarget pose={pose} fit={fit!} g={gesture} onChange={onGesture} />}
       </group>

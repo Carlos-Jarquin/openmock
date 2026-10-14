@@ -27,12 +27,12 @@ export const GESTURE_DEFAULT: Gesture = { x: 201, y: 520, sx: 300, sy: 600, ex: 
 /** Screen size in model units and points, with the glass plane. Falls back to the 18 Pro proportions. */
 export function screenOf(f: HandFit) {
   const sw = f.SW ?? f.W * 0.9265, sh = f.SH ?? f.H * 0.9648, pw = f.PW ?? 402, ph = f.PH ?? 874
-  return { sw, sh, pw, ph, z: f.T / 2, unit: sw / pw }
+  return { sw, sh, pw, ph, z: f.T / 2, unit: sw / pw, ox: f.OX ?? 0, oy: f.OY ?? 0 }
 }
 /** Screen points to device space (x right, y up, z out of the screen), on the glass. */
 export function ptToDevice(f: HandFit, x: number, y: number) {
   const s = screenOf(f)
-  return new THREE.Vector3((x / s.pw - 0.5) * s.sw, (0.5 - y / s.ph) * s.sh, s.z)
+  return new THREE.Vector3(s.ox + (x / s.pw - 0.5) * s.sw, s.oy + (0.5 - y / s.ph) * s.sh, s.z)
 }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 /** Scales a gesture from one screen size to another, so switching between the Pro and Pro Max keeps the same spot. */
@@ -88,7 +88,7 @@ export function ScreenTarget({ pose, fit, g, onChange }: { pose: GesturePose; fi
   const P = (x: number, y: number) => ptToDevice(fit, x, y)
   const sw = swipeAt(g)
   return <group userData={{ noBounds: true, gizmo: true }}>
-    <mesh ref={pad} position={[0, 0, s.z + 0.0005]} onPointerDown={down} onPointerMove={drag} onPointerUp={up} userData={{ gizmo: true }}>
+    <mesh ref={pad} position={[s.ox, s.oy, s.z + 0.0005]} onPointerDown={down} onPointerMove={drag} onPointerUp={up} userData={{ gizmo: true }}>
       <planeGeometry args={[s.sw, s.sh]} />
       <meshBasicMaterial transparent opacity={0} depthWrite={false} colorWrite={false} />
     </mesh>

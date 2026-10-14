@@ -20,13 +20,13 @@ export interface KfState {
 }
 export interface Xf { x: number; y: number; z: number; rx: number; ry: number; rz: number }
 export const XF0: Xf = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0 }
-export interface DevKf { uid: string; xf: Xf; fold: number | null; hands: { pose: string; tone: string }; handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges?: Partial<Record<GesKey, number>>; /** hand size and nails (switch at the midpoint) */ look?: import('../hands/nails').HandLook }
+export interface DevKf { uid: string; xf: Xf; fold: number | null; /** MacBook lid [angle]; iMac G4 stand [tilt, rise] */ mech?: number[] | null; hands: { pose: string; tone: string }; handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges?: Partial<Record<GesKey, number>>; /** hand size and nails (switch at the midpoint) */ look?: import('../hands/nails').HandLook }
 /** One device's part of a keyframe: by uid, then by position, and an old (single-device) keyframe counts as the first device. */
 export function devKf(s: KfState, uid: string, i: number): DevKf | null {
   if (s.devs) return s.devs.find(d => d.uid === uid) ?? (s.devs[i] && !tlLive.devs.includes(s.devs[i].uid) ? s.devs[i] : null)
   return i === 0 ? { uid, xf: XF0, fold: s.fold, hands: s.hands, handRot: s.handRot, tap: s.tap, ges: s.ges } : null
 }
-export interface DevFrame { uid: string; xf: Xf; fold: number | null; handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges: Partial<Record<GesKey, number>> }
+export interface DevFrame { uid: string; xf: Xf; fold: number | null; mech?: number[] | null; handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges: Partial<Record<GesKey, number>> }
 export const GES_KEYS = ['sx', 'sy', 'ex', 'ey', 'progress', 'spread', 'angle', 'kx', 'ky', 'kx2', 'ky2'] as const
 export type GesKey = typeof GES_KEYS[number]
 export interface Keyframe { id: string; dur: number; ease: Ease; s: KfState }
@@ -83,7 +83,8 @@ function fill(a: KfState, b: KfState, e: number) {
     const xf = {} as Xf; for (const k of Object.keys(XF0) as (keyof Xf)[]) xf[k] = lerp(x.xf?.[k] ?? 0, y.xf?.[k] ?? 0, e)
     const g: Partial<Record<GesKey, number>> = {}
     for (const k of GES_KEYS) { const p = x.ges?.[k], q = y.ges?.[k]; if (p != null || q != null) g[k] = p == null ? q! : q == null ? p : lerp(p, q, e) }
-    ds.push({ uid, xf, ges: g, fold: x.fold == null || y.fold == null ? (y.fold ?? x.fold) : lerp(x.fold, y.fold, e),
+    const mech = x.mech && y.mech && x.mech.length === y.mech.length ? x.mech.map((v, k) => lerp(v, y.mech![k], e)) : (y.mech ?? x.mech ?? null)
+    ds.push({ uid, xf, ges: g, mech, fold: x.fold == null || y.fold == null ? (y.fold ?? x.fold) : lerp(x.fold, y.fold, e),
       tap: { x: lerp(x.tap.x, y.tap.x, e), y: lerp(x.tap.y, y.tap.y, e) },
       handRot: { tilt: lerp(x.handRot.tilt, y.handRot.tilt, e), spin: lerp(x.handRot.spin, y.handRot.spin, e), roll: lerp(x.handRot.roll, y.handRot.roll, e) } })
   })

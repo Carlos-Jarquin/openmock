@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { foldLiveFor } from '../devices/Duo'
+import { mechLiveFor } from '../devices/mech'
 import { Track, viewSpan } from './Track'
 import { ScreenLane } from './ScreenLane'
 import { loadClips, saveClips, screenLive, sortClips, updateScreens, type ScreenClip } from './screenTrack'
@@ -29,7 +30,7 @@ export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefOb
     if (cam.fov !== f.fov) { cam.fov = f.fov; cam.updateProjectionMatrix() }
     cam.position.set(0, 0, 4.2 / f.zoom * Math.tan(THREE.MathUtils.degToRad(15)) / Math.tan(THREE.MathUtils.degToRad(f.fov / 2))); cam.lookAt(0, 0, 0)
     // each device's hinge; the Duo shows the inner content when open past 90 degrees, the outer when closed (both are dissolved at 90)
-    for (const d of f.devs) { foldLiveFor(d.uid).tl = d.fold
+    for (const d of f.devs) { foldLiveFor(d.uid).tl = d.fold; mechLiveFor(d.uid).tl = d.mech ?? null
       if (d.fold != null) { const s = d.fold >= 90; if (s !== side.current[d.uid]) { side.current[d.uid] = s; onSide(s, d.uid) } } }
     if (f.disc !== L.disc) { L.disc = f.disc; L.onDisc?.(f.disc) }
     // hand updates go through React state; posting them out of the frame loop (one pending at a time, newest frame wins)
@@ -41,7 +42,7 @@ export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefOb
     if (u.head) u.head.style.left = `${(Math.min(L.t, T) - L.view0) / (L.view || T || 1) * 100}%`
     L.log?.push(now)
     // paused or scrubbed: hand the frame back to the sliders once, then let the user drive again
-    if (!L.playing && L.pending) { L.pending = false; L.active = false; for (const d of f.devs) foldLiveFor(d.uid).tl = null; side.current = {}; onCommit(f) }
+    if (!L.playing && L.pending) { L.pending = false; L.active = false; for (const d of f.devs) { foldLiveFor(d.uid).tl = null; mechLiveFor(d.uid).tl = null } side.current = {}; onCommit(f) }
   })
   return null
 }

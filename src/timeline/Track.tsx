@@ -31,7 +31,7 @@ const ne = (a: unknown, b: unknown) => JSON.stringify(a ?? null) !== JSON.string
 const changesOf = (a: Keyframe['s'], b: Keyframe['s']) => {
   const out: (keyof typeof CHG)[] = []
   const p = (k: keyof typeof a.pose) => Math.abs(a.pose[k] - b.pose[k]) > 1e-4
-  if (p('tiltX') || p('tiltY') || p('rotZ') || p('panX') || p('panY') || ne(a.fold, b.fold)) out.push('phone')
+  if (p('tiltX') || p('tiltY') || p('rotZ') || p('panX') || p('panY') || ne(a.fold, b.fold) || ne(a.devs?.map(d => d.mech), b.devs?.map(d => d.mech))) out.push('phone')
   if (ne(a.hands, b.hands) || ne(a.handRot, b.handRot) || ne(a.tap, b.tap) || ne(a.ges, b.ges)) out.push('hand')
   if (p('zoom') || p('fov')) out.push('camera')
   return out
@@ -40,7 +40,7 @@ const changesOf = (a: Keyframe['s'], b: Keyframe['s']) => {
 const viewChanges = (a: Keyframe['s'], b: Keyframe['s']) => (Object.keys(a.pose) as (keyof typeof a.pose)[]).some(k => Math.abs(a.pose[k] - b.pose[k]) > 1e-4) ? ['camera' as const] : []
 const devChanges = (a: Keyframe['s'], b: Keyframe['s'], uid: string, i: number, what: 'phone' | 'hand') => {
   const x = devKf(a, uid, i), y = devKf(b, uid, i); if (!x && !y) return false
-  return what === 'phone' ? ne(x?.xf, y?.xf) || ne(x?.fold, y?.fold) : ne(x?.hands, y?.hands) || ne(x?.handRot, y?.handRot) || ne(x?.tap, y?.tap) || ne(x?.ges, y?.ges)
+  return what === 'phone' ? ne(x?.xf, y?.xf) || ne(x?.fold, y?.fold) || ne(x?.mech, y?.mech) : ne(x?.hands, y?.hands) || ne(x?.handRot, y?.handRot) || ne(x?.tap, y?.tap) || ne(x?.ges, y?.ges)
 }
 
 export function Track({ keys, sel, setKeys, onSelect, seek, below, rows, gap = 1.5, setGap }: {

@@ -9,6 +9,9 @@ import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
 import { INNER_PX, OUTER_PX, foldLiveFor, FOLD_MS } from './devices/Duo'
 import { sceneHit } from './devices/shared'
+import { MBP, mbpKey } from './devices/MacBookPro'
+import { IMAC, imacFrame } from './devices/IMacG4'
+import { LID0, TILT0, RISE0, LID_RANGE, TILT_RANGE } from './devices/mech'
 import { ErrorBoundary } from './ErrorBoundary'
 import { loadLogo, loadLocalLogo } from './localLogo'
 import { Env, retryEnvironment } from './Env'
@@ -33,6 +36,8 @@ import { useScene, POSE, type Media, type Pose, type BgMode, type DeviceState } 
 import { GES_KEYS, XF0, devKf, quatPose, tlLive, type Frame, type KfState, type Xf } from './timeline/tlCore'
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
+/** The animatable mechanism of a device for the timeline: MacBook lid angle, iMac G4 tilt and stand height. */
+const mechOf = (d: DeviceState): number[] | null => d.model === 'mbp16' ? [d.opts.lid ?? LID0] : d.model === 'imacg4' ? [d.opts.tilt ?? TILT0, d.opts.rise ?? RISE0] : null
 const wrap = (v: number) => ((v + 540) % 360) - 180
 /** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
 /** One-click camera presets (beside Reset camera). Zoom and pan stay at the framed defaults; Flat lay uses a long lens. */
@@ -60,8 +65,25 @@ const DUO_T = 0.052, DUO_GAP = 0.0012, DUO_W = 0.823
 const DUO_OPEN: HandFit = { W: 2 * DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005, SW: 1.11 * INNER_PX.w / INNER_PX.h, SH: 1.11, PW: Math.round(INNER_PX.w / 3), PH: Math.round(INNER_PX.h / 3), kind: 'tablet' }
 const DUO_CLOSED: HandFit = { W: DUO_W, H: 1.178, T: 2 * DUO_T + DUO_GAP, R: 0.127, E: 0.005, SW: 1.136 * OUTER_PX.w / OUTER_PX.h, SH: 1.136, PW: Math.round(OUTER_PX.w / 3), PH: Math.round(OUTER_PX.h / 3), kind: 'phone' }
 const DUO_CLOSED_OFF: HandFit = { ...DUO_CLOSED, cx: DUO_W / 2, cz: DUO_T / 2 + DUO_GAP }
+// Desk machines are drawn at real size and scaled down as a whole (hands included) to sit in the same view as phones.
+const VIEW: Partial<Record<DeviceId, number>> = { mbp16: 0.6, imacg4: 0.3 }
+// MacBook Pro: the hands work in the base's frame (turned flat, top face up), touching the trackpad or the keys.
+const MBP_FIT: HandFit = (() => { const W = MBP.w / 100, D = MBP.d / 100, T = MBP.tb / 100
+  const home = [1, 2, 3, 4, 7, 8, 9, 10].map(c => { const k = mbpKey(2, c); return [k.x, k.y] as [number, number] }), sp = mbpKey(0, 4)
+  return { W, H: D, T, R: MBP.r / 100, E: MBP.edge / 100, SW: MBP.pad.w / 100, SH: MBP.pad.h / 100, PW: Math.round(MBP.pad.w * 4), PH: Math.round(MBP.pad.h * 4),
+    OX: 0, OY: -D / 2 + (MBP.pad.front + MBP.pad.h / 2) / 100, kind: 'laptop', cy: T / 2, rx: -Math.PI / 2,
+    keys: { home, space: [sp.x, sp.y], pitch: MBP.kb.pitch / 100, top: 0.016 } } })()
+/** iMac G4: the hands work in the display's frame, wherever the stand holds it. */
+const imacCache = new Map<string, HandFit>()
+const imacFit = (o: DeviceOptions): HandFit => { const key = `${o.tilt ?? TILT0}|${o.rise ?? RISE0}`, hit = imacCache.get(key); if (hit) return hit
+  if (imacCache.size > 200) imacCache.clear(); const v = imacFit0(o); imacCache.set(key, v); return v }
+const imacFit0 = (o: DeviceOptions): HandFit => { const f = imacFrame(o.tilt ?? TILT0, o.rise ?? RISE0), p = IMAC.panel
+  return { W: p.w / 100, H: p.h / 100, T: p.t / 100, R: p.r / 100, E: p.edge / 100, SW: IMAC.screen.w / 100, SH: IMAC.screen.h / 100, PW: IMAC.px.w, PH: IMAC.px.h,
+    OY: IMAC.screen.y / 100, kind: 'desktop', cy: f.centre.y, cz: f.centre.z, rx: f.rx } }
 /** The body the hands grip, or null: the Duo only while it rests fully open or closed (not mid-fold). */
 function fitFor(d: Pick<DeviceState, 'model' | 'opts' | 'foldFollow'>): HandFit | null {
+  if (d.model === 'mbp16') return MBP_FIT
+  if (d.model === 'imacg4') return imacFit(d.opts)
   if (d.model !== 'duo') return HAND_FITS[d.model] ?? null
   return d.opts.fold >= 180 ? DUO_OPEN : d.opts.fold <= 0 ? (d.foldFollow ? DUO_CLOSED : DUO_CLOSED_OFF) : null
 }
@@ -173,8 +195,8 @@ const D2R = THREE.MathUtils.degToRad
 const nailWord = (l: number) => l < 0.08 ? 'Short' : l < 0.4 ? 'Medium' : l < 0.75 ? 'Long' : 'Extra long'
 /** Rough width of each model in scene units, for placing new devices and the layout presets. */
 /** Rough height of each model in scene units, for zoom-to-fit. */
-const HEIGHT: Partial<Record<DeviceId, number>> = { ip18: 1.5, ip18max: 1.63, duo: 1.55, phone: 1.5, ipmini: 1.96, ippro11: 2.5, ippro13: 2.85, browser: 1.75 }
-const WIDTH: Partial<Record<DeviceId, number>> = { ip18: 0.72, ip18max: 0.78, duo: 1.5, phone: 0.75, ipmini: 1.38, ippro11: 1.8, ippro13: 2.2, browser: 2.6 }
+const HEIGHT: Partial<Record<DeviceId, number>> = { mbp16: 1.55, imacg4: 2.2, ip18: 1.5, ip18max: 1.63, duo: 1.55, phone: 1.5, ipmini: 1.96, ippro11: 2.5, ippro13: 2.85, browser: 1.75 }
+const WIDTH: Partial<Record<DeviceId, number>> = { mbp16: 2.2, imacg4: 2.3, ip18: 0.72, ip18max: 0.78, duo: 1.5, phone: 0.75, ipmini: 1.38, ippro11: 1.8, ippro13: 2.2, browser: 2.6 }
 const widthOf = (d: DeviceState) => d.model === 'duo' && d.opts.fold < 90 ? 0.75 : WIDTH[d.model] ?? 0.8
 /** The hand fit each device's gesture was last scaled for, so switching model rescales only that device's gesture. */
 const fitOfDev = new Map<string, HandFit>()
@@ -211,12 +233,12 @@ const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, s
   return (
     <group ref={ref} position={pos} rotation={rot}
       onPointerDown={e => { if (e.button !== 0 || e.shiftKey || e.altKey || e.intersections.some(i => onGizmo(i.object))) return; e.stopPropagation(); sceneHit.current = true; onGrab(d.uid, e.nativeEvent) }}>
-      <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, screenTex.texture, d.hands.pose]}>
+      <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, opts.lid, opts.tilt, opts.rise, screenTex.texture, d.hands.pose]}><group scale={VIEW[device] ?? 1}>
         <HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={fitFor(d)} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle} look={d.look}>
           <SketchStyle on={sketch} o={sk}><D uid={d.uid} texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
             {...(device === 'duo' ? { textureOuter: shownOuter?.texture ?? null, mediaAspectOuter: shownOuter?.aspect } : {})} /></SketchStyle>
         </HandRig>
-      </Centred>
+      </group></Centred>
     </group>)
 })
 /** Is this object part of a gizmo (the hand's touch target), which takes the drag before the device does? */
@@ -362,7 +384,7 @@ export default function App() {
   const devRot = useMemo(() => [THREE.MathUtils.degToRad(pose.tiltX), THREE.MathUtils.degToRad(pose.tiltY), THREE.MathUtils.degToRad(pose.rotZ)] as [number, number, number], [pose.tiltX, pose.tiltY, pose.rotZ])
   // A keyframe holds every device (devs); its top-level device fields mirror the first device, as single-device timelines did.
   const tlSnapshot = useCallback((): KfState => { const v = live.current, ds = S.get().devices, d0 = ds[0]
-    const one = (d: DeviceState) => ({ uid: d.uid, xf: { ...d.xf }, fold: d.model === 'duo' ? d.opts.fold : null, hands: { ...d.hands }, handRot: { ...d.handRot }, tap: { x: d.gesture.x, y: d.gesture.y }, ges: Object.fromEntries(GES_KEYS.map(k => [k, d.gesture[k]])), look: { ...d.look } })
+    const one = (d: DeviceState) => ({ uid: d.uid, xf: { ...d.xf }, fold: d.model === 'duo' ? d.opts.fold : null, mech: mechOf(d), hands: { ...d.hands }, handRot: { ...d.handRot }, tap: { x: d.gesture.x, y: d.gesture.y }, ges: Object.fromEntries(GES_KEYS.map(k => [k, d.gesture[k]])), look: { ...d.look } })
     const f = one(d0); return {
     pose: { ...v.pose }, fold: f.fold, hands: f.hands, handRot: f.handRot, tap: f.tap, ges: f.ges,
     light: { intensity: v.light.intensity, azimuth: v.light.azimuth, elevation: v.light.elevation, floor: v.light.floor }, fx: { focus: v.fx.focus, blur: v.fx.blur },
@@ -376,11 +398,15 @@ export default function App() {
     setLight(l => ({ ...l, ...k.light })); setFx(f => ({ ...f, ...k.fx }))
   }, [])
   const setXfAt = (uid: string, v: Xf) => S.devAt(uid, 'xf', o => (Object.keys(v) as (keyof Xf)[]).every(k => o[k] === v[k]) ? o : { ...v })
+  const mechAt = (uid: string, model: DeviceId, m: number[] | null | undefined) => { if (!m) return
+    if (model === 'mbp16') S.devAt(uid, 'opts', o => o.lid === m[0] ? o : { ...o, lid: m[0] })
+    else if (model === 'imacg4') S.devAt(uid, 'opts', o => o.tilt === m[0] && o.rise === m[1] ? o : { ...o, tilt: m[0], rise: m[1] }) }
   const foldAt = (uid: string, fold: number) => S.devAt(uid, 'opts', o => o.fold === fold && o.screen === (fold >= 90 ? 'inner' : 'outer') ? o : { ...o, fold, screen: fold >= 90 ? 'inner' : 'outer' })
   const tlApply = useCallback((k: KfState) => {
     setPose({ ...k.pose })
     S.get().devices.forEach((d, i) => { const x = devKf(k, d.uid, i); if (!x) return
       if (x.fold != null && d.model === 'duo') foldAt(d.uid, x.fold)
+      mechAt(d.uid, d.model, x.mech)
       setXfAt(d.uid, { ...XF0, ...x.xf }) })
     tlDisc(k)
   }, [tlDisc])
@@ -389,6 +415,7 @@ export default function App() {
     const ds = S.get().devices
     for (const x of f.devs) { const d = ds.find(y => y.uid === x.uid); if (!d) continue
       if (x.fold != null && d.model === 'duo') foldAt(d.uid, x.fold)
+      mechAt(d.uid, d.model, x.mech)
       setXfAt(d.uid, x.xf) }
   }, [])
   const tlSide = useCallback((inner: boolean, uid: string) => { if (S.get().devices.find(d => d.uid === uid)?.model === 'duo') S.devAt(uid, 'opts', o => o.screen === (inner ? 'inner' : 'outer') ? o : { ...o, screen: inner ? 'inner' : 'outer' }) }, [])
@@ -840,6 +867,17 @@ export default function App() {
         <p className="hint">Drawn onto the screen in iPhone points, so it shows in renders and exports. Auto picks dark or light text from the top of your image or video.</p>
       </>}
     </> : <p className="hint">Available for the iPhone 18 Pro and Pro Max. iPad status bars are coming later.</p> },
+    ...(device === 'mbp16' ? [{ id: 'lid', side: 'device' as const, title: 'Lid', icon: 'lid', settings: ['Lid angle', 'Close lid', 'Open lid'], render: () => <>
+      {slider('Lid angle', Math.round(opts.lid ?? LID0), LID_RANGE[0], LID_RANGE[1], 1, n => setOpts(x => ({ ...x, lid: n })), '°')}
+      <p className="hint">0 is closed, 90 is upright. Add keyframes at different angles to animate the lid.</p>
+      <div className="seg"><button onClick={() => setOpts(x => ({ ...x, lid: 0 }))}>Close lid</button><button onClick={() => setOpts(x => ({ ...x, lid: LID0 }))}>Open lid</button></div>
+    </> }] : []),
+    ...(device === 'imacg4' ? [{ id: 'stand', side: 'device' as const, title: 'Stand', icon: 'stand', settings: ['Display tilt', 'Stand height', 'Reset stand'], render: () => <>
+      {slider('Display tilt', Math.round(opts.tilt ?? TILT0), TILT_RANGE[0], TILT_RANGE[1], 1, n => setOpts(x => ({ ...x, tilt: n })), '°')}
+      {slider('Stand height', Math.round((opts.rise ?? RISE0) * 100), 0, 100, 1, n => setOpts(x => ({ ...x, rise: n / 100 })), '%')}
+      <p className="hint">The arm swings up and forward on its two joints. Add keyframes at different settings to animate the stand.</p>
+      <button className="ghost" onClick={() => setOpts(x => ({ ...x, tilt: TILT0, rise: RISE0 }))}>Reset stand</button>
+    </> }] : []),
     ...(def.foldable ? [{ id: 'fold', side: 'device' as const, title: 'Fold', icon: 'fold', settings: ['Fold', 'Dissolve while folding', 'Inner screen', 'Outer screen', 'Play open and close', 'Transition blur', 'Speed', 'Darkness', 'Camera follows the fold'], render: () => <>
       {slider('Fold', Math.round(opts.fold), 0, 180, 1, n => { stopFold(); setOpts(x => ({ ...x, fold: n, trans: null, screen: x.foldDissolve === false ? x.screen : n >= 90 ? 'inner' : 'outer' })) }, '°')}
       <p className="hint">180 is open flat, 0 is closed.</p>
@@ -918,6 +956,11 @@ export default function App() {
     ...(sbSize ? [{ id: 'sb', group: 'device' as const, section: 'statusbar', label: 'Status bar › Show status bar', meta: 'TOGGLE' as const, run: () => setSbOn(v => !v) }] : []),
     ...(handOk ? poses.map(([k, l]) => ({ id: `pose-${k}`, group: 'device' as const, section: 'hand', label: `Hand › ${isGesture(k) ? 'Gesture' : 'Grip'} › ${l}`, meta: (hands.pose === k ? 'CURRENT' : 'APPLY') as Cmd['meta'], run: () => setHands(h => ({ ...h, pose: k })) })) : []),
     ...(handOk ? tones.map(([k, t]) => ({ id: `tone-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Skin tone › ${t.label}`, meta: 'APPLY' as const, run: () => setHands(h => ({ ...h, tone: k })) })) : []),
+    ...(device === 'mbp16' ? [{ id: 'lid-close', group: 'device' as const, section: 'lid', label: 'Lid › Close', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, lid: 0 })) },
+      { id: 'lid-open', group: 'device' as const, section: 'lid', label: 'Lid › Open', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, lid: LID0 })) }] : []),
+    ...(device === 'imacg4' ? [{ id: 'stand-low', group: 'device' as const, section: 'stand', label: 'Stand › Lowest', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, rise: 0 })) },
+      { id: 'stand-high', group: 'device' as const, section: 'stand', label: 'Stand › Highest', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, rise: 1 })) },
+      { id: 'stand-reset', group: 'device' as const, section: 'stand', label: 'Stand › Reset', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, tilt: TILT0, rise: RISE0 })) }] : []),
     ...(def.foldable ? [{ id: 'fold-in', group: 'device' as const, section: 'fold', label: 'Fold › Open (inner screen)', meta: 'APPLY' as const, run: () => { stopFold(false); foldTo('inner') } },
       { id: 'fold-out', group: 'device' as const, section: 'fold', label: 'Fold › Close (outer screen)', meta: 'APPLY' as const, run: () => { stopFold(false); foldTo('outer') } }] : []),
     ...DEVICES.map(d => ({ id: `add-${d.id}`, group: 'scene' as const, section: 'devices', label: `Devices › Add ${d.label}`, meta: 'APPLY' as const, run: () => addDevice(d.id) })),
