@@ -51,20 +51,24 @@ const Ico = ({ d, title }: { d: string; title?: string }) => (
 const I = {
   play: 'M5 3.5v9l7-4.5z', pause: 'M5.5 3.5v9M10.5 3.5v9', loop: 'M3 7a4 4 0 0 1 4-4h5M10 1l2 2-2 2M13 9a4 4 0 0 1-4 4H4M6 15l-2-2 2-2',
   add: 'M8 3v10M3 8h10', del: 'M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.6 8.5h4.8l.6-8.5', upd: 'M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5',
-  left: 'M10 3.5L5.5 8l4.5 4.5', right: 'M6 3.5L10.5 8 6 12.5', rec: 'M8 8m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0', chev: 'M4 6l4 4 4-4',
+  left: 'M10 3.5L5.5 8l4.5 4.5', right: 'M6 3.5L10.5 8 6 12.5', rec: 'M8 8m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0', chev: 'M4 6l4 4 4-4', upc: 'M4 10l4-4 4 4',
   down: 'M8 2.5v8M4.5 7L8 10.5 11.5 7M3 13.5h10', up: 'M8 10.5v-8M4.5 6L8 2.5 11.5 6M3 13.5h10', start: 'M4 3.5v9M12 3.5v9l-6-4.5z',
 }
 
 const uid = () => Math.random().toString(36).slice(2, 9)
 
-export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duoScreen, current }: {
+/** What the Export menu needs from the timeline: video settings and the record action. */
+export interface TlApi { record: () => void; add: () => void; setFps: (f: 30 | 60) => void; setFmtOut: (f: 'webm' | 'mp4') => void }
+export interface TlInfo { fps: 30 | 60; fmtOut: 'webm' | 'mp4'; mp4ok: boolean; rec: boolean; keys: number }
+
+export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duoScreen, current, open, setOpen, api, onInfo }: {
+  open: boolean; setOpen: (o: boolean) => void; api: React.MutableRefObject<TlApi | null>; onInfo: (i: TlInfo) => void
   snapshot: () => KfState; apply: (s: KfState) => void; canvas: () => HTMLCanvasElement | null; transparent: boolean; flash: (t: string, err?: boolean) => void
   duo: boolean; duoScreen: 'inner' | 'outer'; current: (t: 'inner' | 'outer') => { texture: THREE.Texture; kind: 'image' | 'video'; name: string } | null
 }) {
   // Screen track (saved separately, so timelines from before it load with an empty one)
   const [clips, setClipsState] = useState<ScreenClip[]>(() => { const c = loadClips(); screenLive.clips = c; return c })
   const setClips = useCallback((c: ScreenClip[]) => { setClipsState(c); screenLive.clips = c; saveClips(c) }, [])
-  const [open, setOpen] = useState(true)
   const [keys, setKeysState] = useState<Keyframe[]>(() => loadKeys())
   const [sel, setSel] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
@@ -187,31 +191,48 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duo
     tlLive.onEnd = () => { setPlaying(false); setTimeout(() => r.stop(), 150); tlLive.onEnd = end }
     r.start(250); tlLive.disc = null; tlLive.last = performance.now(); tlLive.active = true; tlLive.playing = true; setPlaying(true)
   }
+  api.current = { record, add, setFps, setFmtOut }
+  useEffect(() => { onInfo({ fps, fmtOut, mp4ok, rec, keys: keys.length }) }, [fps, fmtOut, mp4ok, rec, keys.length, onInfo])
   if (import.meta.env.DEV) (window as unknown as { __omTl: unknown }).__omTl = { add, play, pause, seek, record, setKeys, tlLive, setFps, setFmtOut, jump }
 
   const k = sel ? keys.find(x => x.id === sel) : null, ki = k ? keys.indexOf(k) : -1
+  const kbdT = <kbd title="Shortcut: T">T</kbd>
+  if (!open) return (
+    <section className="timeline tl-pill" aria-label="Keyframe timeline">
+      <button className="tl-playbig" onClick={playing ? pause : play} aria-label={playing ? 'Pause' : 'Play'} title={playing ? 'Pause' : 'Play'} disabled={rec}><Ico d={playing ? I.pause : I.play} /></button>
+      <span ref={time} className="tl-time">{fmt(0)} / {fmt(T)}</span>
+      <span className="tl-mini">
+        <input ref={scrub} className="tl-scrub" type="range" min={0} max={1000} defaultValue={0} aria-label="Scrub" onInput={e => seek(+(e.target as HTMLInputElement).value / 1000 * T)} />
+        {T > 0 && st.map((x, i) => <i key={keys[i].id} className="tl-mdia" style={{ left: `calc(6px + (100% - 12px) * ${x / T})` }} aria-hidden="true" />)}
+      </span>
+      <button className="tl-pbtn" onClick={add} title="Add a keyframe" aria-label="Add keyframe">+ KF</button>
+      <button className="tl-pbtn" onClick={() => setOpen(true)} aria-expanded={false} title="Expand the timeline (T)"><Ico d={I.upc} /> Timeline {kbdT}</button>
+      {undo && <div className="tl-undo" role="status">Timeline cleared. <button onClick={restore}>Undo</button></div>}
+    </section>)
   return (
-    <section className={`timeline ${open ? '' : 'shut'}`} aria-label="Keyframe timeline">
+    <section className="timeline tl-open" aria-label="Keyframe timeline">
       <div className="tl-bar">
-        <button className="ghost icon" onClick={() => setOpen(!open)} aria-expanded={open} title={open ? 'Hide timeline' : 'Show timeline'}><span style={{ display: 'inline-flex', transform: open ? '' : 'rotate(-90deg)' }}><Ico d={I.chev} /></span></button>
         <strong>Timeline</strong>
-        {editing >= 0 && !playing && <span className="tl-editing" role="status" title="Changes to the phone, hand, thumb or camera go into this keyframe">Editing keyframe {editing + 1}</span>}
-        <button onClick={add} title="Add a keyframe from the current view"><Ico d={I.add} /> Add keyframe</button>
+        <button onClick={add} title="Add a keyframe from the current view" aria-label="Add keyframe"><Ico d={I.add} /> Keyframe</button>
         <button className="icon" onClick={() => seek(0)} title="Go to start" aria-label="Go to start"><Ico d={I.start} /></button>
         <button className="icon" onClick={playing ? pause : play} title={playing ? 'Pause' : 'Play'} aria-label={playing ? 'Pause' : 'Play'} disabled={rec}><Ico d={playing ? I.pause : I.play} /></button>
         <button className={`icon ${loop ? 'on' : ''}`} onClick={() => setLoop(!loop)} title="Loop" aria-pressed={loop} aria-label="Loop"><Ico d={I.loop} /></button>
-        <input ref={scrub} className="tl-scrub" type="range" min={0} max={1000} defaultValue={0} aria-label="Scrub" onInput={e => seek(+(e.target as HTMLInputElement).value / 1000 * T)} />
         <span ref={time} className="tl-time">{fmt(0)} / {fmt(T)}</span>
+        {editing >= 0 && !playing && <span className="tl-editing" role="status" title="Changes to the phone, hand, thumb or camera go into this keyframe">Editing keyframe {editing + 1}</span>}
         <span className="tl-sp" />
         <button className="ghost" aria-label="Clear timeline" onClick={clear} disabled={rec || (keys.length <= 1 && clips.length === 0)} title="Remove all keyframes and screen clips, keeping the current pose as keyframe 1"><Ico d={I.del} /> Clear</button>
-        <select value={fps} onChange={e => setFps(+e.target.value as 30 | 60)} aria-label="Frame rate"><option value={30}>30 fps</option><option value={60}>60 fps</option></select>
-        <select value={fmtOut} onChange={e => setFmtOut(e.target.value as 'webm' | 'mp4')} aria-label="Video format"><option value="webm">WebM</option>{mp4ok && <option value="mp4">MP4</option>}</select>
-        <button onClick={record} disabled={rec} title="Play once from the start and save a video"><Ico d={I.rec} /> {rec ? 'Recording' : 'Export video'}</button>
+        <span className="tl-seg2" role="group" aria-label="Frame rate">{([30, 60] as const).map(f => <button key={f} className={fps === f ? 'on' : ''} aria-pressed={fps === f} onClick={() => setFps(f)}>{f} fps</button>)}</span>
+        <span className="tl-seg2" role="group" aria-label="Video format"><button className={fmtOut === 'webm' ? 'on' : ''} aria-pressed={fmtOut === 'webm'} onClick={() => setFmtOut('webm')}>WebM</button>{mp4ok && <button className={fmtOut === 'mp4' ? 'on' : ''} aria-pressed={fmtOut === 'mp4'} onClick={() => setFmtOut('mp4')}>MP4</button>}</span>
+        <button className="primary" onClick={record} disabled={rec} title="Play once from the start and save a video"><Ico d={I.rec} /> {rec ? 'Recording' : 'Export video'}</button>
         <button className="ghost icon" onClick={exportJson} title="Save the keyframes as JSON" aria-label="Save keyframes as JSON"><Ico d={I.down} /></button>
         <label className="ghost icon btnlike" title="Load keyframes from JSON" aria-label="Load keyframes from JSON"><Ico d={I.up} /><input type="file" accept="application/json,.json" hidden onChange={e => { const f = e.target.files?.[0]; if (f) importJson(f); e.target.value = '' }} /></label>
+        {kbdT}
+        <button className="ghost icon" onClick={() => setOpen(false)} aria-expanded={true} aria-label="Minimize timeline" title="Minimize timeline (T)"><Ico d={I.chev} /></button>
       </div>
       {undo && <div className="tl-undo" role="status">Timeline cleared. <button onClick={restore}>Undo</button></div>}
-      {open && <>
+      <div className="tl-body">
+        <div className="tl-labels" aria-hidden="true"><span className="l-k">Camera · Pose</span><span className="l-s">Screen</span></div>
+        <div className="tl-main">
         <Track key={epoch} gap={gap} setGap={setGap} keys={keys} sel={sel} setKeys={setKeys} seek={seek} onSelect={i => { setSel(keys[i].id); if (playing) pause() }}
           below={(span, pct) => <ScreenLane clips={clips} setClips={setClips} span={span} T={T} duo={duo} defTarget={duoScreen} current={current} flash={flash} pct={pct} />} />
         <div className="tl-cards">
@@ -233,7 +254,8 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duo
           <button className="icon" onClick={() => move(ki, 1)} disabled={ki === keys.length - 1} aria-label="Move later" title="Move later"><Ico d={I.right} /></button>
           <button className="ghost" onClick={() => { setKeys(keys.filter(y => y.id !== k.id)); setSel(null) }}><Ico d={I.del} /> Delete</button>
         </div>}
-      </>}
+        </div>
+      </div>
     </section>
   )
 }
