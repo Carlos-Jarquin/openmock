@@ -78,6 +78,8 @@ export const tlLive = {
   keys: [] as Keyframe[],
   /** seconds shown across the track (the playhead's scale) */
   view: 0,
+  /** first second shown at the left of the track (when zoomed in) */
+  view0: 0,
   playing: false, loop: true, t: 0, last: 0,
   /** true while the timeline owns the scene (playing or scrubbing), so the driver applies frames */
   active: false,

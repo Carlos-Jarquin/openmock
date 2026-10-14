@@ -90,3 +90,10 @@ button.ghost { background: #fff; color: #1d1d22; }
 .tl-clip span { overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .tl-fade { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(46,154,82,.35), rgba(46,154,82,0)); pointer-events: none; }
 .tl-screen-act { margin-top: 2px; }
+
+/* Timeline zoom */
+.tl-track { overflow-x: clip; }
+.tl-scroll { position: relative; height: 6px; margin: 2px 0 2px; background: #ececf1; border-radius: 3px; cursor: pointer; }
+.tl-scroll i { position: absolute; top: 0; bottom: 0; min-width: 12px; background: #b9bcc8; border-radius: 3px; }
+.tl-scroll:hover i { background: #9ea2b0; }
+.tl-fit { position: absolute; right: 0; top: 0; padding: 0 6px !important; height: 16px; font-size: 10px; line-height: 14px; z-index: 6; border: 1px solid #d9d9e0; border-radius: 4px; }

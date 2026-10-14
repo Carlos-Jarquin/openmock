@@ -38,7 +38,7 @@ export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefOb
     const u = L.ui, p = T > 0 ? L.t / T : 0
     if (u.scrub) u.scrub.value = String(p * 1000)
     if (u.time) u.time.textContent = `${fmt(L.t)} / ${fmt(T)}`
-    if (u.head) u.head.style.left = `${Math.min(L.t, T) / (L.view || T || 1) * 100}%`
+    if (u.head) u.head.style.left = `${(Math.min(L.t, T) - L.view0) / (L.view || T || 1) * 100}%`
     L.log?.push(now)
     // paused or scrubbed: hand the frame back to the sliders once, then let the user drive again
     if (!L.playing && L.pending) { L.pending = false; L.active = false; foldLive.tl = null; side.current = null; onCommit(f) }
@@ -99,7 +99,7 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duo
     const next = [...keys.slice(0, i), k, ...keys.slice(i)]; setKeys(next); setSel(k.id)
     // move the playhead to the new keyframe so the ruler shows where it went (the view already matches it)
     const at = starts(next)[i], T2 = total(next); tlLive.t = at
-    const u = tlLive.ui; if (u.scrub) u.scrub.value = String(T2 ? at / T2 * 1000 : 0); if (u.head) u.head.style.left = `${at / viewSpan(T2) * 100}%`; if (u.time) u.time.textContent = `${fmt(at)} / ${fmt(T2)}`
+    const u = tlLive.ui; if (u.scrub) u.scrub.value = String(T2 ? at / T2 * 1000 : 0); if (u.head) u.head.style.left = `${(at - tlLive.view0) / (tlLive.view || viewSpan(T2)) * 100}%`; if (u.time) u.time.textContent = `${fmt(at)} / ${fmt(T2)}`
     flash(next.length < 2 ? 'Keyframe 1 added. Now change the phone, hand or thumb and add another.' : `Keyframe ${i + 1} added at ${fmt(at)}. Press Play to animate.`)
   }
   const upd = (id: string, p: Partial<Keyframe>) => setKeys(keys.map(k => k.id === id ? { ...k, ...p } : k))

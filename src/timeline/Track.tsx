@@ -1,6 +1,6 @@
 // After Effects style track: a time ruler, one bar per segment (width = its duration), keyframe diamonds at their
 // times, a draggable playhead and an end handle for the total duration. All drags snap to 0.1 s.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { fmt, starts, tlLive, total, type Keyframe } from './tlCore'
 
 const SNAP = 0.1, MIN = 0.1, MAX_T = 120
@@ -18,7 +18,8 @@ export const viewSpan = (T: number) => Math.max(2, Math.ceil(T * 1.25 + 0.5))
 /** Tick step that gives labels roughly every 60 px. */
 function step(span: number, px: number) { const want = span * 60 / Math.max(1, px); return [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60].find(s => s >= want) ?? 60 }
 
-type Drag = { kind: 'key' | 'edge' | 'end' | 'head'; i: number; x0: number; keys: Keyframe[]; span: number; px: number; left: number }
+type Drag = { kind: 'key' | 'edge' | 'end' | 'head'; i: number; x0: number; keys: Keyframe[]; span: number; v0: number; px: number; left: number }
+const MIN_VIEW = 1
 
 export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
   below?: (span: number, pct: (t: number) => string) => React.ReactNode
@@ -45,26 +46,51 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
     setKeys(k); setEdit(null)
   }
   const T = total(keys), st = starts(keys)
+  // View window [v0, v0 + span] in seconds. Fit (zoom null) shows the whole timeline plus room to drag it longer;
+  // pinch or Cmd/Ctrl + scroll zooms about the pointer between 1 s and the duration + 10 s, sideways scroll pans.
+  const [zoom, setZoom] = useState<{ v0: number; vs: number } | null>(null)
+  const maxView = Math.max(MIN_VIEW * 2, T + 10), fit = viewSpan(T)
+  const clampView = (v0: number, vs: number) => { vs = Math.min(maxView, Math.max(MIN_VIEW, vs)); const range = Math.max(fit, vs, T + 10); return { v0: Math.min(Math.max(0, v0), Math.max(0, range - vs)), vs } }
+  const cur = zoom ? clampView(zoom.v0, zoom.vs) : { v0: 0, vs: fit }
   // frozen while dragging so the track doesn't rescale under the pointer
-  const span = drag ? drag.span : viewSpan(T)
-  tlLive.view = span
-  const pct = (t: number) => `${t / span * 100}%`
+  const span = drag ? drag.span : cur.vs, v0 = drag ? drag.v0 : cur.v0
+  tlLive.view = span; tlLive.view0 = v0
+  const pct = (t: number) => `${(t - v0) / span * 100}%`
   const w = box.current?.clientWidth ?? 800, s = step(span, w)
-  const ticks: number[] = []; for (let t = 0; t <= span + 1e-6; t += s) ticks.push(r1(t))
+  const ticks: number[] = []; for (let t = Math.floor(v0 / s) * s; t <= v0 + span + 1e-6; t += s) if (t >= -1e-9) ticks.push(Math.round(t * 100) / 100)
+  const view = useRef(cur); view.current = cur
+  useEffect(() => {
+    const el = box.current; if (!el) return
+    const zoomAt = (x: number, f: number, base = view.current) => {
+      const r = el.getBoundingClientRect(), u = Math.min(1, Math.max(0, (x - r.left) / r.width)), tc = base.v0 + u * base.vs
+      const vs = Math.min(maxView, Math.max(MIN_VIEW, base.vs * f)); setZoom(clampView(tc - u * vs, vs))
+    }
+    const wheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomAt(e.clientX, Math.exp(e.deltaY * (e.ctrlKey && !e.metaKey ? 0.01 : 0.002))); return }
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey) { e.preventDefault(); const r = el.getBoundingClientRect(), d = e.deltaX || e.deltaY, c = view.current; setZoom(clampView(c.v0 + d / r.width * c.vs, c.vs)) }
+    }
+    // Safari: trackpad pinch as gesture events (scale is cumulative from the start of the pinch)
+    let g0: { v0: number; vs: number } | null = null
+    const gs = (e: Event) => { e.preventDefault(); g0 = view.current }
+    const gc = (e: Event) => { e.preventDefault(); const ge = e as Event & { scale: number; clientX: number }; if (g0 && ge.scale) zoomAt(ge.clientX, 1 / ge.scale, g0) }
+    el.addEventListener('wheel', wheel, { passive: false }); el.addEventListener('gesturestart', gs); el.addEventListener('gesturechange', gc)
+    return () => { el.removeEventListener('wheel', wheel); el.removeEventListener('gesturestart', gs); el.removeEventListener('gesturechange', gc) }
+  }, [maxView, fit, T])
+  if (import.meta.env.DEV) (globalThis as { __tlView?: unknown }).__tlView = cur
 
   const begin = (e: React.PointerEvent, kind: Drag['kind'], i: number) => {
     e.stopPropagation(); e.preventDefault()
     const r = box.current!.getBoundingClientRect()
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-    setDrag({ kind, i, x0: e.clientX, keys, span, px: r.width, left: r.left })
-    if (kind === 'head') moveHead(e.clientX, r.left, r.width, span)
+    setDrag({ kind, i, x0: e.clientX, keys, span, v0, px: r.width, left: r.left })
+    if (kind === 'head') moveHead(e.clientX, r.left, r.width, span, v0)
   }
-  const moveHead = (x: number, left: number, px: number, sp: number) => {
-    const t = Math.max(0, Math.min(T, (x - left) / px * sp)); seek(t); setTip({ x: Math.min(t, T) / sp * px, text: fmt(t) })
+  const moveHead = (x: number, left: number, px: number, sp: number, o: number) => {
+    const t = Math.max(0, Math.min(T, o + (x - left) / px * sp)); seek(t); setTip({ x: (Math.min(t, T) - o) / sp * px, text: fmt(t) })
   }
   const move = (e: React.PointerEvent) => {
     const d = drag; if (!d) return
-    if (d.kind === 'head') { moveHead(e.clientX, d.left, d.px, d.span); return }
+    if (d.kind === 'head') { moveHead(e.clientX, d.left, d.px, d.span, d.v0); return }
     const dt = (e.clientX - d.x0) / d.px * d.span, k = d.keys.map(x => ({ ...x })), s0 = starts(d.keys), T0 = total(d.keys)
     let at = 0
     if (d.kind === 'key') {
@@ -72,16 +98,16 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
       const lo = s0[d.i - 1] + MIN, hi = d.i < k.length - 1 ? s0[d.i + 1] - MIN : MAX_T
       at = Math.min(hi, Math.max(lo, snap(s0[d.i] + dt)))
       k[d.i].dur = r1(at - s0[d.i - 1]); if (d.i < k.length - 1) k[d.i + 1].dur = r1(s0[d.i + 1] - at)
-      setTip({ x: at / d.span * d.px, text: `${fmt(at)}  (${k[d.i].dur.toFixed(1)} s)` })
+      setTip({ x: (at - d.v0) / d.span * d.px, text: `${fmt(at)}  (${k[d.i].dur.toFixed(1)} s)` })
     } else if (d.kind === 'edge') {
       // change this segment's length; everything after it moves along
       k[d.i].dur = Math.max(MIN, snap(d.keys[d.i].dur + dt)); at = s0[d.i - 1] + k[d.i].dur
-      setTip({ x: at / d.span * d.px, text: `${k[d.i].dur.toFixed(1)} s` })
+      setTip({ x: (at - d.v0) / d.span * d.px, text: `${k[d.i].dur.toFixed(1)} s` })
     } else {
       // total duration: every segment scales by the same factor
       const T1 = Math.min(MAX_T, Math.max(MIN * (k.length - 1), snap(T0 + dt))), f = T1 / T0
       for (let i = 1; i < k.length; i++) k[i].dur = Math.max(MIN, r1(d.keys[i].dur * f))
-      at = total(k); setTip({ x: at / d.span * d.px, text: `Total ${at.toFixed(1)} s` })
+      at = total(k); setTip({ x: (at - d.v0) / d.span * d.px, text: `Total ${at.toFixed(1)} s` })
     }
     setKeys(k)
   }
@@ -90,7 +116,7 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
   return (
     <div className="tl-track" ref={box} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
       <div className="tl-rule" onPointerDown={e => begin(e, 'head', 0)} title="Drag to scrub">
-        {ticks.map(t => <span key={t} className="tl-tick lab" style={{ left: pct(t) }}>{t > span - s * 0.6 ? '' : t < 60 ? `${+t.toFixed(1)}s` : fmt(t)}</span>)}
+        {ticks.map(t => <span key={t} className="tl-tick lab" style={{ left: pct(t) }}>{t > v0 + span - s * 0.6 ? '' : t < 60 ? `${+t.toFixed(s < 0.1 ? 2 : 1)}s` : fmt(t)}</span>)}
       </div>
       <div className="tl-lane" onPointerDown={e => begin(e, 'head', 0)}>
         {T > 0 && <div className="tl-out" style={{ left: pct(T) }} />}
@@ -108,6 +134,14 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
         {keys.length > 1 && <button className="tl-end" style={{ left: pct(T) }} aria-label="Total duration" title={`Total ${T.toFixed(1)} s. Drag to make the whole timeline longer or shorter.`} onPointerDown={e => begin(e, 'end', 0)} />}
       </div>
       {below?.(span, pct)}
+      {zoom && (() => { const range = Math.max(fit, v0 + span, T + 10); return (
+        <div className="tl-scroll" onPointerDown={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(), c = view.current
+          const at = (x: number) => clampView((x - r.left) / r.width * range - c.vs / 2, c.vs); setZoom(at(e.clientX))
+          const mv = (ev: PointerEvent) => setZoom(at(ev.clientX)), up = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up) }
+          window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up) }}>
+          <i style={{ left: `${v0 / range * 100}%`, width: `${span / range * 100}%` }} />
+        </div>) })()}
+      {zoom && <button className="tl-fit" onPointerDown={e => e.stopPropagation()} onClick={() => setZoom(null)} title="Show the whole timeline">Fit</button>}
       <div ref={el => { tlLive.ui.head = el }} className="tl-head" style={{ left: pct(Math.min(tlLive.t, T)) }} />
       {edit && (() => { const a = edit.kind === 'seg' ? st[edit.i - 1] + keys[edit.i].dur / 2 : st[edit.i]; return (
         <div className="tl-edit" style={{ left: pct(a) }} onPointerDown={e => e.stopPropagation()}>
