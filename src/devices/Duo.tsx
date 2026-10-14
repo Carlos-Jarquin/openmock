@@ -130,7 +130,8 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     const dis = !!a || o.foldDissolve !== false
     // implied crease: soft shading with a faint highlight along the fold, zero when flat, gentle mid-fold
     const crease = Math.sin(swing)
-    const set = (m: THREE.ShaderMaterial, on: number, blur: number, dark: number, fadeOut: number, slide = 0) => {
+    const set = (m: THREE.ShaderMaterial, on: number, blur: number, dark: number, fadeOut: number, slide = 0, sweep = 1) => {
+      m.uniforms.sweep.value = sweep
       const u = m.uniforms; u.has.value = on * (m === mats.outer ? hasOut : hasIn); u.m.value = blur; u.md.value = dark; u.fo.value = fadeOut
       u.slide.value = slide; u.aniso.value = 2.5 * Math.min(1, blur * 1.5)
       u.crease.value = m === mats.outer ? 0 : crease
@@ -148,10 +149,11 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       //  moving half's content passes over to the fixed half; outer: towards its hinge edge, u = 0), up to 5% of
       //  the width, with a matching zoom so no edge shows; fade to idle as the screen turns away.
       const dIn = smoother((180 - fold) / 80), dOut = smoother(fold / 80)
-      const sIn = -0.05 * smoother((180 - fold) / 110), sOut = 0.05 * smoother(fold / 110)
+      const sIn = 0, sOut = 0   // content never moves or scales on the panel; the sweep alone carries the motion
       const foIn = smoother((70 - fold) / 60), foOut = smoother((fold - 110) / 60)
-      for (const mm of [mats.fixed, mats.moving, mats.strip]) set(mm, 1, dIn, dIn, foIn, sIn)
-      set(mats.outer, 1, dOut, dOut, foOut, sOut)
+      // the dissolve front travels from the free edge towards (and a little past) the hinge as the screen leaves rest
+      for (const mm of [mats.fixed, mats.moving, mats.strip]) set(mm, 1, dIn, dIn, foIn, sIn, 1.15 - 1.4 * dIn)
+      set(mats.outer, 1, dOut, dOut, foOut, sOut, 1.15 - 1.4 * dOut)
     }
   })
   const zf = T / 2 + E          // front face layers
@@ -264,7 +266,7 @@ export const foldWidth = (f: number) => 1 + Math.max(0, -Math.cos(f * Math.PI / 
  * clears it); the blur covers the half (ramping in over the 30% nearest the hinge) and the darkening runs from 35% at the hinge to 80% at the free edge. Blur radius is in screen heights. */
 const SCREEN_VS = `uniform mat4 toRoot; varying vec2 vUv; varying vec3 vRoot;
 void main() { vUv = uv; vRoot = (toRoot * modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`
-const SCREEN_FS = `uniform sampler2D map; uniform float has, blur, m, md, fo, proj, aspect, plane, sw, sh, cx, eo, crease, slide, aniso; uniform vec2 rep, off, band; uniform vec3 eye, idleC;
+const SCREEN_FS = `uniform sampler2D map; uniform float has, blur, m, md, fo, proj, aspect, plane, sw, sh, cx, eo, crease, slide, aniso, sweep; uniform vec2 rep, off, band; uniform vec3 eye, idleC;
 varying vec2 vUv; varying vec3 vRoot;
 void main() {
   vec3 idle = idleC, c = idle;
@@ -274,12 +276,24 @@ void main() {
     // in by just enough that no edge is ever exposed. The dissolve is uniform over the screen.
     float k = 1.0 - 2.0 * abs(slide);
     vec2 st = vec2(0.5 + (vUv.x - 0.5) * k + slide, 0.5 + (vUv.y - 0.5) * k);
-    float r = blur * m, dark = min(0.8, md * 0.55);
+    // Spatial dissolve that sweeps with the fold (Apple's hand-off): x runs 1 at the moving half's free edge, 0 at the
+    // hinge, -1 at the fixed half's free edge (outer screen likewise: 1 at its free edge, 0 at its hinge edge). A smootherstep
+    // front at sweep (moved by the hinge angle from beyond the free edge towards the hinge and a little past it) gives
+    // one C2-smooth weight over both halves and the fold strip: no step anywhere, the fixed half fading in softly.
+    float x = eo > 0.5 ? 1.0 - vUv.x : abs(vUv.x - 0.5) * 2.0;   // outer: u = 0 is its free (island) edge
+    float t = clamp((x - sweep) / 0.7 + 0.5, 0.0, 1.0), sw8 = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    // inner: only the moving (left, u < 0.5) half dissolves; feathered to zero across the bent strip with a C1
+    // smootherstep (hinge line +-FC), so the fixed right half stays sharp with no step at the hinge
+    if (eo < 0.5) { float g = clamp(((0.5 - vUv.x) * 2.0 * sw + 0.003) / 0.006, 0.0, 1.0); sw8 *= g * g * g * (g * (g * 6.0 - 15.0) + 10.0); }
+    float r = blur * m * sw8, dark = min(0.8, md * 0.8 * sw8);
     vec2 uv = st * rep + off;
     vec2 lo = max(off, vec2(0.0)), hi = min(off + rep, vec2(1.0));
     float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-    if (r < 0.0004) c = texture2D(map, clamp(uv, lo, hi)).rgb;
-    else {
+    // sharp sample, cross-faded into the blur as its radius grows (no switch at a threshold, so no line where the
+    // sweeping blur starts)
+    c = texture2D(map, clamp(uv, lo, hi)).rgb;
+    if (r > 0.0002) {
+      vec3 sharp = c;
       // directional (motion) blur: the disc is stretched along the fold direction by aniso
       float bias = clamp(log2(r * 1400.0) - 1.0, 0.0, 7.0); c = vec3(0.0);
       vec2 sc = vec2((1.0 + aniso) / aspect, 1.0 / (1.0 + 0.5 * aniso));
@@ -287,7 +301,7 @@ void main() {
         float a = float(i) * 2.39996, q = sqrt((float(i) + 0.5) / 32.0) * r;
         c += texture2D(map, clamp(uv + vec2(cos(a), sin(a)) * sc * q * rep, lo, hi), bias).rgb;
       }
-      c /= 32.0;
+      c = mix(sharp, c / 32.0, smoothstep(0.0002, 0.004, r));
     }
     c *= inside;   // fit: letterbox bars are black
     if (crease > 0.0) {
@@ -308,7 +322,7 @@ const INNER_PROJ: ProjTarget = { plane: T / 2 + E * 2, cx: 0, sw: SW, sh: SH, eo
 const OUTER_PROJ: ProjTarget = { plane: 2 * (T / 2 + GAP) + T / 2 + E * 2, cx: W / 2, sw: OW / 2, sh: OH, eo: 1 }
 function screenMaterial(pt: ProjTarget = INNER_PROJ) {
   return new THREE.ShaderMaterial({ vertexShader: SCREEN_VS, fragmentShader: SCREEN_FS, toneMapped: false, uniforms: {
-    idleC: { value: new THREE.Vector3(0.0024, 0.0027, 0.0037) }, slide: { value: 0 }, aniso: { value: 0 }, crease: { value: 0 }, band: { value: new THREE.Vector2(0, 0) },
+    idleC: { value: new THREE.Vector3(0.0024, 0.0027, 0.0037) }, slide: { value: 0 }, sweep: { value: 1 }, aniso: { value: 0 }, crease: { value: 0 }, band: { value: new THREE.Vector2(0, 0) },
     map: { value: null }, has: { value: 0 }, blur: { value: 0 }, m: { value: 0 }, md: { value: 0 }, fo: { value: 0 }, proj: { value: 0 }, aspect: { value: 1 }, rep: { value: new THREE.Vector2(1, 1) }, off: { value: new THREE.Vector2() },
     toRoot: { value: new THREE.Matrix4() }, eye: { value: new THREE.Vector3(pt.cx, 0, pt.plane + 4) }, plane: { value: pt.plane }, sw: { value: pt.sw }, sh: { value: pt.sh }, cx: { value: pt.cx }, eo: { value: pt.eo } } })
 }
