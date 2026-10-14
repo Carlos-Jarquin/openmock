@@ -112,13 +112,15 @@ function SceneBg({ mode, c1, c2, angle }: { mode: BgMode; c1: string; c2: string
 }
 
 /** Keeps its children centred on their own bounding-box centre (measured unrotated), so the view orbits the device. */
-function Centred({ deps, children }: { deps: unknown[]; children: React.ReactNode }) {
+function Centred({ deps, children, off = false }: { deps: unknown[]; children: React.ReactNode; off?: boolean }) {
   const inner = useRef<THREE.Group>(null)
   const dirty = useRef(true)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { dirty.current = true }, deps)
   useFrame(() => {
     const g = inner.current; if (!g || !dirty.current) return
+    // the Duo positions itself about its hinge (see Duo.tsx), so a bbox re-centre would shift it with the fold
+    if (off) { g.position.set(0, 0, 0); dirty.current = false; return }
     const parent = g.parent!
     const saved = parent.matrixWorld.clone()
     parent.matrixWorld.identity()
@@ -180,6 +182,7 @@ export default function App() {
   const [foldFollow, setFoldFollow] = useState(true)
   const [foldPlaying, setFoldPlaying] = useState(false)
   const [foldSpeed, setFoldSpeed] = useState(1)
+  const [foldDark, setFoldDark] = useState(1)
   foldLive.follow = foldFollow
   // The transition runs in the Duo's frame loop from foldLive (no React state per frame). React only hears about it
   // twice: the screen swap at 30% (both screens are dissolved then, so the content change is hidden) and the end.
@@ -500,8 +503,9 @@ export default function App() {
           <div className="row"><button className="ghost" onClick={() => foldPlaying ? stopFold(false) : playFold()}>{foldPlaying ? 'Stop' : 'Play open and close'}</button></div>
           {slider('Transition blur', Math.round((opts.foldBlur ?? 0.6) * 100), 0, 100, 1, n => setOpts({ ...opts, foldBlur: n / 100 }), '%')}
           {slider('Speed', foldSpeed, 0.5, 2, 0.05, n => setFoldSpeed(n), '×')}
+          {slider('Darkness', Math.round(foldDark * 100), 0, 150, 1, n => { foldLive.dark = n / 100; setFoldDark(n / 100) }, '%')}
           <label className="check"><input type="checkbox" checked={foldFollow} onChange={e => setFoldFollow(e.target.checked)} /> Camera follows the fold</label>
-          <p className="hint">Switching screens swings the hinge in 0.9 s (at 1×). The dissolve follows the hinge angle: each screen frosts and darkens as it leaves its rest, peaking mid-fold, and is clear exactly as the hinge settles.</p>
+          <p className="hint">Switching screens swings the hinge in 0.9 s (at 1×). The dissolve follows the hinge angle: each screen frosts and darkens as it leaves its rest, peaking mid-fold, and is clear exactly as the hinge settles. Darkness sets how much the screens darken as they dissolve: 0% is blur only and 100% is the default.</p>
           <p className="hint">Native size: {opts.screen === 'inner' ? `${INNER_PX.w} × ${INNER_PX.h}` : `${OUTER_PX.w} × ${OUTER_PX.h}`} px. Screenshots at this size fit exactly.</p>
         </section>}
         <section><h2>Hands</h2>
@@ -656,7 +660,7 @@ export default function App() {
             <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
           </>}
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
-            <Centred deps={[device, ...(device === 'duo' ? [] : [opts.fold, opts.screen]), screenTex.texture, hands.pose]}>
+            <Centred off={device === 'duo'} deps={[device, ...(device === 'duo' ? [] : [opts.fold, opts.screen]), screenTex.texture, hands.pose]}>
               <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture} rot={handRot}>
                 <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
                   {...(device === 'duo' ? { textureOuter: mediaOuter?.texture ?? null, mediaAspectOuter: mediaOuter?.aspect } : {})} /></SketchStyle>

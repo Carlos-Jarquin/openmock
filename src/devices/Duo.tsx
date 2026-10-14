@@ -98,6 +98,15 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     } else if (ma > aspect) { const q = aspect / ma; u.rep.value.set(q, 1); u.off.value.set((1 - q) / 2, 0) }
     else { const q = ma / aspect; u.rep.value.set(1, q); u.off.value.set(0, 1 - q) }
   }
+  // same media on both screens (including the outer falling back to the inner media): the outer shows exactly the
+  // inner screen's right (fixed) half, same crop and scale, so the pixels line up when closed. The closed outer
+  // spans x in [W/2 - OW/2, W/2 + OW/2] from the hinge and is centred vertically; the inner's right half maps
+  // x in [0, SW] to u in [0.5, 1].
+  if (!textureOuter || textureOuter === texture) {
+    const ri = mats.fixed.uniforms.rep.value, oi = mats.fixed.uniforms.off.value, uo = mats.outer.uniforms
+    const ax = 0.5 + (W / 2 - OW / 2) / (2 * SW), bx = OW / (2 * SW), ay = 0.5 - OH / (2 * SH), by = OH / SH
+    uo.rep.value.set(bx * ri.x, by * ri.y); uo.off.value.set(ax * ri.x + oi.x, ay * ri.y + oi.y)
+  }
   for (const t of [texture, textureOuter]) if (t) { t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; if (t.minFilter !== THREE.LinearMipmapLinearFilter) { t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.needsUpdate = true } }
   const optsRef = useRef(opts); optsRef.current = opts
   const hasIn = texture ? 1 : 0, hasOut = outTex ? 1 : 0
@@ -114,7 +123,10 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     if (foldLive.log) foldLive.log.push([now, fold])
     const swing = THREE.MathUtils.degToRad(180 - fold)
     // self-centring: the closed stack is centred on the hinge-side half, the open device on the hinge
-    root.current?.position.set(-(W / 2) * (1 - fold / 180), 0, -(T / 2 + GAP) * (1 - fold / 180))
+    // With 'Camera follows the fold' off, nothing re-centres: the fixed (right) half and the hinge keep their world
+    // and screen position at every angle and only the left half swings.
+    const kc = foldLive.follow ? 1 - fold / 180 : 0
+    root.current?.position.set(-(W / 2) * kc, 0, -(T / 2 + GAP) * kc)
     swingG.current?.rotation.set(0, swing, 0)
     const sp = spineAt(swing)
     if (spineG.current && spineM.current) {
@@ -148,12 +160,15 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       //  slide: the whole image travels towards the hinge as the screen leaves rest (inner: u decreasing, i.e. the
       //  moving half's content passes over to the fixed half; outer: towards its hinge edge, u = 0), up to 5% of
       //  the width, with a matching zoom so no edge shows; fade to idle as the screen turns away.
-      const dIn = smoother((180 - fold) / 80), dOut = smoother(fold / 80)
+      // progress is linear in the hinge angle (0 exactly at rest, 180 / 0; 1 exactly at INNER_FULL_AT / OUTER_START_AT).
+      // It moves the soft front (width 0.3) across the screen at full strength, so the dissolved area grows in
+      // proportion to the angle with no early saturation; the front only clears the screen edge at exactly 0 / 180
+      const dIn = clamp01((180 - fold) / (180 - INNER_FULL_AT)), dOut = clamp01(fold / OUTER_START_AT)
       const sIn = 0, sOut = 0   // content never moves or scales on the panel; the sweep alone carries the motion
       const foIn = smoother((70 - fold) / 60), foOut = smoother((fold - 110) / 60)
       // the dissolve front travels from the free edge towards (and a little past) the hinge as the screen leaves rest
-      for (const mm of [mats.fixed, mats.moving, mats.strip]) set(mm, 1, dIn, dIn, foIn, sIn, 1.15 - 1.4 * dIn)
-      set(mats.outer, 1, dOut, dOut, foOut, sOut, 1.15 - 1.4 * dOut)
+      for (const mm of [mats.fixed, mats.moving, mats.strip]) set(mm, 1, 1, foldLive.dark, foIn, sIn, 1.15 - 1.3 * dIn)
+      set(mats.outer, 1, 1, foldLive.dark, foOut, sOut, 1.15 - 1.3 * dOut)
     }
   })
   const zf = T / 2 + E          // front face layers
@@ -254,7 +269,8 @@ const smoother = (x: number) => { const t = clamp01(x); return t * t * t * (t * 
 export interface FoldAnim { from: number; target: number; to: 'inner' | 'outer'; t0: number; dur: number; swapped?: boolean; camD0?: number; w0?: number
   onSwap?: () => void; onDone?: (fold: number, zoomK: number) => void }
 /** Live fold state shared by the studio and the Duo, read every frame (no React state per frame). */
-export const foldLive: { anim: FoldAnim | null; follow: boolean; log: [number, number][] | null } = { anim: null, follow: true, log: null }
+/** Live fold state read in the frame loop. dark scales the dissolve's darkening (0 = blur only, 1 = default, 1.5 max). */
+export const foldLive: { anim: FoldAnim | null; follow: boolean; dark: number; log: [number, number][] | null } = { anim: null, follow: true, dark: 1, log: null }
 /** Hinge swing at speed 1, in ms, on smootherstep (no snap, no rebound). The dissolve has no timer of its own. */
 export const FOLD_MS = 900
 
@@ -266,7 +282,8 @@ export const foldWidth = (f: number) => 1 + Math.max(0, -Math.cos(f * Math.PI / 
  * clears it); the blur covers the half (ramping in over the 30% nearest the hinge) and the darkening runs from 35% at the hinge to 80% at the free edge. Blur radius is in screen heights. */
 const SCREEN_VS = `uniform mat4 toRoot; varying vec2 vUv; varying vec3 vRoot;
 void main() { vUv = uv; vRoot = (toRoot * modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`
-const SCREEN_FS = `uniform sampler2D map; uniform float has, blur, m, md, fo, proj, aspect, plane, sw, sh, cx, eo, crease, slide, aniso, sweep; uniform vec2 rep, off, band; uniform vec3 eye, idleC;
+const SCREEN_FS = `#define INNER_CLEAR 0.05
+uniform sampler2D map; uniform float has, blur, m, md, fo, proj, aspect, plane, sw, sh, cx, eo, crease, slide, aniso, sweep; uniform vec2 rep, off, band; uniform vec3 eye, idleC;
 varying vec2 vUv; varying vec3 vRoot;
 void main() {
   vec3 idle = idleC, c = idle;
@@ -280,12 +297,21 @@ void main() {
     // hinge, -1 at the fixed half's free edge (outer screen likewise: 1 at its free edge, 0 at its hinge edge). A smootherstep
     // front at sweep (moved by the hinge angle from beyond the free edge towards the hinge and a little past it) gives
     // one C2-smooth weight over both halves and the fold strip: no step anywhere, the fixed half fading in softly.
-    float x = eo > 0.5 ? 1.0 - vUv.x : abs(vUv.x - 0.5) * 2.0;   // outer: u = 0 is its free (island) edge
-    float t = clamp((x - sweep) / 0.7 + 0.5, 0.0, 1.0), sw8 = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    float x = eo > 0.5 ? 1.0 - vUv.x : abs(vUv.x - 0.5) * 2.0;   // outer: u = 1 is its free (island) edge, on the right when closed
+    // zone: the INNER_CLEAR (5%) of the width nearest the hinge always stays clear; the dissolve lives in the outer 95% (z = 0..1
+    // across it), its front sweeping within that zone and its intensity ramping up towards the free edge
+    // (e = z^2 (2 - z): zero value and slope at that boundary, so C1 with no line)
+    float z = eo > 0.5 ? x : clamp((x - INNER_CLEAR) / (1.0 - INNER_CLEAR), 0.0, 1.0), e = eo > 0.5 ? 1.0 : z * z * (2.0 - z);   // outer: full width
+    // outer (mirrored reverse of the inner): on opening the dissolve front starts at its hinge side (the right as seen
+    // from the front) and travels to the free edge, so the content leaves right to left
+    float t = clamp((eo > 0.5 ? (1.0 - sweep) - z : z - sweep) / 0.3 + 0.5, 0.0, 1.0), sw8 = e * t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
     // inner: only the moving (left, u < 0.5) half dissolves; feathered to zero across the bent strip with a C1
     // smootherstep (hinge line +-FC), so the fixed right half stays sharp with no step at the hinge
-    if (eo < 0.5) { float g = clamp(((0.5 - vUv.x) * 2.0 * sw + 0.003) / 0.006, 0.0, 1.0); sw8 *= g * g * g * (g * (g * 6.0 - 15.0) + 10.0); }
-    float r = blur * m * sw8, dark = min(0.8, md * 0.8 * sw8);
+    // mv is that moving-side weight (1 on the outer): every effect (dissolve, crease shade, fade to idle) is scaled by
+    // it, so the inner right half is never touched at any angle
+    float mv = 1.0;
+    if (eo < 0.5) { float g = clamp(((0.5 - vUv.x) * 2.0 * sw + 0.003) / 0.006, 0.0, 1.0); mv = g * g * g * (g * (g * 6.0 - 15.0) + 10.0); sw8 *= mv; }
+    float r = blur * m * sw8, dark = min(0.95, md * 0.8 * sw8);   // md: Darkness (0 to 1.5, 1 = default)
     vec2 uv = st * rep + off;
     vec2 lo = max(off, vec2(0.0)), hi = min(off + rep, vec2(1.0));
     float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
@@ -307,9 +333,12 @@ void main() {
     if (crease > 0.0) {
       // implied crease: a very faint, wide gaussian shadow along the hinge line, no highlight, no edges
       float dx = abs(vUv.x - 0.5) * 2.0 * sw;
-      c *= 1.0 - 0.12 * crease * exp(-pow(dx / 0.04, 2.0));
+      // crease shade only on the moving side, with its own wide C1 ramp (a gaussian half that is zero with zero slope at
+      // the hinge line) so it never makes a step there and never touches the fixed right half
+      float cs = vUv.x < 0.5 ? 1.0 - exp(-pow(dx / 0.02, 2.0)) : 0.0;
+      c *= 1.0 - 0.12 * crease * cs * exp(-pow(dx / 0.04, 2.0));
     }
-    c = mix(mix(c, idle, dark), idle, fo);
+    c = mix(mix(c, idle, dark), idle, fo * mv);
   }
   gl_FragColor = vec4(c, 1.0);
   #include <colorspace_fragment>
@@ -328,6 +357,10 @@ function screenMaterial(pt: ProjTarget = INNER_PROJ) {
 }
 
 /** Half-width of the screen's bent fold region (3 mm each side of the hinge line), about a real foldable's fold zone. */
+/** Fold dissolve timing (hinge angle: 180 = open, 0 = closed). The inner dissolve ramps from 180 and is at its full
+ *  extent at INNER_FULL_AT; between that and OUTER_START_AT the inner holds and the outer has not started; the outer
+ *  runs from OUTER_START_AT (fully dissolved) down to 0 (clear). Opening is the exact reverse. */
+export const INNER_FULL_AT = 90, OUTER_START_AT = 80
 const FC = 0.003, STRIP_N = 24
 /** Fold strip: STRIP_N + 1 columns, top and bottom rows; uv u runs across the fold region, v up the screen. */
 function foldStripGeometry() {
