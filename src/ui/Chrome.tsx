@@ -217,7 +217,8 @@ export function Chrome({ sections, commands, deviceName, tools, exportMenu, time
       // stay below the top pill where they overlap, so the peek header is never hidden under it
       const r = el.getBoundingClientRect(), pr = pillBox(), minTop = pr && !ui.pillHidden && r.right > pr.left && r.left < pr.right ? pr.bottom + 12 : 16
       const max = innerHeight - minTop - 16, h = Math.min(el.offsetHeight, max), cy = b.top + b.height / 2, top = Math.max(minTop, Math.min(innerHeight - h - 16, b.top - 8)), arrow = Math.max(14, Math.min(h - 14, cy - top))
-      if (next[s].top !== top || next[s].arrow !== arrow || next[s].max !== max) { next[s] = { top, arrow, max }; ch = true } }
+      const far = (a: number | undefined, b2: number) => a == null || Math.abs(a - b2) > 1
+      if (far(next[s].top, top) || far(next[s].arrow, arrow) || far(next[s].max, max)) { next[s] = { top, arrow, max }; ch = true } }
     if (ch) setPeekTop(next)
   })
   const panel = (s: Side) => {
