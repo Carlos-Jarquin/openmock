@@ -31,7 +31,7 @@ const btnLineCache = new Map<string, Float32Array>()
 const geoOnce = (k: string, f: () => THREE.BufferGeometry) => { let g = geoCache.get(k); if (!g) geoCache.set(k, g = f()); return g }
 /** Smooth shading for extruded parts: ExtrudeGeometry is unindexed, so computeVertexNormals gives one normal per face
  * and every bevel facet shows. Average normals of faces meeting at the same point when they are within creaseDeg. */
-function smoothNormals(g: THREE.BufferGeometry, creaseDeg = 50) {
+export function smoothNormals(g: THREE.BufferGeometry, creaseDeg = 50) {
   const pos = g.attributes.position, n = pos.count, cos = Math.cos(creaseDeg * Math.PI / 180)
   const fn = new Float32Array(n * 3), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3()
   for (let i = 0; i < n; i += 3) {
@@ -67,7 +67,7 @@ if (import.meta.hot) {
     bodySets.forEach(s => Object.values(s).forEach(g => g.dispose())); bodySets.clear()
   }
 }
-function rrect(w: number, h: number, [bl, br, tr, tl]: number[], cx = 0, cy = 0) {
+export function rrect(w: number, h: number, [bl, br, tr, tl]: number[], cx = 0, cy = 0) {
   const s = new THREE.Shape(), x = cx - w / 2, y = cy - h / 2
   const arc = (px: number, py: number, r: number, a0: number) => s.absarc(px, py, r, a0, a0 + Math.PI / 2, false)
   s.moveTo(x + bl, y); s.lineTo(x + w - br, y); arc(x + w - br, y + br, br, -Math.PI / 2)
@@ -77,7 +77,7 @@ function rrect(w: number, h: number, [bl, br, tr, tl]: number[], cx = 0, cy = 0)
 }
 const all = (r: number) => [r, r, r, r]
 /** Slab with a rounded (quarter-round style) edge band, centred in z. */
-function slab(shape: THREE.Shape, depth: number, edge: number, segs = 16) {
+export function slab(shape: THREE.Shape, depth: number, edge: number, segs = 16) {
   const g = new THREE.ExtrudeGeometry(shape, { depth: depth - edge * 2, bevelEnabled: true, bevelThickness: edge, bevelSize: edge, bevelOffset: -edge, bevelSegments: segs, curveSegments: 64 })
   g.translate(0, 0, -(depth - edge * 2) / 2); return smoothNormals(g)
 }
@@ -291,7 +291,7 @@ const ISLAND_TONE = { sketchTone: 'black' } as const // Sketch: island and lens 
 /** Camera lens as seen through cover glass, facing +z. r is the visible outer radius.
  * Layers: dark barrel ring, lens body, AR-coated element (thin-film iridescence for the blue/purple sheen),
  * two concentric element edges, a small iris, and a curved additive glass cap that only adds reflections. */
-function LensStack({ r, order = 0 }: { r: number; order?: number }) {
+export function LensStack({ r, order = 0 }: { r: number; order?: number }) {
   const off = (k: number) => ({ polygonOffset: true, polygonOffsetFactor: -6 - k, polygonOffsetUnits: -6 - k })
   // Flat cover glass, as on the real phone: a disc that only adds reflections over the lens.
   const capGeo = geoOnce(`capflat${r}`, () => new THREE.CircleGeometry(r, 64))

@@ -518,7 +518,7 @@ export default function App() {
               <button className="ghost" onClick={() => { setSb(SB_DEFAULT); setSbReset(sbReset + 1) }}>Reset status bar</button>
               <p className="hint">Drawn onto the screen in iPhone points, so it shows in renders and exports. Auto picks dark or light text from the top of your image or video.</p>
             </>}
-          </> : <p className="hint">Available for the iPhone 18 Pro and Pro Max.</p>}
+          </> : <p className="hint">Available for the iPhone 18 Pro and Pro Max. iPad status bars are coming later.</p>}
         </section>
         {def.foldable && <section><h2>iPhone Duo</h2>
           {slider('Fold', Math.round(opts.fold), 0, 180, 1, n => { stopFold(); setOpts(x => ({ ...x, fold: n, trans: null, screen: x.foldDissolve === false ? x.screen : n >= 90 ? 'inner' : 'outer' })) }, '°')}

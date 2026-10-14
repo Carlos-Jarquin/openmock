@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 import type * as THREE from 'three'
-export type DeviceId = 'ip18' | 'ip18max' | 'duo' | 'phone' | 'browser'
+export type DeviceId = 'ip18' | 'ip18max' | 'duo' | 'ipmini' | 'ippro13' | 'ippro11' | 'phone' | 'browser'
 export type Finish = string
 export interface LogoArt { mask: THREE.Texture; aspect: number }
 export interface DeviceOptions { fold: number; screen: 'inner' | 'outer'; finish: Finish; logo: LogoArt | null; logoSize: number; logoTint: string; simTray: boolean; /** hide the 3D Dynamic Island (and front lens) when the status bar draws the island */ hideIsland?: boolean
