@@ -153,6 +153,9 @@ export default function App() {
   const [device, setDevice] = useState<DeviceId>('ip18')
   const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'silver', logo: null, logoSize: 0.16, logoTint: '#8a8f99', simTray: true })
   const [media, setMedia] = useState<Media | null>(null)
+  // iPhone Duo: the outer screen has its own media; paste and drop go to the target screen (follows the shown screen)
+  const [mediaOuter, setMediaOuter] = useState<Media | null>(null)
+  const [mediaTo, setMediaTo] = useState<'inner' | 'outer'>('inner')
   const [sbOn, setSbOn] = useState(true) // on by default (Carlos, Oct 13)
   const [sb, setSb] = useState<SbCfg>(SB_DEFAULT)
   const [sbReset, setSbReset] = useState(0)
@@ -254,7 +257,8 @@ export default function App() {
   const devOpts = useMemo(() => sbOn && sbSize ? { ...opts, hideIsland: true } : opts, [opts, sbOn, !!sbSize])
 
   /** SVG markup: rasterised at 3x the Pro Max screen width (1320 px) for the screen texture; the markup is kept for SVG export. */
-  const loadSvg = useCallback((text: string, name: string, done?: string) => {
+  const loadSvg = useCallback((text: string, name: string, done?: string, to: 'inner' | 'outer' = 'inner') => {
+    const setM = to === 'outer' ? setMediaOuter : setMedia
     const doc = new DOMParser().parseFromString(text, 'image/svg+xml'), el = doc.documentElement
     if (el.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) { flash('That SVG could not be read.', true); return }
     const vb = el.getAttribute('viewBox')?.split(/[\s,]+/).map(Number)
@@ -267,13 +271,14 @@ export default function App() {
     img.onload = () => {
       const c = document.createElement('canvas'); c.width = W; c.height = H; c.getContext('2d')!.drawImage(img, 0, 0, W, H)
       const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8
-      setMedia(m => { m?.video?.pause(); m?.texture.dispose(); return { texture: t, aspect: W / H, kind: 'image', name, svg: text } })
+      setM(m => { m?.video?.pause(); m?.texture.dispose(); return { texture: t, aspect: W / H, kind: 'image', name, svg: text } })
       setStatus(`Loaded SVG: ${name} (rasterised at ${W} × ${H})`); if (done) flash(done)
     }
     img.onerror = () => flash('That SVG could not be drawn (it may use external images or fonts).', true)
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(src)
   }, [flash])
-  const loadFile = useCallback((file: File, done?: string) => {
+  const loadFile = useCallback((file: File, done?: string, to: 'inner' | 'outer' = 'inner') => {
+    const setM = to === 'outer' ? setMediaOuter : setMedia
     const url = URL.createObjectURL(file)
     if (file.type.startsWith('video/')) {
       const v = document.createElement('video')
@@ -281,23 +286,30 @@ export default function App() {
       v.onloadeddata = () => {
         const t = new THREE.VideoTexture(v); t.colorSpace = THREE.SRGBColorSpace
         v.play().catch(() => {})
-        setMedia(m => { m?.video?.pause(); m?.texture.dispose(); return { texture: t, aspect: v.videoWidth / v.videoHeight, kind: 'video', name: file.name, video: v } })
+        setM(m => { m?.video?.pause(); m?.texture.dispose(); return { texture: t, aspect: v.videoWidth / v.videoHeight, kind: 'video', name: file.name, video: v } })
         setStatus(`Loaded video: ${file.name}`); if (done) flash(done)
       }
     } else if (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)) {
-      file.text().then(t => loadSvg(t, file.name, done))
+      file.text().then(t => loadSvg(t, file.name, done, to))
     } else if (file.type.startsWith('image/')) {
       new THREE.TextureLoader().load(url, t => {
         t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8
         const img = t.image as HTMLImageElement
-        setMedia(m => { m?.video?.pause(); m?.texture.dispose(); return { texture: t, aspect: img.width / img.height, kind: 'image', name: file.name } })
+        setM(m => { m?.video?.pause(); m?.texture.dispose(); return { texture: t, aspect: img.width / img.height, kind: 'image', name: file.name } })
         setStatus(`Loaded image: ${file.name}`); if (done) flash(done)
       }, undefined, () => flash(`Couldn't read that image (${file.type || 'unknown type'}).`, true))
     } else flash('That file type is not supported. Use an image (PNG, JPEG, WebP) or a video.', true)
   }, [flash, loadSvg])
 
+  // the Duo's paste/drop target follows the screen being shown or selected; the Media selector can change it
+  useEffect(() => { setMediaTo(opts.screen) }, [opts.screen])
+  const target = device === 'duo' ? mediaTo : 'inner'
+  const targetRef = useRef(target); targetRef.current = target
+  const onto = (to: 'inner' | 'outer') => device === 'duo' ? `Pasted onto the ${to} screen` : 'Pasted onto screen'
+  const ontoRef = useRef(onto); ontoRef.current = onto
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      const to = targetRef.current
       // typing or pasting into a field (hex, seed, activity text...) is left alone
       const el = document.activeElement as HTMLElement | null
       if (el && (el.isContentEditable || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'button', 'color', 'file'].includes((el as HTMLInputElement).type)))) return
@@ -308,10 +320,10 @@ export default function App() {
       e.preventDefault()
       // Figma "Copy as SVG" puts the markup on the clipboard as text
       const txt = (dt.getData('image/svg+xml') || dt.getData('text/plain') || '').trim()
-      if (!f && /^(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(txt)) { loadSvg(txt, 'Pasted SVG', 'Pasted onto screen'); return }
+      if (!f && /^(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(txt)) { loadSvg(txt, 'Pasted SVG', ontoRef.current(to), to); return }
       if (!f) { flash('The clipboard has no image. Copy an image (for example Copy as PNG in Figma), then press Cmd+V.', true); return }
       const named = f.name && f.name !== 'image.png' ? f : new File([f], `Pasted image.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type })
-      loadFile(named, 'Pasted onto screen')
+      loadFile(named, ontoRef.current(to), to)
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
@@ -321,7 +333,7 @@ export default function App() {
 
   // Any change to the scene makes the AI picture stale, so drop it.
   useEffect(() => { setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return a.url ? { ...a, url: null } : a }) },
-    [device, opts, media, pose, light, fx, hands, gesture, handRot, bgMode, bg1, bg2, angle, transparent, style, sk])
+    [device, opts, media, mediaOuter, pose, light, fx, hands, gesture, handRot, bgMode, bg1, bg2, angle, transparent, style, sk])
   const makePhotoreal = async () => {
     const t = three.current
     if (ai.busy) return
@@ -402,7 +414,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive, setSbOn, setSb, setSpectral }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive, setSbOn, setSb, setSpectral }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -419,9 +431,22 @@ export default function App() {
       <aside className="panel">
         <h1>Openmock</h1>
         <section><h2>Media</h2>
-          <button onClick={() => fileInput.current?.click()}>Choose image or video</button>
-          <input ref={fileInput} type="file" accept="image/*,video/*,.svg" hidden onChange={e => e.target.files?.[0] && loadFile(e.target.files[0])} />
-          <p className="hint">{media ? media.name : 'You can also drag a file in or paste with Cmd+V.'}</p>
+          {device === 'duo' ? <>
+            <div className="seg"><button className={mediaTo === 'inner' ? 'on' : ''} onClick={() => setMediaTo('inner')}>Inner screen</button><button className={mediaTo === 'outer' ? 'on' : ''} onClick={() => setMediaTo('outer')}>Outer screen</button></div>
+            <p className="hint">Target for Choose, paste (Cmd+V) and drop: the {mediaTo} screen. It follows the screen shown; pick the other here to load it too.</p>
+            {(['inner', 'outer'] as const).map(k => { const m = k === 'inner' ? media : mediaOuter, fk = k === 'inner' ? 'fitInner' : 'fitOuter'
+              return <div key={k} className={`duo-src ${mediaTo === k ? 'on' : ''}`}>
+                <label className="row"><span>{k === 'inner' ? 'Inner' : 'Outer'}</span>
+                  <button className="ghost" onClick={() => { setMediaTo(k); fileInput.current?.click() }}>Choose image or video</button></label>
+                <p className="hint">{m ? `${m.name} (${m.kind}${m.svg ? ', SVG' : ''})` : k === 'outer' ? 'None: shows the inner media.' : 'None yet.'}</p>
+                <div className="seg"><button className={opts[fk] !== 'fit' ? 'on' : ''} onClick={() => setOpts(o => ({ ...o, [fk]: 'fill' }))}>Fill</button><button className={opts[fk] === 'fit' ? 'on' : ''} onClick={() => setOpts(o => ({ ...o, [fk]: 'fit' }))}>Fit</button>
+                  {m && <button className="ghost" onClick={() => (k === 'inner' ? setMedia : setMediaOuter)(x => { x?.video?.pause(); x?.texture.dispose(); return null })}>Clear</button>}</div>
+              </div> })}
+          </> : <>
+            <button onClick={() => fileInput.current?.click()}>Choose image or video</button>
+            <p className="hint">{media ? media.name : 'You can also drag a file in or paste with Cmd+V.'}</p>
+          </>}
+          <input ref={fileInput} type="file" accept="image/*,video/*,.svg" hidden onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(f, undefined, target); e.target.value = '' }} />
         </section>
         <section><h2>Scenes</h2>
           <button onClick={violetScene}>Violet silhouette</button>
@@ -583,7 +608,7 @@ export default function App() {
       </aside>
       <main className={`stage ${transparent ? 'checker' : ''} ${dragging ? 'drag' : ''}`} style={{ background: bgCss }}
         onDragOver={e => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)}
-        onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) loadFile(f, 'Dropped onto screen'); else flash('That drop had no file. Drag in an image or video file.', true) }}
+        onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) loadFile(f, device === 'duo' ? `Dropped onto the ${target} screen` : 'Dropped onto screen', target); else flash('That drop had no file. Drag in an image or video file.', true) }}
         onContextMenu={e => e.preventDefault()}
         onPointerDown={e => {
           if (sceneHit.current) { sceneHit.current = false; return }
@@ -633,7 +658,8 @@ export default function App() {
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
             <Centred deps={[device, ...(device === 'duo' ? [] : [opts.fold, opts.screen]), screenTex.texture, hands.pose]}>
               <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture} rot={handRot}>
-                <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts} /></SketchStyle>
+                <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
+                  {...(device === 'duo' ? { textureOuter: mediaOuter?.texture ?? null, mediaAspectOuter: mediaOuter?.aspect } : {})} /></SketchStyle>
               </HandRig>
             </Centred>
           </group>

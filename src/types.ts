@@ -7,6 +7,10 @@ export interface DeviceOptions { fold: number; screen: 'inner' | 'outer'; finish
   /** Duo fold transition: progress 0 to 1 towards screen `to`; the outgoing screen blurs and fades, the incoming one sharpens. blur is the strength 0 to 1. */
   trans?: { p: number; to: 'inner' | 'outer' } | null; foldBlur?: number
   /** Duo: dissolve the screens by hinge angle on stills and while scrubbing too (default on). */
-  foldDissolve?: boolean }
-export interface DeviceProps { texture: THREE.Texture | null; mediaAspect: number; opts: DeviceOptions }
+  foldDissolve?: boolean
+  /** Duo: how each screen's media fits (fill crops to cover, the default; fit letterboxes). */
+  fitInner?: 'fill' | 'fit'; fitOuter?: 'fill' | 'fit' }
+export interface DeviceProps { texture: THREE.Texture | null; mediaAspect: number; opts: DeviceOptions
+  /** Duo only: the outer screen's own media (the inner screen uses texture). */
+  textureOuter?: THREE.Texture | null; mediaAspectOuter?: number }
 export interface DeviceDef { id: DeviceId; label: string; screenAspect: number | ((o: DeviceOptions) => number); foldable?: boolean; finishes?: Record<string, { label: string }>; defaultFinish?: string; nativePx?: { w: number; h: number }; logoSpot?: boolean; Component: ComponentType<DeviceProps> }
