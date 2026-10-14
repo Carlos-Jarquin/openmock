@@ -101,6 +101,26 @@ const hullFrag = /* glsl */`uniform vec3 uTint; uniform float uArmFade; varying 
 void main() { if (vCut > 0.5) discard; float k = 1.0 - uArmFade * smoothstep(0.0, 0.19, vArm); if (k < 0.02) discard; gl_FragColor = vec4(uTint, k);
   #include <colorspace_fragment>
 }`
+/** Arm off: the inner and see-through lines fade out past the wrist like the fill. The plane (origin and arm direction in
+ *  the hand mesh's own space, metres) is set per line object just before it draws, as the two hands share materials. */
+function fadeLines(m: LineMaterial) {
+  m.uniforms.uFadeO = { value: new THREE.Vector3() }; m.uniforms.uFadeD = { value: new THREE.Vector3() }
+  m.onBeforeCompile = sh => {
+    sh.vertexShader = 'uniform vec3 uFadeO; uniform vec3 uFadeD; varying float vFa;\n' + sh.vertexShader.replace('void main() {', 'void main() {\n  vFa = dot((position.y < 0.5 ? instanceStart : instanceEnd) - uFadeO, uFadeD);')
+    sh.fragmentShader = 'varying float vFa;\n' + sh.fragmentShader.replace('gl_FragColor = vec4( diffuseColor.rgb, alpha );', 'gl_FragColor = vec4( diffuseColor.rgb, alpha * (1.0 - smoothstep(0.0, 0.019, vFa)) );')
+  }
+  m.customProgramCacheKey = () => 'line-fade'
+}
+const _fm = new THREE.Matrix4(), _fi = new THREE.Matrix4()
+/** Sets the fade plane for this hand on the material about to draw one of its lines (zero direction: no fade). */
+function lineFadeHook(mesh: THREE.SkinnedMesh, obj: THREE.Object3D) {
+  obj.onBeforeRender = (_r, _s, _c, _g, mat) => { const u = (mat as LineMaterial).uniforms; if (!u?.uFadeO) return
+    const f = mesh.userData.spectralFade as { k: number; W: THREE.Vector3; out: THREE.Vector3 } | null
+    if (!f) u.uFadeD.value.set(0, 0, 0)
+    else { const sk = mesh.skeleton; _fm.copy(_fi.copy(mesh.matrixWorld).invert()).multiply(sk.bones[f.k].matrixWorld).multiply(sk.boneInverses[f.k])
+      u.uFadeO.value.copy(f.W).applyMatrix4(_fm); u.uFadeD.value.copy(f.out).transformDirection(_fm) }
+    ;(mat as LineMaterial).uniformsNeedUpdate = true }
+}
 export function spectralMaterials(o: SpectralOptions) {
   const tint = new THREE.Color(o.tint), lineCol = new THREE.Color(o.line ?? o.tint), res = new THREE.Vector2(1, 1)
   const body = new THREE.ShaderMaterial({ vertexShader: bodyVert, fragmentShader: bodyFrag, transparent: true, depthWrite: true,
@@ -111,6 +131,7 @@ export function spectralMaterials(o: SpectralOptions) {
   // See-through layers: the same lines where they sit behind the nearest skin (depth test inverted against the body's depth
   // prepass), drawn as three stacked strokes, wider and fainter as the blur rises, which reads as a soft, out-of-focus line.
   const ghosts = [0, 1, 2].map(() => new LineMaterial({ color: o.line ?? o.tint, linewidth: SPECTRAL_INNER, worldUnits: false, transparent: true, opacity: 0, depthWrite: false }))
+  for (const lm of [line, ...ghosts]) fadeLines(lm)
   let blur = o.seeBlur ?? 0.85
   return { body, hull, line, ghosts, res, tint, lineCol,
     setLine(c: string) { lineCol.set(c); line.color.set(c); for (const g of ghosts) g.color.set(c) },
@@ -287,7 +308,7 @@ export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: Spect
   for (const c of [...mesh.children]) if (c.userData.spectral && !c.userData.spectralHull) { mesh.remove(c); (c as THREE.Mesh).geometry?.dispose() }
   const prep0 = prepare(mesh, owner), prep1 = noNails ? { ...prep0, bary: [] } : prep0
   // Arm off: the wrist fades out, so creases and rings out there are dropped (the fill and hull fade in the shaders)
-  const fa = mesh.geometry.getAttribute('aArm'), far = (i: number) => armOff && !!fa && fa.getX(i) > 0.08
+  const fa = mesh.geometry.getAttribute('aArm'), far = (i: number) => armOff && !!fa && fa.getX(i) > 0.19
   const prep = armOff && fa ? { ...prep1, segs: prep1.segs.filter(s => !far(s[0]) && !far(s[3])), rings: prep1.rings.filter(r => !r.some(q => far(q[0]))) } : prep1
   let top: THREE.Object3D = mesh; while (top.parent) top = top.parent
   top.updateMatrixWorld(true); mesh.skeleton.update()
@@ -308,6 +329,10 @@ export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: Spect
   const thumb = new LineSegments2(new LineSegmentsGeometry(), m.line); thumb.renderOrder = 8
   thumb.userData = { spectral: true, noBounds: true }; thumb.layers.set(LINE_LAYER); thumb.frustumCulled = false; mesh.add(thumb)
   mesh.userData.spectralFar = armOff && fa ? Uint8Array.from({ length: fa.count }, (_, i) => far(i) ? 1 : 0) : null
+  { const bs = mesh.skeleton.bones, J = (n: string) => { const i = bs.findIndex(b => b.name === n); return i < 0 ? null : new THREE.Vector3().setFromMatrixPosition(mesh.skeleton.boneInverses[i].clone().invert()) }
+    const k = bs.findIndex(b => b.name === 'wrist'), W = J('wrist'), P = J('middle-finger-phalanx-proximal')
+    mesh.userData.spectralFade = armOff && W && P ? { k, W, out: W.clone().sub(P).normalize() } : null }
+  for (const o of [lines, thumb, ...ghosts]) lineFadeHook(mesh, o)
   mesh.userData.spectralLines = { prep, skinned: sk, creases: new Float32Array(cr), rings, lines, thumb, ghosts, camKey: '' } as LineState
 }
 

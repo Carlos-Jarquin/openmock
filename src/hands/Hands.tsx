@@ -718,15 +718,19 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const solved = useRef<Record<string, string>>({})
   const lastRep = useRef('')
   const arms = useMemo(() => ({ right: new THREE.Mesh(forearmGeometry()), left: new THREE.Mesh(forearmGeometry()) }), [])
-  // Arm off: the forearm is hidden and the hand itself fades out over the 20 mm its mesh runs past the wrist joint
+  // Arm off: the forearm is hidden and the hand itself fades out over the 19 mm its mesh runs past the wrist joint
   // (aArm, 0 at the joint, 0.2 at the open rim), so there is no overlap band and the open rim is fully clear. Photo and
   // Sketch (whose hands keep the skin material) take a copy of the skin with that fade; Spectral fades by uniform.
   const armOff = look.arm === false
-  const handMat = useMemo(() => { if (spm || !armOff) return mat
+  // Arm on: the hand cross-fades into the forearm over its last 11 mm, so the two shadings meet without a ring.
+  const fadeFrom = useMemo(() => ({ value: 0.08 }), [])
+  fadeFrom.value = armOff ? 0 : 0.08
+  const handMat = useMemo(() => { if (spm) return mat
     const m2 = (mat as THREE.MeshPhysicalMaterial).clone(); m2.transparent = true; m2.depthWrite = true
-    m2.onBeforeCompile = sh => { sh.vertexShader = 'attribute float aArm; varying float vArm;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvArm = aArm;')
-      sh.fragmentShader = 'varying float vArm;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.a *= 1.0 - smoothstep(0.0, 0.19, vArm);\nif (gl_FragColor.a < 0.01) discard;') }
-    m2.customProgramCacheKey = () => 'hand-fade'; return m2 }, [mat, spm, armOff])
+    m2.onBeforeCompile = sh => { sh.uniforms.uFadeFrom = fadeFrom
+      sh.vertexShader = 'attribute float aArm; varying float vArm;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvArm = aArm;')
+      sh.fragmentShader = 'uniform float uFadeFrom; varying float vArm;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.a *= 1.0 - smoothstep(uFadeFrom, 0.19, vArm);\nif (gl_FragColor.a < 0.01) discard;') }
+    m2.customProgramCacheKey = () => 'hand-fade'; return m2 }, [mat, spm, fadeFrom])
   useEffect(() => () => { if (handMat !== mat) handMat.dispose() }, [handMat, mat])
   useEffect(() => { rigs.right.mesh.material = handMat; rigs.left.mesh.material = handMat }, [rigs, handMat])
   useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = true; m.receiveShadow = true; m.userData.hand = true; m.userData.sketchEdges = false; m.userData.armOff = armOff } }, [arms, mat, armOff])
