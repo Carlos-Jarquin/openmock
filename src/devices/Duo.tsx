@@ -48,7 +48,7 @@ const pill = (w: number, h: number) => { const r = Math.min(w, h) / 2; return rr
 const E = 0.0004 // z separation between stacked flat layers
 
 function Overlay({ geo, z, color = '#000', order = 2 }: { geo: THREE.BufferGeometry; z: number; color?: string; order?: number }) {
-  return <mesh geometry={geo} position={[0, 0, z]} renderOrder={order}>
+  return <mesh geometry={geo} position={[0, 0, z]} renderOrder={order} userData={{ sketchTone: 'black' }}>
     <meshBasicMaterial color={color} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
   </mesh>
 }
@@ -63,9 +63,10 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     const bezelR = flat(rrect(W - 0.002, H - 0.004, [0.0003, CR - 0.004, CR - 0.004, 0.0003], W / 2 - 0.001), W, H, 0, 1, W / 2)
     const bezelL = flat(rrect(W - 0.002, H - 0.004, [CR - 0.004, 0.0003, 0.0003, CR - 0.004], -W / 2 + 0.001), W, H, 0, 1, -W / 2)
     // the flat screen halves stop FC short of the hinge; the bent fold strip (built per frame) joins them
-    const hw = SW - FC, uF = FC / (2 * SW)
-    const scrR = flat(rrect(hw, SH, [0.0001, SCR, SCR, 0.0001], FC + hw / 2), hw, SH, 0.5 + uF, 1, FC + hw / 2)
-    const scrL = flat(rrect(hw, SH, [SCR, 0.0001, 0.0001, SCR], -FC - hw / 2), hw, SH, 0, 0.5 - uF, -FC - hw / 2)
+    // halves overlap the strip by 0.5 mm (identical mapping and shading there, so the overlap is invisible: no crack)
+    const FO = FC - 0.0005, hw = SW - FO, uF = FO / (2 * SW)
+    const scrR = flat(rrect(hw, SH, [0.0001, SCR, SCR, 0.0001], FO + hw / 2), hw, SH, 0.5 + uF, 1, FO + hw / 2)
+    const scrL = flat(rrect(hw, SH, [SCR, 0.0001, 0.0001, SCR], -FO - hw / 2), hw, SH, 0, 0.5 - uF, -FO - hw / 2)
     const outer = flat(rrect(OW, OH, [OCR, OCR, OCR, OCR]), OW, OH)
     const island = new THREE.ShapeGeometry(pill(ISL.w, ISL.h), 16)
     const udc = new THREE.CircleGeometry(0.014, 24)
@@ -84,7 +85,6 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
   useEffect(() => () => strip.dispose(), [strip])
   const stripFold = useRef(-1)
   useEffect(() => () => Object.values(mats).forEach(m => m.dispose()), [mats])
-  useEffect(() => { mats.strip.uniforms.band.value.set(0.5 - FC / (2 * SW), 0.5 + FC / (2 * SW)) }, [mats])
   // static screen inputs: each screen's own media (the outer one falls back to the inner media when it has none),
   // its fit (fill crops to cover, fit letterboxes in black), the blur strength
   const outTex = textureOuter ?? texture, outAspect = textureOuter ? (mediaAspectOuter ?? mediaAspect) : mediaAspect
@@ -129,9 +129,10 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     // the idle black as it turns fully away. The pass-through projection crossfades in with the angle.
     const dis = !!a || o.foldDissolve !== false
     // implied crease: soft shading with a faint highlight along the fold, zero when flat, gentle mid-fold
-    const crease = 0.6 * Math.sin(swing) + 0.25 * smoother((180 - fold) / 90) * (1 - smoother((30 - fold) / 30))
-    const set = (m: THREE.ShaderMaterial, on: number, blur: number, dark: number, fadeOut: number, proj: number) => {
-      const u = m.uniforms; u.has.value = on * (m === mats.outer ? hasOut : hasIn); u.m.value = blur; u.md.value = dark; u.fo.value = fadeOut; u.proj.value = proj
+    const crease = Math.sin(swing)
+    const set = (m: THREE.ShaderMaterial, on: number, blur: number, dark: number, fadeOut: number, slide = 0) => {
+      const u = m.uniforms; u.has.value = on * (m === mats.outer ? hasOut : hasIn); u.m.value = blur; u.md.value = dark; u.fo.value = fadeOut
+      u.slide.value = slide; u.aniso.value = 2.5 * Math.min(1, blur * 1.5)
       u.crease.value = m === mats.outer ? 0 : crease
       if (root.current) {
         u.toRoot.value.copy(_inv.copy(root.current.matrixWorld).invert())
@@ -141,14 +142,16 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       const i = o.screen === 'inner' ? 1 : 0
       set(mats.fixed, i, 0, 0, 0, 0); set(mats.moving, i, 0, 0, 0, 0); set(mats.strip, i, 0, 0, 0, 0); set(mats.outer, 1 - i, 0, 0, 0, 0)
     } else {
+      // Inner and outer are mirrors, each a function of the angle alone (so closing is opening played backwards):
+      //  dissolve: blur + darkening, uniform over the whole screen, zero at the screen's rest angle, full ~80 deg away;
+      //  slide: the whole image travels towards the hinge as the screen leaves rest (inner: u decreasing, i.e. the
+      //  moving half's content passes over to the fixed half; outer: towards its hinge edge, u = 0), up to 5% of
+      //  the width, with a matching zoom so no edge shows; fade to idle as the screen turns away.
       const dIn = smoother((180 - fold) / 80), dOut = smoother(fold / 80)
-      // the outer screen is the exact mirror of the inner moving half: projected fixed in space onto the closed outer
-      // screen's plane (full at 0, gone by 160), frosting and darkening as the hinge leaves 0, idle as it faces away
-      // Content is always mapped to the panel's own uv (one continuous image across both halves and the fold strip,
-      // correct from any device rotation or camera). A per-pixel projection through the viewer duplicated the image
-      // and left seams and smeared clamp strips when the device was turned, so it is off (proj 0).
+      const sIn = -0.05 * smoother((180 - fold) / 110), sOut = 0.05 * smoother(fold / 110)
       const foIn = smoother((70 - fold) / 60), foOut = smoother((fold - 110) / 60)
-      set(mats.fixed, 1, 0, 0, foIn, 0); set(mats.moving, 1, dIn, dIn, foIn, 0); set(mats.strip, 1, 0, dIn, foIn, 0); set(mats.outer, 1, 0.6 * dOut, 1.3 * dOut, foOut, 0)   // Apple's outer screen darkens more and frosts less
+      for (const mm of [mats.fixed, mats.moving, mats.strip]) set(mm, 1, dIn, dIn, foIn, sIn)
+      set(mats.outer, 1, dOut, dOut, foOut, sOut)
     }
   })
   const zf = T / 2 + E          // front face layers
@@ -163,9 +166,9 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       {/* ---------- right half (fixed) ---------- */}
       <mesh geometry={g.rightBody} castShadow>{frameMat}</mesh>
       <mesh geometry={g.bezelR} position={[0, 0, zf]}><meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
-      <mesh geometry={g.scrR} position={[0, 0, zf + E]}><primitive object={mats.fixed} attach="material" /></mesh>
+      <mesh name="screen" geometry={g.scrR} position={[0, 0, zf + E]}><primitive object={mats.fixed} attach="material" /></mesh>
       {/* the screen's bent fold region: rebuilt per frame from the hinge angle, joins both halves without a seam */}
-      <mesh geometry={strip} frustumCulled={false}><primitive object={mats.strip} attach="material" /></mesh>
+      <mesh name="screen" geometry={strip} frustumCulled={false}><primitive object={mats.strip} attach="material" /></mesh>
       {/* square hinge faces: fill the edge chamfer on the hinge side so the halves butt flush when open */}
       <HingeFill x={HR / 2}>{frameMat}</HingeFill>
       {/* inner under-display FaceTime camera (Dynamic Island area): 34 mm from hinge, 12.7 mm from top */}
@@ -229,13 +232,13 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
             <mesh key={i} position={[-0.365 - i * 0.028, H / 2 + 0.0005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
               <circleGeometry args={[0.007, 12]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
           <mesh geometry={g.bezelL} position={[0, 0, zf]}><meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
-          <mesh geometry={g.scrL} position={[0, 0, zf + E]}><primitive object={mats.moving} attach="material" /></mesh>
+          <mesh name="screen" geometry={g.scrL} position={[0, 0, zf + E]}><primitive object={mats.moving} attach="material" /></mesh>
           {/* outer display on the back, cover glass then screen */}
           <group position={[-W / 2, 0, -T / 2]} rotation={[0, Math.PI, 0]}>
             <mesh position={[0, 0, E]}><shapeGeometry args={[rrC(W - 0.03, H - 0.03, [HR, CR - 0.012, CR - 0.012, HR]), 24]} />
               <meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
-            <mesh geometry={g.outer} position={[0, 0, E * 2]}><primitive object={mats.outer} attach="material" /></mesh>
-            <group position={[W / 2 - 0.105, H / 2 - 0.103, 0]}><Overlay geo={g.island} z={E * 4} /></group>
+            <mesh name="screen" geometry={g.outer} position={[0, 0, E * 2]}><primitive object={mats.outer} attach="material" /></mesh>
+            <group position={[W / 2 - 0.105, H / 2 - 0.103, 0]}><Overlay geo={g.island} z={E * 8} /></group>
           </group>
         </group>
       </group>
@@ -261,46 +264,36 @@ export const foldWidth = (f: number) => 1 + Math.max(0, -Math.cos(f * Math.PI / 
  * clears it); the blur covers the half (ramping in over the 30% nearest the hinge) and the darkening runs from 35% at the hinge to 80% at the free edge. Blur radius is in screen heights. */
 const SCREEN_VS = `uniform mat4 toRoot; varying vec2 vUv; varying vec3 vRoot;
 void main() { vUv = uv; vRoot = (toRoot * modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`
-const SCREEN_FS = `uniform sampler2D map; uniform float has, blur, m, md, fo, proj, aspect, plane, sw, sh, cx, eo, crease; uniform vec2 rep, off, band; uniform vec3 eye;
+const SCREEN_FS = `uniform sampler2D map; uniform float has, blur, m, md, fo, proj, aspect, plane, sw, sh, cx, eo, crease, slide, aniso; uniform vec2 rep, off, band; uniform vec3 eye, idleC;
 varying vec2 vUv; varying vec3 vRoot;
 void main() {
-  vec3 idle = vec3(0.0024, 0.0027, 0.0037), c = idle;
+  vec3 idle = idleC, c = idle;
   if (has > 0.5) {
-    // e: 0 at the hinge side, 1 at the free edge (inner moving half: u 0.5 to 0; outer screen: u 0 to 1)
-    vec2 st = vUv; float e = eo > 0.5 ? vUv.x : clamp(1.0 - 2.0 * vUv.x, 0.0, 1.0);
-    if (proj > 0.001) {
-      // fixed front-view projection onto the open inner-screen plane: the image holds still while the half turns.
-      // Blended in from 70 to 160 degrees; nearer edge-on the projection would smear, so it uses the panel's own uv.
-      float d = (plane - eye.z) / (vRoot.z - eye.z); vec2 p = eye.xy + (vRoot.xy - eye.xy) * d;
-      // where the viewer-fixed image would not reach the panel (a half tilted towards the camera), ease back to the
-      // panel's own uv so the panel is always covered; whatever still falls outside is edge-extended, never black
-      vec2 sp = vec2((p.x - cx) / (2.0 * sw) + 0.5, p.y / sh + 0.5);
-      float out_ = max(max(-sp.x, sp.x - 1.0), max(-sp.y, sp.y - 1.0));
-      st = clamp(mix(vUv, sp, proj * (1.0 - smoothstep(0.0, 0.12, out_))), 0.0, 1.0);
-    }
-    float r = blur * m * smoothstep(0.0, 0.3, e);
-    float dark = min(0.8, md * (0.35 + 0.6 * smoothstep(0.0, 1.0, e)));
-    // fold strip: its darkening runs from the moving half's edge value (left end) to the fixed half's zero (right end)
-    if (band.y > band.x) dark = md * 0.35 * clamp((band.y - vUv.x) / (band.y - band.x), 0.0, 1.0);
+    // One image over the whole screen (both halves and the fold strip share this mapping, so there is no seam).
+    // Pass-through motion: the content slides as one in the fold direction (slide, in screen widths) and is zoomed
+    // in by just enough that no edge is ever exposed. The dissolve is uniform over the screen.
+    float k = 1.0 - 2.0 * abs(slide);
+    vec2 st = vec2(0.5 + (vUv.x - 0.5) * k + slide, 0.5 + (vUv.y - 0.5) * k);
+    float r = blur * m, dark = min(0.8, md * 0.55);
     vec2 uv = st * rep + off;
     vec2 lo = max(off, vec2(0.0)), hi = min(off + rep, vec2(1.0));
     float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
     if (r < 0.0004) c = texture2D(map, clamp(uv, lo, hi)).rgb;
     else {
+      // directional (motion) blur: the disc is stretched along the fold direction by aniso
       float bias = clamp(log2(r * 1400.0) - 1.0, 0.0, 7.0); c = vec3(0.0);
+      vec2 sc = vec2((1.0 + aniso) / aspect, 1.0 / (1.0 + 0.5 * aniso));
       for (int i = 0; i < 32; i++) {
         float a = float(i) * 2.39996, q = sqrt((float(i) + 0.5) / 32.0) * r;
-        c += texture2D(map, clamp(uv + vec2(cos(a) / aspect, sin(a)) * q * rep, lo, hi), bias).rgb;
+        c += texture2D(map, clamp(uv + vec2(cos(a), sin(a)) * sc * q * rep, lo, hi), bias).rgb;
       }
       c /= 32.0;
     }
     c *= inside;   // fit: letterbox bars are black
     if (crease > 0.0) {
-      // implied crease, in screen units across the hinge line (inner halves only): a soft shadow and a thin sheen beside it
+      // implied crease: a very faint, wide gaussian shadow along the hinge line, no highlight, no edges
       float dx = abs(vUv.x - 0.5) * 2.0 * sw;
-      // broad and soft (no hard line): about 2.5 mm shadow, a faint wide sheen beside it
-      float sh0 = exp(-pow(dx / 0.025, 2.0)), hl = exp(-pow((dx - 0.035) / 0.02, 2.0));
-      c = c * (1.0 - 0.35 * crease * sh0) + 0.03 * crease * hl;
+      c *= 1.0 - 0.12 * crease * exp(-pow(dx / 0.04, 2.0));
     }
     c = mix(mix(c, idle, dark), idle, fo);
   }
@@ -315,7 +308,7 @@ const INNER_PROJ: ProjTarget = { plane: T / 2 + E * 2, cx: 0, sw: SW, sh: SH, eo
 const OUTER_PROJ: ProjTarget = { plane: 2 * (T / 2 + GAP) + T / 2 + E * 2, cx: W / 2, sw: OW / 2, sh: OH, eo: 1 }
 function screenMaterial(pt: ProjTarget = INNER_PROJ) {
   return new THREE.ShaderMaterial({ vertexShader: SCREEN_VS, fragmentShader: SCREEN_FS, toneMapped: false, uniforms: {
-    crease: { value: 0 }, band: { value: new THREE.Vector2(0, 0) },
+    idleC: { value: new THREE.Vector3(0.0024, 0.0027, 0.0037) }, slide: { value: 0 }, aniso: { value: 0 }, crease: { value: 0 }, band: { value: new THREE.Vector2(0, 0) },
     map: { value: null }, has: { value: 0 }, blur: { value: 0 }, m: { value: 0 }, md: { value: 0 }, fo: { value: 0 }, proj: { value: 0 }, aspect: { value: 1 }, rep: { value: new THREE.Vector2(1, 1) }, off: { value: new THREE.Vector2() },
     toRoot: { value: new THREE.Matrix4() }, eye: { value: new THREE.Vector3(pt.cx, 0, pt.plane + 4) }, plane: { value: pt.plane }, sw: { value: pt.sw }, sh: { value: pt.sh }, cx: { value: pt.cx }, eo: { value: pt.eo } } })
 }

@@ -202,6 +202,10 @@ function pick(src: THREE.Material, mesh: THREE.Mesh, m: Mats): THREE.Material | 
   const mb = src as THREE.MeshBasicMaterial
   if (mesh.name === 'screen' || tone === 'screen') {
     if (mb.map) return src // keep the user's screen content as is
+    // custom screen shaders (iPhone Duo): keep the shader so the content and the fold dissolve still show; it takes
+    // the sketch's idle (blank) screen tone through an idleC uniform, put back on restore
+    const su = (src as THREE.ShaderMaterial).uniforms
+    if (su?.idleC) { const c = m.idle.color; su.idleC.value.set(c.r, c.g, c.b); return src }
     return m.variant(m.idle, src)
   }
   if (mb.alphaMap) { // logo: a quiet grey print of the artwork
@@ -253,7 +257,9 @@ function addLines(mesh: THREE.Mesh, src: THREE.Material, noEdges: boolean, m: Ma
 function restore(g: THREE.Object3D | null) {
   g?.traverse(obj => {
     const ud = obj.userData, orig = ud[ORIG] as Orig | undefined
-    if (orig) { (obj as THREE.Mesh).material = orig.material; obj.visible = orig.visible; delete ud[ORIG] }
+    if (orig) { (obj as THREE.Mesh).material = orig.material; obj.visible = orig.visible; delete ud[ORIG]
+      const su = ((Array.isArray(orig.material) ? orig.material[0] : orig.material) as THREE.ShaderMaterial).uniforms
+      if (su?.idleC) su.idleC.value.set(0.0024, 0.0027, 0.0037) }
     for (const c of [...obj.children]) if (c.userData[ADDED]) obj.remove(c)
   })
 }
