@@ -69,25 +69,62 @@ function Duo({ texture, mediaAspect, opts }: DeviceProps) {
     return { rightBody, leftBody, bezelR, bezelL, scrR, scrL, outer, island, udc }
   }, [])
   useEffect(() => () => Object.values(g).forEach(x => x.dispose()), [g])
-  const swing = THREE.MathUtils.degToRad(180 - opts.fold)
-  const spine = useMemo(() => hingeSpine(swing), [swing])
-  useEffect(() => () => spine?.g.dispose(), [spine])
-  const shiftX = (W / 2) * (1 - opts.fold / 180)
   const frameMat = <meshPhysicalMaterial color={f.frame} metalness={0.9} roughness={0.28} clearcoat={0.3} />
   const glassBack = <meshPhysicalMaterial color={f.back} metalness={0.1} roughness={0.55} clearcoat={0.6} clearcoatRoughness={0.4} />
-  // Which content each screen shows. At rest only the selected screen lights up, sharp. During a fold transition both
-  // show the media, with the dissolve on the moving half: strength follows the fold angle (full by 90 degrees away
-  // from the screen's own resting angle), then a lag clears it on the incoming screen after the hinge settles.
-  const S = (opts.foldBlur ?? 0.6) * 0.09, tr = opts.trans, root = useRef<THREE.Group>(null)
-  const sm = (a: number, b: number, x: number) => THREE.MathUtils.smoothstep(x, a, b)
-  // outgoing: grows with the angle away from its resting fold; incoming: the measured dissolve-in curve
-  const [bi, di] = tr ? dissolveIn(tr.p) : [0, 0]
-  const away = (w: 'inner' | 'outer') => sm(0, 1, (w === 'inner' ? 180 - opts.fold : opts.fold) / 90)
-  const ml = (w: 'inner' | 'outer'): [number, number] => !tr ? [0, 0] : tr.to === w ? [Math.max(bi, away(w)), Math.max(di, away(w))] : [away(w), away(w)]
-  const [mi, mdi] = ml('inner'), [mo, mdo] = ml('outer')
-  const on = (w: 'inner' | 'outer') => tr || opts.screen === w ? 1 : 0
-  const fixedL: Look = { on: on('inner'), m: 0, md: 0, proj: 0 }, movingL: Look = { on: on('inner'), m: mi, md: mdi, proj: tr ? sm(70, 160, opts.fold) : 0 }, outerL: Look = { on: on('outer'), m: mo, md: mdo, proj: 0 }
-  const screenMat = (l: Look, aspect: number) => <ScreenMaterial tex={texture} media={mediaAspect} aspect={aspect} blur={S} look={l} root={root} />
+  // The fold is applied every frame from refs (no React state per frame): the hinge angle, the self-centring shift,
+  // the spine and the three screen materials all read one eased timeline while a transition runs (foldLive.anim),
+  // else the Fold slider.
+  const root = useRef<THREE.Group>(null), swingG = useRef<THREE.Group>(null), spineG = useRef<THREE.Group>(null), spineM = useRef<THREE.Mesh>(null)
+  const grooves = useRef<(THREE.Mesh | null)[]>([])
+  const mats = useMemo(() => ({ fixed: screenMaterial(), moving: screenMaterial(), outer: screenMaterial() }), [])
+  useEffect(() => () => Object.values(mats).forEach(m => m.dispose()), [mats])
+  // static screen inputs: the media, its cover fit, the blur strength
+  for (const [k, m] of Object.entries(mats)) {
+    const aspect = k === 'outer' ? OUTER_ASPECT : INNER_ASPECT, u = m.uniforms
+    u.map.value = texture; u.blur.value = (opts.foldBlur ?? 0.6) * 0.09; u.aspect.value = aspect
+    if (mediaAspect > aspect) { const q = aspect / mediaAspect; u.rep.value.set(q, 1); u.off.value.set((1 - q) / 2, 0) }
+    else { const q = mediaAspect / aspect; u.rep.value.set(1, q); u.off.value.set(0, 1 - q) }
+  }
+  if (texture) { texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping; if (texture.minFilter !== THREE.LinearMipmapLinearFilter) { texture.minFilter = THREE.LinearMipmapLinearFilter; texture.generateMipmaps = true; texture.needsUpdate = true } }
+  const optsRef = useRef(opts); optsRef.current = opts
+  const hasTex = texture ? 1 : 0
+  useFrame(({ camera }) => {
+    const o = optsRef.current, a = foldLive.anim, now = performance.now()
+    let fold = o.fold
+    if (a) {
+      const u = clamp01((now - a.t0) / a.dur); fold = a.from + (a.target - a.from) * smoother(u)
+      // swap the screen content as the hinge passes 90 degrees, where both screens are fully dissolved
+      if (!a.swapped && (a.target - 90) * (fold - 90) >= 0) { a.swapped = true; a.onSwap?.() }
+      if (foldLive.follow) { if (a.camD0 === undefined) { a.camD0 = camera.position.length(); a.w0 = foldWidth(a.from) } camera.position.setLength(a.camD0 * Math.pow(foldWidth(fold) / a.w0!, 0.75)) }
+      if (u >= 1) { foldLive.anim = null; a.onDone?.(fold, a.camD0 !== undefined && foldLive.follow ? Math.pow(a.w0! / foldWidth(fold), 0.75) : 1) }
+    }
+    if (foldLive.log) foldLive.log.push([now, fold])
+    const swing = THREE.MathUtils.degToRad(180 - fold)
+    // self-centring: the closed stack is centred on the hinge-side half, the open device on the hinge
+    root.current?.position.set(-(W / 2) * (1 - fold / 180), 0, -(T / 2 + GAP) * (1 - fold / 180))
+    swingG.current?.rotation.set(0, swing, 0)
+    const sp = spineAt(swing)
+    if (spineG.current && spineM.current) {
+      spineG.current.visible = !!sp
+      if (sp) { spineG.current.matrix.copy(sp.m); spineM.current.geometry = sp.g; grooves.current.forEach(g => g?.scale.set(sp.w * 0.98, 1, 1)) }
+    }
+    // screens: the dissolve is a function of the hinge angle alone, so it is in step with the fold whether it is
+    // animating or scrubbed: each screen frosts and darkens as it leaves its resting angle (fully by about 80 degrees
+    // away, so both peak mid-fold) and is perfectly clear exactly when the hinge reaches its rest. Each also fades to
+    // the idle black as it turns fully away. The pass-through projection crossfades in with the angle.
+    const dis = !!a || o.foldDissolve !== false
+    const set = (m: THREE.ShaderMaterial, on: number, blur: number, dark: number, fadeOut: number, proj: number) => {
+      const u = m.uniforms; u.has.value = on * hasTex; u.m.value = blur; u.md.value = dark; u.fo.value = fadeOut; u.proj.value = proj
+      if (root.current) u.toRoot.value.copy(_inv.copy(root.current.matrixWorld).invert())
+    }
+    if (!dis) {
+      set(mats.fixed, o.screen === 'inner' ? 1 : 0, 0, 0, 0, 0); set(mats.moving, o.screen === 'inner' ? 1 : 0, 0, 0, 0, 0); set(mats.outer, o.screen === 'outer' ? 1 : 0, 0, 0, 0, 0)
+    } else {
+      const dIn = smoother((180 - fold) / 80), dOut = smoother(fold / 80)
+      const foIn = smoother((70 - fold) / 60), foOut = smoother((fold - 110) / 60), proj = smoother((fold - 20) / 150)
+      set(mats.fixed, 1, 0, 0, foIn, 0); set(mats.moving, 1, dIn, dIn, foIn, proj); set(mats.outer, 1, dOut, dOut, foOut, 0)
+    }
+  })
   const zf = T / 2 + E          // front face layers
   // Free edge buttons (right half, x = W, viewed with the outer screen facing you they sit on the right).
   const btn = (y: number, len: number, key: string, extra = 0) => (
@@ -96,12 +133,11 @@ function Duo({ texture, mediaAspect, opts }: DeviceProps) {
     </mesh>)
   const logo = opts.logo
   return (
-    <group position={[-shiftX, 0, 0]}>
-      <group ref={root} />
+    <group ref={root} position={[-(W / 2) * (1 - opts.fold / 180), 0, -(T / 2 + GAP) * (1 - opts.fold / 180)]}>
       {/* ---------- right half (fixed) ---------- */}
       <mesh geometry={g.rightBody} castShadow>{frameMat}</mesh>
       <mesh geometry={g.bezelR} position={[0, 0, zf]}><meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
-      <mesh geometry={g.scrR} position={[0, 0, zf + E]}>{screenMat(fixedL, INNER_ASPECT)}</mesh>
+      <mesh geometry={g.scrR} position={[0, 0, zf + E]}><primitive object={mats.fixed} attach="material" /></mesh>
       {/* inner under-display FaceTime camera (Dynamic Island area): 34 mm from hinge, 12.7 mm from top */}
       <mesh geometry={g.udc} position={[0.34, H / 2 - 0.127, zf + E * 3]} renderOrder={2}>
         <meshBasicMaterial color="#000" transparent opacity={0.45} polygonOffset polygonOffsetFactor={-2} /></mesh>
@@ -146,12 +182,12 @@ function Duo({ texture, mediaAspect, opts }: DeviceProps) {
           of the hinge edge with rounded ends and two break lines. It sits on the bisector of the two halves and spans
           the chord between their back corners, so it is always joined to both: flush with both frames when closed,
           narrowing as the phone opens and tucked away inside the hinge when flat. */}
-      {spine && <group matrixAutoUpdate={false} matrix={spine.m}>
-        <mesh geometry={spine.g}><meshPhysicalMaterial color={f.frame} metalness={1} roughness={0.14} clearcoat={0.4} /></mesh>
-        {[1, -1].map(k => <mesh key={k} position={[0, k * (H / 2 - 0.1), SPINE_TH + 0.0002]}><planeGeometry args={[spine.w * 0.98, 0.0035]} /><meshStandardMaterial color="#5c6068" metalness={0.3} roughness={0.6} /></mesh>)}
-      </group>}
+      <group ref={spineG} matrixAutoUpdate={false}>
+        <mesh ref={spineM}><meshPhysicalMaterial color={f.frame} metalness={1} roughness={0.14} clearcoat={0.4} /></mesh>
+        {[1, -1].map((k, i) => <mesh key={k} ref={el => { grooves.current[i] = el }} position={[0, k * (H / 2 - 0.1), SPINE_TH + 0.0002]}><planeGeometry args={[1, 0.0035]} /><meshStandardMaterial color="#5c6068" metalness={0.3} roughness={0.6} /></mesh>)}
+      </group>
       {/* ---------- left half (swings) ---------- */}
-      <group position={[0, 0, T / 2 + GAP]} rotation={[0, swing, 0]}>
+      <group ref={swingG} position={[0, 0, T / 2 + GAP]} rotation={[0, THREE.MathUtils.degToRad(180 - opts.fold), 0]}>
         <group position={[0, 0, -T / 2 - GAP]}>
           <mesh geometry={g.leftBody} castShadow>{frameMat}</mesh>
           {/* USB-C on the bottom edge, about 43 mm from the hinge */}
@@ -162,12 +198,12 @@ function Duo({ texture, mediaAspect, opts }: DeviceProps) {
             <mesh key={i} position={[-0.365 - i * 0.028, H / 2 + 0.0005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
               <circleGeometry args={[0.007, 12]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
           <mesh geometry={g.bezelL} position={[0, 0, zf]}><meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
-          <mesh geometry={g.scrL} position={[0, 0, zf + E]}>{screenMat(movingL, INNER_ASPECT)}</mesh>
+          <mesh geometry={g.scrL} position={[0, 0, zf + E]}><primitive object={mats.moving} attach="material" /></mesh>
           {/* outer display on the back, cover glass then screen */}
           <group position={[-W / 2, 0, -T / 2]} rotation={[0, Math.PI, 0]}>
             <mesh position={[0, 0, E]}><shapeGeometry args={[rrC(W - 0.03, H - 0.03, [HR, CR - 0.012, CR - 0.012, HR]), 24]} />
               <meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
-            <mesh geometry={g.outer} position={[0, 0, E * 2]}>{screenMat(outerL, OUTER_ASPECT)}</mesh>
+            <mesh geometry={g.outer} position={[0, 0, E * 2]}><primitive object={mats.outer} attach="material" /></mesh>
             <group position={[W / 2 - 0.105, H / 2 - 0.103, 0]}><Overlay geo={g.island} z={E * 4} /></group>
           </group>
         </group>
@@ -175,30 +211,26 @@ function Duo({ texture, mediaAspect, opts }: DeviceProps) {
     </group>
   )
 }
-/** Fold angle at time t (0 to 1) of a transition, timed on Apple's hero film (apple.com/ca/iphone-duo, 30 fps):
- * the hinge swings in the first 28% (about 0.28 s) with an ease-in-out, rebounds about 2 degrees and settles by 40%;
- * the rest is the dissolve clearing on the incoming screen. Stays in 0..180. */
-export function foldCurve(from: number, to: number, t: number) {
-  const k = Math.min(1, t / 0.28), main = 0.5 - Math.cos(Math.PI * k) / 2
-  const u = THREE.MathUtils.clamp((t - 0.28) / 0.12, 0, 1), rebound = 2 * Math.sin(Math.PI * u) * (1 - u)
-  return Math.min(180, Math.max(0, from + (to - from) * main - Math.sign(to - from) * rebound))
-}
-export const FOLD_MS = 1000
-/** Incoming screen's dissolve over the transition, measured from the hero film: full blur and darkening on the
- * moving half as it arrives, the darkening easing off a little while the blur holds, then both clear together
- * between about 0.7 and 0.95 s (the blur snapping back last). Returns [blur, dark] strengths 0 to 1. */
-export function dissolveIn(t: number): [number, number] {
-  const sm = (a: number, b: number, x: number) => THREE.MathUtils.smoothstep(x, a, b)
-  return [1 - sm(0.72, 0.95, t), t < 0.7 ? 1 - 0.15 * sm(0.28, 0.7, t) : 0.85 * (1 - sm(0.7, 0.98, t))]
-}
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x))
+/** Smootherstep on 0..1 (zero velocity and acceleration at both ends), clamped. */
+const smoother = (x: number) => { const t = clamp01(x); return t * t * t * (t * (t * 6 - 15) + 10) }
+/** A running fold transition (the hinge only). Times in ms (performance.now). */
+export interface FoldAnim { from: number; target: number; to: 'inner' | 'outer'; t0: number; dur: number; swapped?: boolean; camD0?: number; w0?: number
+  onSwap?: () => void; onDone?: (fold: number, zoomK: number) => void }
+/** Live fold state shared by the studio and the Duo, read every frame (no React state per frame). */
+export const foldLive: { anim: FoldAnim | null; follow: boolean; log: [number, number][] | null } = { anim: null, follow: true, log: null }
+/** Hinge swing at speed 1, in ms, on smootherstep (no snap, no rebound). The dissolve has no timer of its own. */
+export const FOLD_MS = 900
+
+/** Apparent width of the device for a fold, for the camera follow (1 closed or at 90 degrees, 2 flat). */
+export const foldWidth = (f: number) => 1 + Math.max(0, -Math.cos(f * Math.PI / 180))
 
 /** The "dissolve" (Apple's fold transition): the moving half's content stays put in space, as if seen through the
  * panel, and frosts over. m is the strength 0 to 1 (from the fold angle while moving, then a short lag that
  * clears it); the blur covers the half (ramping in over the 30% nearest the hinge) and the darkening runs from 35% at the hinge to 80% at the free edge. Blur radius is in screen heights. */
-interface Look { on: number; m: number; md: number; proj: number }
 const SCREEN_VS = `uniform mat4 toRoot; varying vec2 vUv; varying vec3 vRoot;
 void main() { vUv = uv; vRoot = (toRoot * modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`
-const SCREEN_FS = `uniform sampler2D map; uniform float has, blur, m, md, proj, aspect, plane, sw, sh; uniform vec2 rep, off; uniform vec3 eye;
+const SCREEN_FS = `uniform sampler2D map; uniform float has, blur, m, md, fo, proj, aspect, plane, sw, sh; uniform vec2 rep, off; uniform vec3 eye;
 varying vec2 vUv; varying vec3 vRoot;
 void main() {
   vec3 idle = vec3(0.0024, 0.0027, 0.0037), c = idle;
@@ -222,35 +254,38 @@ void main() {
       }
       c /= 32.0;
     }
-    c = mix(c, idle, dark);
+    c = mix(mix(c, idle, dark), idle, fo);
   }
   gl_FragColor = vec4(c, 1.0);
   #include <colorspace_fragment>
 }`
 const _inv = new THREE.Matrix4()
-function ScreenMaterial({ tex, media, aspect, blur, look, root }: { tex: THREE.Texture | null; media: number; aspect: number; blur: number; look: Look; root: React.RefObject<THREE.Group | null> }) {
-  const m = useMemo(() => new THREE.ShaderMaterial({ vertexShader: SCREEN_VS, fragmentShader: SCREEN_FS, toneMapped: false, uniforms: {
-    map: { value: null }, has: { value: 0 }, blur: { value: 0 }, m: { value: 0 }, md: { value: 0 }, proj: { value: 0 }, aspect: { value: 1 }, rep: { value: new THREE.Vector2(1, 1) }, off: { value: new THREE.Vector2() },
-    toRoot: { value: new THREE.Matrix4() }, eye: { value: new THREE.Vector3(0, 0, 4) }, plane: { value: T / 2 + E * 2 }, sw: { value: SW }, sh: { value: SH } } }), [])
-  useEffect(() => () => m.dispose(), [m])
-  useFrame(() => { if (root.current) m.uniforms.toRoot.value.copy(_inv.copy(root.current.matrixWorld).invert()) })
-  const u = m.uniforms
-  u.map.value = look.on ? tex : null; u.has.value = look.on && tex ? 1 : 0; u.blur.value = blur; u.m.value = look.m; u.md.value = look.md; u.proj.value = look.proj; u.aspect.value = aspect
-  // cover fit, as fitTexture does: crop the sides of wide media, keep the top of tall media
-  if (media > aspect) { const k = aspect / media; u.rep.value.set(k, 1); u.off.value.set((1 - k) / 2, 0) }
-  else { const k = media / aspect; u.rep.value.set(1, k); u.off.value.set(0, 1 - k) }
-  if (tex) { tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping; if (tex.minFilter !== THREE.LinearMipmapLinearFilter) { tex.minFilter = THREE.LinearMipmapLinearFilter; tex.generateMipmaps = true; tex.needsUpdate = true } }
-  return <primitive object={m} attach="material" />
+function screenMaterial() {
+  return new THREE.ShaderMaterial({ vertexShader: SCREEN_VS, fragmentShader: SCREEN_FS, toneMapped: false, uniforms: {
+    map: { value: null }, has: { value: 0 }, blur: { value: 0 }, m: { value: 0 }, md: { value: 0 }, fo: { value: 0 }, proj: { value: 0 }, aspect: { value: 1 }, rep: { value: new THREE.Vector2(1, 1) }, off: { value: new THREE.Vector2() },
+    toRoot: { value: new THREE.Matrix4() }, eye: { value: new THREE.Vector3(0, 0, 4) }, plane: { value: T / 2 + E * 2 }, sw: { value: SW }, sh: { value: SH } } })
 }
 
 const SPINE_TH = 0.012   // 1.2 mm thick strip
 /** Spine strip for a swing angle: on the bisector of the two halves, its inner face on the chord between their back
  * corners (both at radius T + GAP from the hinge axis), so its width is that chord. Returns the geometry, its width
  * and the placement matrix (x across the strip, y along the hinge, z outward). */
+const spineGeos = new Map<number, THREE.BufferGeometry>()
+const _n = new THREE.Vector3(), _t = new THREE.Vector3(), _c = new THREE.Vector3(), _y = new THREE.Vector3(0, 1, 0), _sm = new THREE.Matrix4()
+/** Per-frame spine: geometry cached by width in 0.25 mm steps, placement computed exactly. */
+function spineAt(swing: number) {
+  const R = T + GAP, a = swing / 2, w = 2 * R * Math.sin(a)
+  if (w < 0.006) return null
+  const key = Math.round(w / 0.0025); let g = spineGeos.get(key)
+  if (!g) { g = hingeSpine(swing)!.g; spineGeos.set(key, g) }
+  _n.set(-Math.sin(a), 0, -Math.cos(a)); _t.set(-Math.cos(a), 0, Math.sin(a))
+  _c.set(0, 0, T / 2 + GAP).addScaledVector(_n, R * Math.cos(a) - 0.0005)
+  return { g, w: key * 0.0025, m: _sm.makeBasis(_t, _y, _n).setPosition(_c) }
+}
 function hingeSpine(swing: number) {
   const R = T + GAP, a = swing / 2, w = 2 * R * Math.sin(a)
   if (w < 0.006) return null
-  const rEnd = Math.min(w / 2, 0.035), shape = rrect(w, H - 0.002, [rEnd, rEnd, rEnd, rEnd])
+  const wq = Math.round(w / 0.0025) * 0.0025, rEnd = Math.min(wq / 2, 0.035), shape = rrect(wq, H - 0.002, [rEnd, rEnd, rEnd, rEnd])
   const g = new THREE.ExtrudeGeometry(shape, { depth: SPINE_TH - 0.003, bevelEnabled: true, bevelThickness: 0.0015, bevelSize: 0.0012, bevelSegments: 3, curveSegments: 12 })
   g.translate(0, 0, 0.0015)
   const n = new THREE.Vector3(-Math.sin(a), 0, -Math.cos(a)), t = new THREE.Vector3(-Math.cos(a), 0, Math.sin(a))

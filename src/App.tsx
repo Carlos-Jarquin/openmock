@@ -7,7 +7,7 @@ RectAreaLightUniformsLib.init()
 import * as THREE from 'three'
 import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
-import { INNER_PX, OUTER_PX, foldCurve, FOLD_MS } from './devices/Duo'
+import { INNER_PX, OUTER_PX, foldLive, FOLD_MS } from './devices/Duo'
 import { sceneHit } from './devices/shared'
 import { ErrorBoundary } from './ErrorBoundary'
 import { loadLogo, loadLocalLogo } from './localLogo'
@@ -173,33 +173,37 @@ export default function App() {
   }, [])
   // iPhone Duo fold transition: animates the hinge to the target screen with the iOS blur hand-off; Play loops it.
   const optsRef = useRef<DeviceOptions | null>(null); optsRef.current = opts
-  const foldAnim = useRef({ raf: 0, loop: false, timer: 0 })
+  const foldAnim = useRef({ loop: false, timer: 0 })
   const [foldFollow, setFoldFollow] = useState(true)
   const [foldPlaying, setFoldPlaying] = useState(false)
-  const followRef = useRef(foldFollow); followRef.current = foldFollow
+  const [foldSpeed, setFoldSpeed] = useState(1)
+  foldLive.follow = foldFollow
+  // The transition runs in the Duo's frame loop from foldLive (no React state per frame). React only hears about it
+  // twice: the screen swap at 30% (both screens are dissolved then, so the content change is hidden) and the end.
   const foldTo = useCallback((to: 'inner' | 'outer', then?: () => void) => {
-    cancelAnimationFrame(foldAnim.current.raf)
-    const o = optsRef.current!, from = o.fold, target = to === 'inner' ? 180 : 0
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { setOpts(x => ({ ...x, screen: to, fold: target, trans: null })); then?.(); return }
-    // Camera follow: keep the zoom so the device's apparent width stays about the same (open is twice as wide).
-    const wid = (f: number) => 1 + Math.max(0, -Math.cos(f * Math.PI / 180)), z0 = poseRef.current.zoom, w0 = wid(from)
-    const t0 = performance.now()
-    const step = (now: number) => {
-      const t = Math.min(1, (now - t0) / FOLD_MS), f = foldCurve(from, target, t)
-      setOpts(x => ({ ...x, screen: to, fold: f, trans: t < 1 ? { p: t, to } : null }))
-      if (followRef.current) setPose(p => ({ ...p, zoom: z0 * Math.pow(w0 / wid(f), 0.75) }))
-      if (t < 1) foldAnim.current.raf = requestAnimationFrame(step); else then?.()
-    }
-    foldAnim.current.raf = requestAnimationFrame(step)
+    const o = optsRef.current!, cur = foldLive.anim, target = to === 'inner' ? 180 : 0
+    // start from wherever the hinge is now, even mid-transition
+    let from = o.fold
+    if (cur) { const h = Math.min(1, (performance.now() - cur.t0) / cur.dur), e = h * h * h * (h * (h * 6 - 15) + 10); from = cur.from + (cur.target - cur.from) * e }
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { foldLive.anim = null; setOpts(x => ({ ...x, screen: to, fold: target, trans: null })); then?.(); return }
+    const z0 = poseRef.current.zoom
+    foldLive.anim = { from, target, to, t0: performance.now(), dur: FOLD_MS / speedRef.current,
+      onSwap: () => setOpts(x => ({ ...x, screen: to })),
+      onDone: (fold, k) => { setOpts(x => ({ ...x, screen: to, fold, trans: null })); if (k !== 1) setPose(p => ({ ...p, zoom: z0 * k })); then?.() } }
   }, [])
-  const stopFold = useCallback(() => { cancelAnimationFrame(foldAnim.current.raf); clearTimeout(foldAnim.current.timer); foldAnim.current.loop = false; setFoldPlaying(false); setOpts(x => ({ ...x, trans: null })) }, [])
+  const speedRef = useRef(foldSpeed); speedRef.current = foldSpeed
+  /** Stops the Play loop; finish also ends a running transition at its target (for the Fold slider). */
+  const stopFold = useCallback((finish = true) => {
+    clearTimeout(foldAnim.current.timer); foldAnim.current.loop = false; setFoldPlaying(false)
+    const a = foldLive.anim; if (a && finish) { foldLive.anim = null; a.onDone?.(a.target, 1) }
+  }, [])
   const playFold = useCallback(() => {
     foldAnim.current.loop = true; setFoldPlaying(true)
     const go = () => { if (!foldAnim.current.loop) return
       foldTo(optsRef.current!.screen === 'inner' ? 'outer' : 'inner', () => { foldAnim.current.timer = window.setTimeout(go, 700) }) }
     go()
   }, [foldTo])
-  useEffect(() => () => { cancelAnimationFrame(foldAnim.current.raf); clearTimeout(foldAnim.current.timer) }, [])
+  useEffect(() => () => { clearTimeout(foldAnim.current.timer); foldLive.anim = null }, [])
   const [light, setLight] = useState(LIGHT)
   const [fx, setFx] = useState(FX)
   const [style, setStyle] = useState<'photo' | 'sketch'>('photo')
@@ -398,7 +402,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, setSbOn, setSb, setSpectral }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive, setSbOn, setSb, setSpectral }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -464,13 +468,15 @@ export default function App() {
           </> : <p className="hint">Available for the iPhone 18 Pro and Pro Max.</p>}
         </section>
         {def.foldable && <section><h2>iPhone Duo</h2>
-          {slider('Fold', Math.round(opts.fold), 0, 180, 1, n => { stopFold(); setOpts({ ...opts, fold: n, trans: null }) }, '°')}
-          <p className="hint">180 is open flat, 0 is closed. For stills, set any angle; the chosen screen stays lit and sharp.</p>
-          <div className="seg"><button className={opts.screen === 'inner' ? 'on' : ''} onClick={() => { stopFold(); foldTo('inner') }}>Inner screen</button><button className={opts.screen === 'outer' ? 'on' : ''} onClick={() => { stopFold(); foldTo('outer') }}>Outer screen</button></div>
-          <div className="row"><button className="ghost" onClick={() => foldPlaying ? stopFold() : playFold()}>{foldPlaying ? 'Stop' : 'Play open and close'}</button></div>
+          {slider('Fold', Math.round(opts.fold), 0, 180, 1, n => { stopFold(); setOpts(x => ({ ...x, fold: n, trans: null, screen: x.foldDissolve === false ? x.screen : n >= 90 ? 'inner' : 'outer' })) }, '°')}
+          <p className="hint">180 is open flat, 0 is closed. Scrubbing dissolves the screens with the angle, like the real hand-off; untick Dissolve while folding for a sharp still at any angle.</p>
+          <label className="check"><input type="checkbox" checked={opts.foldDissolve !== false} onChange={e => setOpts({ ...opts, foldDissolve: e.target.checked })} /> Dissolve while folding</label>
+          <div className="seg"><button className={opts.screen === 'inner' ? 'on' : ''} onClick={() => { stopFold(false); foldTo('inner') }}>Inner screen</button><button className={opts.screen === 'outer' ? 'on' : ''} onClick={() => { stopFold(false); foldTo('outer') }}>Outer screen</button></div>
+          <div className="row"><button className="ghost" onClick={() => foldPlaying ? stopFold(false) : playFold()}>{foldPlaying ? 'Stop' : 'Play open and close'}</button></div>
           {slider('Transition blur', Math.round((opts.foldBlur ?? 0.6) * 100), 0, 100, 1, n => setOpts({ ...opts, foldBlur: n / 100 }), '%')}
+          {slider('Speed', foldSpeed, 0.5, 2, 0.05, n => setFoldSpeed(n), '×')}
           <label className="check"><input type="checkbox" checked={foldFollow} onChange={e => setFoldFollow(e.target.checked)} /> Camera follows the fold</label>
-          <p className="hint">Switching screens swings the hinge in about a second, with the iOS hand-off: the outgoing screen blurs and fades, the incoming one sharpens as the hinge settles.</p>
+          <p className="hint">Switching screens swings the hinge in 0.9 s (at 1×). The dissolve follows the hinge angle: each screen frosts and darkens as it leaves its rest, peaking mid-fold, and is clear exactly as the hinge settles.</p>
           <p className="hint">Native size: {opts.screen === 'inner' ? `${INNER_PX.w} × ${INNER_PX.h}` : `${OUTER_PX.w} × ${OUTER_PX.h}`} px. Screenshots at this size fit exactly.</p>
         </section>}
         <section><h2>Hands</h2>
@@ -625,7 +631,7 @@ export default function App() {
             <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
           </>}
           <group position={[pose.panX, pose.panY, 0]} rotation={[deg(pose.tiltX), deg(pose.tiltY), deg(pose.rotZ)]}>
-            <Centred deps={[device, opts.fold, opts.screen, screenTex.texture, hands.pose]}>
+            <Centred deps={[device, ...(device === 'duo' ? [] : [opts.fold, opts.screen]), screenTex.texture, hands.pose]}>
               <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture} rot={handRot}>
                 <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts} /></SketchStyle>
               </HandRig>
