@@ -152,8 +152,8 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       const sIn = 0, sOut = 0   // content never moves or scales on the panel; the sweep alone carries the motion
       const foIn = smoother((70 - fold) / 60), foOut = smoother((fold - 110) / 60)
       // the dissolve front travels from the free edge towards (and a little past) the hinge as the screen leaves rest
-      for (const mm of [mats.fixed, mats.moving, mats.strip]) set(mm, 1, dIn, dIn, foIn, sIn, 1.15 - 1.4 * dIn)
-      set(mats.outer, 1, dOut, dOut, foOut, sOut, 1.15 - 1.4 * dOut)
+      for (const mm of [mats.fixed, mats.moving, mats.strip]) set(mm, 1, dIn, dIn, foIn, sIn, 0.8 - 1.05 * dIn)
+      set(mats.outer, 1, dOut, dOut, foOut, sOut, 0.8 - 1.05 * dOut)
     }
   })
   const zf = T / 2 + E          // front face layers
@@ -282,6 +282,8 @@ void main() {
     // one C2-smooth weight over both halves and the fold strip: no step anywhere, the fixed half fading in softly.
     float x = eo > 0.5 ? 1.0 - vUv.x : abs(vUv.x - 0.5) * 2.0;   // outer: u = 0 is its free (island) edge
     float t = clamp((x - sweep) / 0.7 + 0.5, 0.0, 1.0), sw8 = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    // reach: the front only travels to 80% of the width; the far 20% gets a soft tail (C1 falloff to 40%)
+    { float q = clamp((x - 0.8) / 0.2, 0.0, 1.0); sw8 *= 1.0 - 0.6 * q * q * q * (q * (q * 6.0 - 15.0) + 10.0); }
     // inner: only the moving (left, u < 0.5) half dissolves; feathered to zero across the bent strip with a C1
     // smootherstep (hinge line +-FC), so the fixed right half stays sharp with no step at the hinge
     if (eo < 0.5) { float g = clamp(((0.5 - vUv.x) * 2.0 * sw + 0.003) / 0.006, 0.0, 1.0); sw8 *= g * g * g * (g * (g * 6.0 - 15.0) + 10.0); }
