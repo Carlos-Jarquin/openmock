@@ -13,26 +13,24 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { loadLogo, loadLocalLogo } from './localLogo'
 import { Env, retryEnvironment } from './Env'
 import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type Guide } from './hands/aiHands'
-import { IDLE_LEVELS, type IdleLevel } from './hands/motion'
+import { IDLE_LEVELS } from './hands/motion'
 import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
-import { SPECTRAL_DEFAULTS, type SpectralOptions } from './hands/spectral'
-import { GestureControls, GESTURE_DEFAULT, HAND_ROT0, type HandRot, isGesture, rescale, screenOf, type Gesture } from './hands/gestures'
+import { SPECTRAL_DEFAULTS } from './hands/spectral'
+import { GestureControls, HAND_ROT0, isGesture, rescale, screenOf } from './hands/gestures'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER, SKETCH_SHADOW } from './sketch/Sketch'
-import { SB_DEFAULT, type SbCfg } from './statusbar/config'
+import { SB_DEFAULT } from './statusbar/config'
 import { StatusBarControls } from './statusbar/Panel'
 import { useStatusComposite } from './statusbar/composite'
 import { islandSketch } from './statusbar/StatusBar'
 import { Timeline, TimelineDriver } from './timeline/Timeline'
 import { mixers, screenLive } from './timeline/screenTrack'
+import { useScene, POSE, type Media, type Pose, type BgMode } from './scene/store'
 import { GES_KEYS, quatPose, tlLive, type Frame, type KfState } from './timeline/tlCore'
 
-type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement; svg?: string; live?: boolean }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const wrap = (v: number) => ((v + 540) % 360) - 180
-const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
 /** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
-type Pose = typeof POSE
 /** One-click camera presets (beside Reset camera). Zoom and pan stay at the framed defaults; Flat lay uses a long lens. */
 const VIEW_PRESETS: [string, Pose][] = [
   ['Front', { tiltX: 0, tiltY: 0, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }],
@@ -44,9 +42,6 @@ const VIEW_PRESETS: [string, Pose][] = [
   ['Hero 3/4', { tiltX: -14, tiltY: -32, rotZ: -9, zoom: 1.08, panX: 0, panY: 0, fov: 24 }],
 ]
 const APPLE_HERO = { tiltX: -18.438, tiltY: 230.375, rotZ: -3.125, zoom: 1.937, panX: 0.347, panY: -0.307, fov: 21.375 }
-type LightPreset = 'soft' | 'apple' | 'violet'
-type BgMode = 'solid' | 'gradient' | 'streaks'
-const LIGHT = { preset: 'soft' as LightPreset, intensity: 1.6, azimuth: 35, elevation: 45, shadow: 0.45, env: 0.6, shadowOn: true, floor: 1.5 }
 // Device bodies the hands can grip, in model units (1 = 100 mm).
 const fitOf = (s: typeof IPHONE_18_PRO): HandFit => ({ W: s.body.w / 100, H: s.body.h / 100, T: s.body.t / 100, R: s.body.cornerR / 100, E: s.body.edge / 100,
   SW: s.active.w / 100, SH: s.active.h / 100, PW: Math.round(s.px.w / 3), PH: Math.round(s.px.h / 3) })
@@ -88,7 +83,6 @@ function paintBg(ctx: CanvasRenderingContext2D, w: number, h: number, mode: BgMo
   ctx.fillStyle = v; ctx.fillRect(0, 0, w, h)
 }
 
-const FX = { dof: false, focus: 0, blur: 2, bloom: false, grain: false }
 
 type Grab = { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera; setDpr: (n: number) => void; dpr: number }
 function GLGrab({ onReady }: { onReady: (s: Grab) => void }) {
@@ -156,16 +150,18 @@ function Rig({ zoom, fov }: { zoom: number; fov: number }) {
 }
 
 export default function App() {
-  const [device, setDevice] = useState<DeviceId>('ip18')
-  const [opts, setOpts] = useState<DeviceOptions>({ fold: 130, screen: 'inner', finish: 'silver', logo: null, logoSize: 0.16, logoTint: '#8a8f99', simTray: true })
-  const [media, setMedia] = useState<Media | null>(null)
+  // Scene store: the selected device's fields and the global settings, each with a stable useState-style setter
+  const S = useScene(), D0 = S.selected, G = S.scene.global
+  const device = D0.model, setDevice = S.dev.model
+  const opts = D0.opts, setOpts = S.dev.opts
+  const media = D0.media, setMedia = S.dev.media
   // iPhone Duo: the outer screen has its own media; paste and drop go to the target screen (follows the shown screen)
-  const [mediaOuter, setMediaOuter] = useState<Media | null>(null)
-  const [mediaTo, setMediaTo] = useState<'inner' | 'outer'>('inner')
-  const [sbOn, setSbOn] = useState(true) // on by default (Carlos, Oct 13)
-  const [sb, setSb] = useState<SbCfg>(SB_DEFAULT)
-  const [sbReset, setSbReset] = useState(0)
-  const [pose, setPose] = useState(POSE)
+  const mediaOuter = D0.mediaOuter, setMediaOuter = S.dev.mediaOuter
+  const mediaTo = D0.mediaTo, setMediaTo = S.dev.mediaTo
+  const sbOn = D0.sbOn, setSbOn = S.dev.sbOn
+  const sb = D0.sb, setSb = S.dev.sb
+  const sbReset = D0.sbReset, setSbReset = S.dev.sbReset
+  const pose = G.pose, setPose = S.glo.pose
   const poseRef = useRef(pose); poseRef.current = pose
   const viewAnim = useRef(0)
   /** Ease to a preset over 0.6 s (shortest way round for the spin); jumps straight there when reduced motion is on. */
@@ -183,10 +179,10 @@ export default function App() {
   // iPhone Duo fold transition: animates the hinge to the target screen with the iOS blur hand-off; Play loops it.
   const optsRef = useRef<DeviceOptions | null>(null); optsRef.current = opts
   const foldAnim = useRef({ loop: false, timer: 0 })
-  const [foldFollow, setFoldFollow] = useState(true)
+  const foldFollow = D0.foldFollow, setFoldFollow = S.dev.foldFollow
   const [foldPlaying, setFoldPlaying] = useState(false)
-  const [foldSpeed, setFoldSpeed] = useState(1)
-  const [foldDark, setFoldDark] = useState(0)
+  const foldSpeed = D0.foldSpeed, setFoldSpeed = S.dev.foldSpeed
+  const foldDark = D0.foldDark, setFoldDark = S.dev.foldDark
   foldLive.follow = foldFollow
   // The transition runs in the Duo's frame loop from foldLive (no React state per frame). React only hears about it
   // twice: the screen swap at 30% (both screens are dissolved then, so the content change is hidden) and the end.
@@ -214,16 +210,16 @@ export default function App() {
     go()
   }, [foldTo])
   useEffect(() => () => { clearTimeout(foldAnim.current.timer); foldLive.anim = null }, [])
-  const [light, setLight] = useState(LIGHT)
-  const [fx, setFx] = useState(FX)
-  const [style, setStyle] = useState<'photo' | 'sketch'>('photo')
-  const [sk, setSk] = useState(SKETCH_DEFAULTS)
+  const light = G.light, setLight = S.glo.light
+  const fx = G.fx, setFx = S.glo.fx
+  const style = G.style, setStyle = S.glo.style
+  const sk = G.sk, setSk = S.glo.sk
   const sketch = style === 'sketch'
-  const [hands, setHands] = useState<{ pose: HandPose; tone: string }>({ pose: 'off', tone: 'fair' })
-  const [spectral, setSpectral] = useState<SpectralOptions>(SPECTRAL_DEFAULTS)
-  const [gesture, setGesture] = useState<Gesture>(GESTURE_DEFAULT)
-  const [handRot, setHandRot] = useState<HandRot>(HAND_ROT0)
-  const [idle, setIdle] = useState<IdleLevel>('low')
+  const hands = D0.hands, setHands = S.dev.hands
+  const spectral = D0.spectral, setSpectral = S.dev.spectral
+  const gesture = D0.gesture, setGesture = S.dev.gesture
+  const handRot = D0.handRot, setHandRot = S.dev.handRot
+  const idle = D0.idle, setIdle = S.dev.idle
   const gestureFit = useRef(HAND_FITS.ip18!)
   useEffect(() => { const f = HAND_FITS[device]; if (f && f !== gestureFit.current) { setGesture(g => rescale(g, screenOf(gestureFit.current), screenOf(f))); gestureFit.current = f } }, [device])
   // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
@@ -231,12 +227,12 @@ export default function App() {
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
   const [seedLock, setSeedLock] = useState(false)
   const aiAbort = useRef<AbortController | null>(null)
-  const [bgMode, setBgMode] = useState<BgMode>('gradient')
-  const [bg1, setBg1] = useState('#dfe7ff')
-  const [bg2, setBg2] = useState('#f7d9e8')
-  const [angle, setAngle] = useState(135)
-  const [transparent, setTransparent] = useState(false)
-  const [scale, setScale] = useState(2)
+  const bgMode = G.bgMode, setBgMode = S.glo.bgMode
+  const bg1 = G.bg1, setBg1 = S.glo.bg1
+  const bg2 = G.bg2, setBg2 = S.glo.bg2
+  const angle = G.angle, setAngle = S.glo.angle
+  const transparent = G.transparent, setTransparent = S.glo.transparent
+  const scale = G.scale, setScale = S.glo.scale
   const [dragging, setDragging] = useState(false)
   const [status, setStatus] = useState('Drop, paste or choose an image or video to start.')
   // brief toast over the stage for paste and drop
