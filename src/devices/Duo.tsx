@@ -273,7 +273,11 @@ void main() {
       // fixed front-view projection onto the open inner-screen plane: the image holds still while the half turns.
       // Blended in from 70 to 160 degrees; nearer edge-on the projection would smear, so it uses the panel's own uv.
       float d = (plane - eye.z) / (vRoot.z - eye.z); vec2 p = eye.xy + (vRoot.xy - eye.xy) * d;
-      st = mix(vUv, vec2((p.x - cx) / (2.0 * sw) + 0.5, p.y / sh + 0.5), proj);
+      // where the viewer-fixed image would not reach the panel (a half tilted towards the camera), ease back to the
+      // panel's own uv so the panel is always covered; whatever still falls outside is edge-extended, never black
+      vec2 sp = vec2((p.x - cx) / (2.0 * sw) + 0.5, p.y / sh + 0.5);
+      float out_ = max(max(-sp.x, sp.x - 1.0), max(-sp.y, sp.y - 1.0));
+      st = clamp(mix(vUv, sp, proj * (1.0 - smoothstep(0.0, 0.12, out_))), 0.0, 1.0);
     }
     float r = blur * m * smoothstep(0.0, 0.3, e);
     float dark = min(0.8, md * (0.35 + 0.6 * smoothstep(0.0, 1.0, e)));
