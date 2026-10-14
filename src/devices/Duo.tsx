@@ -27,6 +27,7 @@ const ISL = { w: 0.056, h: 0.085 }               // outer Dynamic Island: vertic
 export const FINISHES = {
   night: { frame: '#3a3f4b', back: '#1d212b', label: 'Night Sky' },
   star: { frame: '#d8d4cc', back: '#ece9e3', label: 'Star White' },
+  natural: { frame: '#c4c0b8', back: '#9d9a94', label: 'Natural Titanium' },
 }
 
 /** Rounded rect shape with per-corner radii [bl, br, tr, tl], centred on (cx, cy). */
@@ -93,8 +94,11 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
   const f = FINISHES[opts.finish as keyof typeof FINISHES] ?? FINISHES.night
   const g = useMemo(() => {
     // Right half spans x 0..W, left half spans -W..0 (in its own frame before swinging).
-    const rightBody = slab(rrect(W, H, [HR, CR, CR, HR], W / 2), T, 0.006)
-    const leftBody = slab(rrect(W, H, [CR, HR, HR, CR], -W / 2), T, 0.006)
+    // the slabs stop RAIL.k short of the hinge; the rail (a bar along y with a fully rounded back corner) forms the
+    // hinge-side frame edge, so closed the two rails frame the recessed spine panel
+    const rightBody = slab(rrect(W - RAIL.k, H, [HR, CR, CR, HR], (W + RAIL.k) / 2), T, 0.006)
+    const leftBody = slab(rrect(W - RAIL.k, H, [CR, HR, HR, CR], -(W + RAIL.k) / 2), T, 0.006)
+    const railR = railGeo(1), railL = railGeo(-1)
     // bezels run right up to the hinge line (square there) so the open device has no notch or strip between halves
     const bezelR = flat(rrect(W - 0.002, H - 0.004, [0.0003, CR - 0.004, CR - 0.004, 0.0003], W / 2 - 0.001), W, H, 0, 1, W / 2)
     const bezelL = flat(rrect(W - 0.002, H - 0.004, [CR - 0.004, 0.0003, 0.0003, CR - 0.004], -W / 2 + 0.001), W, H, 0, 1, -W / 2)
@@ -106,7 +110,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     const outer = flat(rrect(OW, OH, [OCR_H, OCR, OCR, OCR_H]), OW, OH)   // [bl, br, tr, tl]: local -x is the hinge side
     const island = new THREE.ShapeGeometry(pill(ISL.w, ISL.h), 16)
     const udc = new THREE.CircleGeometry(0.014, 24)
-    return { rightBody, leftBody, bezelR, bezelL, scrR, scrL, outer, island, udc }
+    return { rightBody, leftBody, railR, railL, bezelR, bezelL, scrR, scrL, outer, island, udc }
   }, [])
   useEffect(() => () => Object.values(g).forEach(x => x.dispose()), [g])
   const frameMat = <meshPhysicalMaterial color={f.frame} metalness={0.9} roughness={0.28} clearcoat={0.3} />
@@ -221,6 +225,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
     <group ref={root} position={[-(W / 2) * (1 - opts.fold / 180), 0, -(T / 2 + GAP) * (1 - opts.fold / 180)]}>
       {/* ---------- right half (fixed) ---------- */}
       <mesh geometry={g.rightBody} castShadow>{frameMat}</mesh>
+      <mesh geometry={g.railR} castShadow>{frameMat}</mesh>
       <mesh geometry={g.bezelR} position={[0, 0, zf]}><meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
       <mesh name="screen" geometry={g.scrR} position={[0, 0, zf + E]}><primitive object={mats.fixed} attach="material" /></mesh>
       {/* the screen's bent fold region: rebuilt per frame from the hinge angle, joins both halves without a seam */}
@@ -278,11 +283,12 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       {[0.354, 0.51].map(x => (
         <mesh key={x} position={[x, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}><circleGeometry args={[0.0055, 16]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
       {/* internal hinge spine: a rounded cover on the pivot axis, revealed between the halves as they fold (see spineGeo) */}
-      <mesh ref={spineM} position={[0, 0, T / 2 + GAP]} castShadow>{frameMat}</mesh>
+      <mesh ref={spineM} position={[0, 0, T / 2 + GAP]} castShadow><meshPhysicalMaterial color={f.frame} metalness={0.85} roughness={0.42} clearcoat={0.15} /></mesh>
       {/* ---------- left half (swings) ---------- */}
       <group ref={swingG} position={[0, 0, T / 2 + GAP]} rotation={[0, THREE.MathUtils.degToRad(180 - opts.fold), 0]}>
         <group position={[0, 0, -T / 2 - GAP]}>
           <mesh geometry={g.leftBody} castShadow>{frameMat}</mesh>
+          <mesh geometry={g.railL} castShadow>{frameMat}</mesh>
           <mesh geometry={g.leftBody} material={bandMat} renderOrder={1} />
           {[-0.354, -0.51].map(x => (
             <mesh key={x} position={[x, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}><circleGeometry args={[0.0055, 16]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
@@ -445,7 +451,7 @@ function updateFoldStrip(g: THREE.BufferGeometry, swing: number) {
  * spine face, as wide as the stack, only about 0.8 mm proud of the hinge ends. */
 // closed, the flat sits 0.29 mm out from the hinge ends' line, i.e. recessed behind the frames' rounded hinge edges
 // (which stand EO = 0.48 mm out), so the two frame rails wrap a narrower inset spine as in the closed reference
-const SPINE_FLAT = 0.055
+const SPINE_FLAT = 0.03
 const spineGeos = new Map<number, THREE.BufferGeometry>()
 function spineAt(swing: number) {
   const key = Math.round(THREE.MathUtils.radToDeg(swing) * 2)   // 0.5 degree steps
@@ -455,22 +461,42 @@ function spineAt(swing: number) {
   return g
 }
 function spineGeo(phi: number) {
-  // R is 0.03 mm inside the backs, so the spine reads inset between the rails
-  const R = T + GAP - 0.0003, r0 = R * 0.55, a = phi / 2, d = R * Math.cos(a) + R * SPINE_FLAT * Math.sin(a) * Math.sin(a)
-  const dmax = Math.max(d, R * Math.cos(a) + 0.0006), del = THREE.MathUtils.degToRad(1.5), N = 64
-  // direction t (from the right half's back-corner direction, t = 0, to the left half's, t = phi): (-sin t, -cos t) in (x, z)
+  // R is 0.03 mm inside the backs; closed the outside is a flat panel (bisector plane at d), narrowed by pulling the two
+  // back planes in by c (0 when open, so the cover stays tangent to both backs; RAIL.c when closed, so the panel shows
+  // between the rails); a p-norm soft minimum rounds the panel's long edges
+  const R = T + GAP - 0.0003, r0 = R * 0.45, a = phi / 2, d = R * Math.cos(a) + R * SPINE_FLAT * Math.sin(a) * Math.sin(a)
+  const dmax = Math.max(d, R * Math.cos(a) + 0.0001), del = THREE.MathUtils.degToRad(1.5), N = 128
+  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 150, 180), cIn = RAIL.c * cl, P = 10
   const outer: [number, number][] = [], inner: [number, number][] = []
   for (let i = 0; i <= N; i++) {
-    const t = -del + (phi + 2 * del) * i / N, c = Math.cos(t - a)
-    const rho = c > 1e-6 ? Math.min(R, dmax / c) : R
-    outer.push([-Math.sin(t) * rho, -Math.cos(t) * rho]); const ri = Math.min(r0, rho * 0.5)   // hollow stays inside the clipped outline (closed, the flat is nearer the axis than r0)
-    inner.push([-Math.sin(t) * ri, -Math.cos(t) * ri])
+    const t = -del + (phi + 2 * del) * i / N
+    // distance limits along direction t: cylinder R, bisector plane, and the two back planes (normals at t = 0 and phi)
+    const lim = [R, ...[[t - a, dmax], [t, R - cIn], [t - phi, R - cIn]].map(([u, D]) => Math.cos(u) > 1e-4 ? D / Math.cos(u) : 1)]
+    const rho = cl > 0 ? Math.pow(lim.reduce((s, v) => s + Math.pow(v, -P), 0), -1 / P) : Math.min(...lim)
+    const ri = Math.min(r0, rho * 0.5)
+    outer.push([-Math.sin(t) * rho, -Math.cos(t) * rho]); inner.push([-Math.sin(t) * ri, -Math.cos(t) * ri])
   }
-  // shape in (X = x, Y = -z) so that after rotateX(-90 deg) the extrusion runs along +y and z comes out right
   const sh = new THREE.Shape(outer.map(([x, z]) => new THREE.Vector2(x, -z)).concat(inner.reverse().map(([x, z]) => new THREE.Vector2(x, -z))))
-  const L = H - 0.004, b = 0.0012
-  const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: 0.0003, bevelSegments: 3, curveSegments: 4 })
-  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); g.computeVertexNormals(); return g
+  // ends: a small rounded cap 1.6 mm inside the top and bottom faces
+  const L = H - 0.0032, b = 0.0016
+  const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: 0.0005, bevelSegments: 4, curveSegments: 4 })
+  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return g
+}
+/** Hinge-side rails: RB back-corner radius, k slab inset, c how far the closed spine panel is pulled in from each back. */
+const RAIL = { RB: 0.018, k: 0.019, c: 0.032 }
+/** One half's rail along y, side +1 right half (x >= 0), -1 left. Profile in (x, z), back at z = -T/2: a fully rounded
+ *  back corner reaching x = -EO (flush with the other frame edges), rolling back in to the hinge face at x = 0, which runs
+ *  flat to a 0.5 mm screen-side corner; overlaps the slab by 4 mm. */
+function railGeo(side: number) {
+  const { RB, k } = RAIL, bv = 0.0012, xo = -EO + bv, rb = RB - bv   // the extrude bevel grows the profile by bv
+  const xc = xo + rb, zc = -T / 2 + bv + rb, th = Math.acos(Math.min(1, xc / rb))
+  const pts: [number, number][] = [[k + 0.004, -T / 2 + bv]]
+  for (let i = 0; i <= 32; i++) { const al = -Math.PI / 2 - (Math.PI / 2 + th) * i / 32; pts.push([xc + rb * Math.cos(al), zc + rb * Math.sin(al)]) }
+  pts.push([0.0005, T / 2 - bv - 0.0005], [0.0012, T / 2 - bv], [k + 0.004, T / 2 - bv])
+  const sh = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(side * x, -z)))
+  const L = H + 2 * EO
+  const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * bv, bevelEnabled: true, bevelThickness: bv, bevelSize: bv, bevelSegments: 4, curveSegments: 4 })
+  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * bv) / 2, 0); return g
 }
 
 // Inline JSX shapes cached by parameters so re-renders don't rebuild geometry.
