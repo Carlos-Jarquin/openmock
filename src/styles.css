@@ -22,3 +22,29 @@ button.ghost { background: #fff; color: #1d1d22; }
 .seg.wrap { flex-wrap: wrap; } .seg.wrap button { flex: 1 0 30%; } .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; box-shadow: 0 0 0 1px rgba(0,0,0,.15); }
 .ai-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; } .panel h3 { font-size: 11px; margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; }
 .duo-src { border-left: 2px solid transparent; padding-left: 6px; margin: 6px 0; } .duo-src.on { border-left-color: #1d1d22; }
+
+/* keyframe timeline under the viewport */
+.stagecol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.stagecol > .stage { flex: 1; min-height: 0; }
+.timeline { flex: none; background: #fbfbfc; border-top: 1px solid #e4e4e8; font: 12px -apple-system, system-ui, sans-serif; color: #1d1d1f; padding: 6px 10px 8px; }
+.tl-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tl-bar strong { font-size: 12px; margin-right: 4px; }
+.tl-bar button, .tl-act button, .btnlike { display: inline-flex; align-items: center; gap: 4px; }
+.timeline button.icon, .timeline .btnlike { padding: 4px 6px; cursor: pointer; }
+.timeline button.icon.on { color: #4b6bff; }
+.tl-scrub { flex: 1 1 160px; min-width: 120px; }
+.tl-time { font-variant-numeric: tabular-nums; color: #555; min-width: 104px; }
+.tl-sp { flex: 1 1 0; }
+.tl-ruler { position: relative; height: 18px; margin: 8px 6px 4px; border-radius: 4px; background: linear-gradient(#ececf1, #ececf1) 0 50% / 100% 2px no-repeat; cursor: pointer; }
+.tl-mark { position: absolute; top: 3px; width: 12px; height: 12px; margin-left: -6px; padding: 0; border-radius: 3px; transform: rotate(45deg); background: #fff; border: 2px solid #8a8f99; cursor: pointer; }
+.tl-mark.sel { border-color: #4b6bff; background: #4b6bff; }
+.tl-head { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: #e0473a; pointer-events: none; left: 0; }
+.tl-cards { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0; }
+.tl-card { flex: none; width: 148px; border: 1px solid #e4e4e8; border-radius: 8px; background: #fff; padding: 6px 8px; cursor: pointer; }
+.tl-card.sel { border-color: #4b6bff; box-shadow: 0 0 0 1px #4b6bff; }
+.tl-card-h { display: flex; justify-content: space-between; color: #555; margin-bottom: 4px; }
+.tl-card-f { display: flex; flex-direction: column; gap: 4px; }
+.tl-card-f input { width: 52px; }
+.tl-act { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.tl-act span { color: #555; margin-right: 4px; }
+.timeline button { background: #fff; color: #1d1d22; padding: 4px 8px; } .timeline button.primary { background: #1d1d22; color: #fff; }

@@ -160,7 +160,9 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
   useFrame(({ camera }) => {
     const o = optsRef.current, a = foldLive.anim, now = performance.now()
     let fold = o.fold
-    if (a) {
+    // the keyframe timeline drives the hinge directly while it plays (see timeline/Timeline.tsx)
+    if (foldLive.tl != null) fold = foldLive.tl
+    else if (a) {
       const u = clamp01((now - a.t0) / a.dur); fold = a.from + (a.target - a.from) * smoother(u)
       // swap the screen content as the hinge passes 90 degrees, where both screens are fully dissolved
       if (!a.swapped && (a.target - 90) * (fold - 90) >= 0) { a.swapped = true; a.onSwap?.() }
@@ -322,7 +324,7 @@ export interface FoldAnim { from: number; target: number; to: 'inner' | 'outer';
   onSwap?: () => void; onDone?: (fold: number, zoomK: number) => void }
 /** Live fold state shared by the studio and the Duo, read every frame (no React state per frame). */
 /** Live fold state read in the frame loop. dark scales the dissolve's darkening (0 = blur only and the default, 1 = full, 1.5 max). */
-export const foldLive: { anim: FoldAnim | null; follow: boolean; dark: number; log: [number, number][] | null } = { anim: null, follow: true, dark: 0, log: null }
+export const foldLive: { anim: FoldAnim | null; follow: boolean; dark: number; log: [number, number][] | null; tl: number | null } = { anim: null, follow: true, dark: 0, log: null, tl: null }
 /** Hinge swing at speed 1, in ms, on smootherstep (no snap, no rebound). The dissolve has no timer of its own. */
 export const FOLD_MS = 900
 
