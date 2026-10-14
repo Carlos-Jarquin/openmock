@@ -7,7 +7,7 @@ RectAreaLightUniformsLib.init()
 import * as THREE from 'three'
 import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
-import { INNER_PX, OUTER_PX } from './devices/Duo'
+import { INNER_PX, OUTER_PX, foldCurve, FOLD_MS } from './devices/Duo'
 import { sceneHit } from './devices/shared'
 import { ErrorBoundary } from './ErrorBoundary'
 import { loadLogo, loadLocalLogo } from './localLogo'
@@ -171,6 +171,35 @@ export default function App() {
       setPose(p); if (k < 1) viewAnim.current = requestAnimationFrame(step) }
     viewAnim.current = requestAnimationFrame(step)
   }, [])
+  // iPhone Duo fold transition: animates the hinge to the target screen with the iOS blur hand-off; Play loops it.
+  const optsRef = useRef<DeviceOptions | null>(null); optsRef.current = opts
+  const foldAnim = useRef({ raf: 0, loop: false, timer: 0 })
+  const [foldFollow, setFoldFollow] = useState(true)
+  const [foldPlaying, setFoldPlaying] = useState(false)
+  const followRef = useRef(foldFollow); followRef.current = foldFollow
+  const foldTo = useCallback((to: 'inner' | 'outer', then?: () => void) => {
+    cancelAnimationFrame(foldAnim.current.raf)
+    const o = optsRef.current!, from = o.fold, target = to === 'inner' ? 180 : 0
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { setOpts(x => ({ ...x, screen: to, fold: target, trans: null })); then?.(); return }
+    // Camera follow: keep the zoom so the device's apparent width stays about the same (open is twice as wide).
+    const wid = (f: number) => 1 + Math.max(0, -Math.cos(f * Math.PI / 180)), z0 = poseRef.current.zoom, w0 = wid(from)
+    const t0 = performance.now()
+    const step = (now: number) => {
+      const t = Math.min(1, (now - t0) / FOLD_MS), f = foldCurve(from, target, t)
+      setOpts(x => ({ ...x, screen: to, fold: f, trans: t < 1 ? { p: t, to } : null }))
+      if (followRef.current) setPose(p => ({ ...p, zoom: z0 * Math.pow(w0 / wid(f), 0.75) }))
+      if (t < 1) foldAnim.current.raf = requestAnimationFrame(step); else then?.()
+    }
+    foldAnim.current.raf = requestAnimationFrame(step)
+  }, [])
+  const stopFold = useCallback(() => { cancelAnimationFrame(foldAnim.current.raf); clearTimeout(foldAnim.current.timer); foldAnim.current.loop = false; setFoldPlaying(false); setOpts(x => ({ ...x, trans: null })) }, [])
+  const playFold = useCallback(() => {
+    foldAnim.current.loop = true; setFoldPlaying(true)
+    const go = () => { if (!foldAnim.current.loop) return
+      foldTo(optsRef.current!.screen === 'inner' ? 'outer' : 'inner', () => { foldAnim.current.timer = window.setTimeout(go, 700) }) }
+    go()
+  }, [foldTo])
+  useEffect(() => () => { cancelAnimationFrame(foldAnim.current.raf); clearTimeout(foldAnim.current.timer) }, [])
   const [light, setLight] = useState(LIGHT)
   const [fx, setFx] = useState(FX)
   const [style, setStyle] = useState<'photo' | 'sketch'>('photo')
@@ -369,7 +398,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, setSbOn, setSb, setSpectral }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, setSbOn, setSb, setSpectral }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -435,9 +464,13 @@ export default function App() {
           </> : <p className="hint">Available for the iPhone 18 Pro and Pro Max.</p>}
         </section>
         {def.foldable && <section><h2>iPhone Duo</h2>
-          {slider('Fold', opts.fold, 0, 180, 1, n => setOpts({ ...opts, fold: n }), '°')}
-          <p className="hint">180 is open flat, 0 is closed.</p>
-          <div className="seg"><button className={opts.screen === 'inner' ? 'on' : ''} onClick={() => setOpts({ ...opts, screen: 'inner', fold: opts.fold < 60 ? 120 : opts.fold })}>Inner screen</button><button className={opts.screen === 'outer' ? 'on' : ''} onClick={() => setOpts({ ...opts, screen: 'outer', fold: 0 })}>Outer screen</button></div>
+          {slider('Fold', Math.round(opts.fold), 0, 180, 1, n => { stopFold(); setOpts({ ...opts, fold: n, trans: null }) }, '°')}
+          <p className="hint">180 is open flat, 0 is closed. For stills, set any angle; the chosen screen stays lit and sharp.</p>
+          <div className="seg"><button className={opts.screen === 'inner' ? 'on' : ''} onClick={() => { stopFold(); foldTo('inner') }}>Inner screen</button><button className={opts.screen === 'outer' ? 'on' : ''} onClick={() => { stopFold(); foldTo('outer') }}>Outer screen</button></div>
+          <div className="row"><button className="ghost" onClick={() => foldPlaying ? stopFold() : playFold()}>{foldPlaying ? 'Stop' : 'Play open and close'}</button></div>
+          {slider('Transition blur', Math.round((opts.foldBlur ?? 0.6) * 100), 0, 100, 1, n => setOpts({ ...opts, foldBlur: n / 100 }), '%')}
+          <label className="check"><input type="checkbox" checked={foldFollow} onChange={e => setFoldFollow(e.target.checked)} /> Camera follows the fold</label>
+          <p className="hint">Switching screens swings the hinge in about a second, with the iOS hand-off: the outgoing screen blurs and fades, the incoming one sharpens as the hinge settles.</p>
           <p className="hint">Native size: {opts.screen === 'inner' ? `${INNER_PX.w} × ${INNER_PX.h}` : `${OUTER_PX.w} × ${OUTER_PX.h}`} px. Screenshots at this size fit exactly.</p>
         </section>}
         <section><h2>Hands</h2>
