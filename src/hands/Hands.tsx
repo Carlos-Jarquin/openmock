@@ -500,7 +500,9 @@ function Hands({ pose, tone, fit, gesture, sp, rot }: { pose: HandPose; tone: st
     const rep: Record<string, number> = { right: 0, left: 0 }
     for (const pl of list) if (rigs[pl.side].root.userData.touchError !== undefined && isFinite(rigs[pl.side].root.userData.touchError)) rep[pl.side] = rigs[pl.side].root.userData.touchError * 100
     // only when the report changes: during timeline playback the hand re-solves every frame
-    const repKey = JSON.stringify(rep); if (lastRep.current !== repKey) { lastRep.current = repKey; window.dispatchEvent(new CustomEvent(REACH_EVENT, { detail: rep })) }
+    for (const k in rep) rep[k] = Math.round(rep[k] * 10) / 10
+    // posted after the effect, so the panel's update is not a state change inside this effect (which React flags every frame)
+    const repKey = JSON.stringify(rep); if (lastRep.current !== repKey) { lastRep.current = repKey; setTimeout(() => window.dispatchEvent(new CustomEvent(REACH_EVENT, { detail: rep })), 0) }
     for (const side of ['right', 'left'] as const) if (!used.has(rigs[side].root)) { g.remove(rigs[side].root, arms[side]); delete solved.current[side] }
   }, [pose, fit, rigs, ges, arms, rot])
   // Spectral: outlines, inner lines and stars follow each re-solve; the hands leave the shadow pass (line layer) and cast none.

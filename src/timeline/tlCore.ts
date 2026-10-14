@@ -76,6 +76,8 @@ export function quatPose(q: THREE.Quaternion) {
 /** Live playback state: written by the UI, read by the frame loop (no React state per frame). */
 export const tlLive = {
   keys: [] as Keyframe[],
+  /** seconds shown across the track (the playhead's scale) */
+  view: 0,
   playing: false, loop: true, t: 0, last: 0,
   /** true while the timeline owns the scene (playing or scrubbing), so the driver applies frames */
   active: false,

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { foldLive } from '../devices/Duo'
+import { Track, viewSpan } from './Track'
 import { EASES, fmt, loadKeys, quatPose, sample, saveKeys, starts, tlLive, total, type Ease, type Frame, type KfState, type Keyframe } from './tlCore'
 
 /** Applies the timeline to the scene every frame while it owns it: device rotation (slerp) and position, camera zoom
@@ -10,6 +11,7 @@ import { EASES, fmt, loadKeys, quatPose, sample, saveKeys, starts, tlLive, total
 export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefObject<THREE.Group | null>; onCommit: (f: Frame) => void; onSide: (inner: boolean) => void }) {
   const { camera } = useThree()
   const side = useRef<boolean | null>(null)
+  const handQueued = useRef(false)
   useFrame(() => {
     const L = tlLive; if (!L.active) return
     const now = performance.now(), T = total(L.keys)
@@ -26,11 +28,13 @@ export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefOb
     // the Duo shows the inner content when open past 90 degrees, the outer when closed (both are dissolved at 90)
     if (f.fold != null) { const s = f.fold >= 90; if (s !== side.current) { side.current = s; onSide(s) } }
     if (f.disc !== L.disc) { L.disc = f.disc; L.onDisc?.(f.disc) }
-    L.onHand?.(f)
+    // hand updates go through React state; posting them out of the frame loop (one pending at a time, newest frame wins)
+    // keeps React from counting 60 synchronous updates a second as an update loop
+    if (L.onHand && !handQueued.current) { handQueued.current = true; setTimeout(() => { handQueued.current = false; const g = sample(tlLive.keys, tlLive.t); if (g) tlLive.onHand?.(g) }, 0) }
     const u = L.ui, p = T > 0 ? L.t / T : 0
     if (u.scrub) u.scrub.value = String(p * 1000)
     if (u.time) u.time.textContent = `${fmt(L.t)} / ${fmt(T)}`
-    if (u.head) u.head.style.left = `${p * 100}%`
+    if (u.head) u.head.style.left = `${Math.min(L.t, T) / (L.view || T || 1) * 100}%`
     L.log?.push(now)
     // paused or scrubbed: hand the frame back to the sliders once, then let the user drive again
     if (!L.playing && L.pending) { L.pending = false; L.active = false; foldLive.tl = null; side.current = null; onCommit(f) }
@@ -64,22 +68,31 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash }: {
   const setKeys = useCallback((k: Keyframe[]) => { setKeysState(k); tlLive.keys = k; saveKeys(k) }, [])
   useEffect(() => { tlLive.keys = keys }, [keys])
   useEffect(() => { tlLive.loop = loop }, [loop])
-  useEffect(() => { tlLive.ui = { scrub: scrub.current, time: time.current, head: head.current } })
+  useEffect(() => { tlLive.ui = { ...tlLive.ui, scrub: scrub.current, time: time.current } })
   useEffect(() => { tlLive.onEnd = () => setPlaying(false); return () => { tlLive.onEnd = null } }, [])
   const mp4ok = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('video/mp4')
   const T = total(keys), st = starts(keys)
 
   const play = () => {
     if (keys.length < 2) { flash('Add at least two keyframes to play.', true); return }
-    if (tlLive.t >= T) tlLive.t = 0
+    // from the last keyframe (where Add leaves the playhead) or the end, start again from 0
+    if (tlLive.t >= T - 1e-6) tlLive.t = 0
     tlLive.disc = null; tlLive.last = performance.now(); tlLive.active = true; tlLive.playing = true; setPlaying(true)
   }
   const pause = () => { tlLive.playing = false; tlLive.pending = true; setPlaying(false) }
   const seek = (t: number) => { tlLive.t = Math.max(0, Math.min(T, t)); tlLive.disc = null; tlLive.active = true; if (!tlLive.playing) tlLive.pending = true }
   const add = () => {
-    const k: Keyframe = { id: uid(), dur: keys.length ? 1.5 : 0, ease: 'inout', s: snapshot() }
+    const s = snapshot()
     const i = sel ? keys.findIndex(x => x.id === sel) + 1 : keys.length
+    // a keyframe identical to its neighbour animates nothing, which reads as Play being broken
+    const prev = keys[i - 1]
+    if (prev && JSON.stringify(prev.s) === JSON.stringify(s)) { flash(`Nothing has changed since keyframe ${i}. Move the phone, hand or thumb first, then add a keyframe.`, true); return }
+    const k: Keyframe = { id: uid(), dur: i ? 1.5 : 0, ease: 'inout', s }
     const next = [...keys.slice(0, i), k, ...keys.slice(i)]; setKeys(next); setSel(k.id)
+    // move the playhead to the new keyframe so the ruler shows where it went (the view already matches it)
+    const at = starts(next)[i], T2 = total(next); tlLive.t = at
+    const u = tlLive.ui; if (u.scrub) u.scrub.value = String(T2 ? at / T2 * 1000 : 0); if (u.head) u.head.style.left = `${at / viewSpan(T2) * 100}%`; if (u.time) u.time.textContent = `${fmt(at)} / ${fmt(T2)}`
+    flash(next.length < 2 ? 'Keyframe 1 added. Now change the phone, hand or thumb and add another.' : `Keyframe ${i + 1} added at ${fmt(at)}. Press Play to animate.`)
   }
   const upd = (id: string, p: Partial<Keyframe>) => setKeys(keys.map(k => k.id === id ? { ...k, ...p } : k))
   const move = (i: number, d: number) => { const j = i + d; if (j < 0 || j >= keys.length) return; const n = [...keys]; [n[i], n[j]] = [n[j], n[i]]; setKeys(n) }
@@ -136,18 +149,14 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash }: {
         <label className="ghost icon btnlike" title="Load keyframes from JSON" aria-label="Load keyframes from JSON"><Ico d={I.up} /><input type="file" accept="application/json,.json" hidden onChange={e => { const f = e.target.files?.[0]; if (f) importJson(f); e.target.value = '' }} /></label>
       </div>
       {open && <>
-        <div className="tl-ruler" onClick={e => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); seek((e.clientX - r.left) / r.width * T) }}>
-          {keys.map((x, i) => <button key={x.id} className={`tl-mark ${x.id === sel ? 'sel' : ''}`} style={{ left: `${T ? st[i] / T * 100 : 0}%` }}
-            onClick={e => { e.stopPropagation(); jump(i) }} title={`Keyframe ${i + 1} at ${fmt(st[i])}`} aria-label={`Keyframe ${i + 1}`} />)}
-          <div ref={head} className="tl-head" />
-        </div>
+        <Track keys={keys} sel={sel} setKeys={setKeys} seek={seek} onSelect={i => { setSel(keys[i].id); if (playing) pause() }} />
         <div className="tl-cards">
-          {keys.length === 0 && <p className="hint">Set up a view, then press Add keyframe. Add more views and press Play to animate between them.</p>}
+          {keys.length === 0 && <p className="hint">Set up the phone, hand and thumb, then press Add keyframe. Change them, add another keyframe, then press Play to animate between them.</p>}
           {keys.map((x, i) => (
             <div key={x.id} className={`tl-card ${x.id === sel ? 'sel' : ''}`} onClick={() => jump(i)}>
               <div className="tl-card-h"><b>{i + 1}</b><span>{fmt(st[i])}</span></div>
               {i > 0 ? <div className="tl-card-f" onClick={e => e.stopPropagation()}>
-                <label>Time <input type="number" min={0.05} max={60} step={0.05} value={x.dur} onChange={e => upd(x.id, { dur: Math.max(0.05, +e.target.value || 0.05) })} /> s</label>
+                <label title="How long it takes to get here from the keyframe before">Length <input type="number" min={0.05} max={60} step={0.05} value={x.dur} onChange={e => upd(x.id, { dur: Math.max(0.05, +e.target.value || 0.05) })} /> s</label>
                 <select value={x.ease} onChange={e => upd(x.id, { ease: e.target.value as Ease })} aria-label="Easing">{EASES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
               </div> : <div className="tl-card-f hint">Start</div>}
             </div>))}

@@ -1,0 +1,87 @@
+// After Effects style track: a time ruler, one bar per segment (width = its duration), keyframe diamonds at their
+// times, a draggable playhead and an end handle for the total duration. All drags snap to 0.1 s.
+import { useRef, useState } from 'react'
+import { fmt, starts, tlLive, total, type Keyframe } from './tlCore'
+
+const SNAP = 0.1, MIN = 0.1, MAX_T = 120
+const snap = (t: number) => Math.round(t / SNAP) * SNAP
+const r1 = (t: number) => Math.round(t * 10) / 10
+/** Seconds the track shows: the timeline plus room to drag it longer. */
+export const viewSpan = (T: number) => Math.max(2, Math.ceil(T * 1.25 + 0.5))
+/** Tick step that gives labels roughly every 60 px. */
+function step(span: number, px: number) { const want = span * 60 / Math.max(1, px); return [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60].find(s => s >= want) ?? 60 }
+
+type Drag = { kind: 'key' | 'edge' | 'end' | 'head'; i: number; x0: number; keys: Keyframe[]; span: number; px: number; left: number }
+
+export function Track({ keys, sel, setKeys, onSelect, seek }: {
+  keys: Keyframe[]; sel: string | null; setKeys: (k: Keyframe[]) => void; onSelect: (i: number) => void; seek: (t: number) => void
+}) {
+  const box = useRef<HTMLDivElement>(null)
+  const [drag, setDrag] = useState<Drag | null>(null)
+  const [tip, setTip] = useState<{ x: number; text: string } | null>(null)
+  const T = total(keys), st = starts(keys)
+  // frozen while dragging so the track doesn't rescale under the pointer
+  const span = drag ? drag.span : viewSpan(T)
+  tlLive.view = span
+  const pct = (t: number) => `${t / span * 100}%`
+  const w = box.current?.clientWidth ?? 800, s = step(span, w)
+  const ticks: number[] = []; for (let t = 0; t <= span + 1e-6; t += s) ticks.push(r1(t))
+
+  const begin = (e: React.PointerEvent, kind: Drag['kind'], i: number) => {
+    e.stopPropagation(); e.preventDefault()
+    const r = box.current!.getBoundingClientRect()
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    setDrag({ kind, i, x0: e.clientX, keys, span, px: r.width, left: r.left })
+    if (kind === 'head') moveHead(e.clientX, r.left, r.width, span)
+  }
+  const moveHead = (x: number, left: number, px: number, sp: number) => {
+    const t = Math.max(0, Math.min(T, (x - left) / px * sp)); seek(t); setTip({ x: Math.min(t, T) / sp * px, text: fmt(t) })
+  }
+  const move = (e: React.PointerEvent) => {
+    const d = drag; if (!d) return
+    if (d.kind === 'head') { moveHead(e.clientX, d.left, d.px, d.span); return }
+    const dt = (e.clientX - d.x0) / d.px * d.span, k = d.keys.map(x => ({ ...x })), s0 = starts(d.keys), T0 = total(d.keys)
+    let at = 0
+    if (d.kind === 'key') {
+      // retime one keyframe between its neighbours; the ones after it stay where they are
+      const lo = s0[d.i - 1] + MIN, hi = d.i < k.length - 1 ? s0[d.i + 1] - MIN : MAX_T
+      at = Math.min(hi, Math.max(lo, snap(s0[d.i] + dt)))
+      k[d.i].dur = r1(at - s0[d.i - 1]); if (d.i < k.length - 1) k[d.i + 1].dur = r1(s0[d.i + 1] - at)
+      setTip({ x: at / d.span * d.px, text: `${fmt(at)}  (${k[d.i].dur.toFixed(1)} s)` })
+    } else if (d.kind === 'edge') {
+      // change this segment's length; everything after it moves along
+      k[d.i].dur = Math.max(MIN, snap(d.keys[d.i].dur + dt)); at = s0[d.i - 1] + k[d.i].dur
+      setTip({ x: at / d.span * d.px, text: `${k[d.i].dur.toFixed(1)} s` })
+    } else {
+      // total duration: every segment scales by the same factor
+      const T1 = Math.min(MAX_T, Math.max(MIN * (k.length - 1), snap(T0 + dt))), f = T1 / T0
+      for (let i = 1; i < k.length; i++) k[i].dur = Math.max(MIN, r1(d.keys[i].dur * f))
+      at = total(k); setTip({ x: at / d.span * d.px, text: `Total ${at.toFixed(1)} s` })
+    }
+    setKeys(k)
+  }
+  const end = () => { setDrag(null); setTip(null) }
+
+  return (
+    <div className="tl-track" ref={box} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
+      <div className="tl-rule" onPointerDown={e => begin(e, 'head', 0)} title="Drag to scrub">
+        {ticks.map(t => <span key={t} className="tl-tick lab" style={{ left: pct(t) }}>{t > span - s * 0.6 ? '' : t < 60 ? `${+t.toFixed(1)}s` : fmt(t)}</span>)}
+      </div>
+      <div className="tl-lane" onPointerDown={e => begin(e, 'head', 0)}>
+        {T > 0 && <div className="tl-out" style={{ left: pct(T) }} />}
+        {keys.slice(1).map((x, j) => { const i = j + 1; return (
+          <div key={x.id} className={`tl-seg ${keys[i].id === sel || keys[i - 1].id === sel ? 'sel' : ''}`} style={{ left: pct(st[i - 1]), width: pct(x.dur) }}
+            onPointerDown={e => { e.stopPropagation(); onSelect(i) }} title={`Keyframe ${i} to ${i + 1}: ${x.dur.toFixed(1)} s`}>
+            <span>{x.dur.toFixed(1)} s</span>
+            <i className="tl-edge" onPointerDown={e => begin(e, 'edge', i)} title="Drag to change this part's length" />
+          </div>) })}
+        {keys.map((x, i) => <button key={x.id} className={`tl-dia ${x.id === sel ? 'sel' : ''}`} style={{ left: pct(st[i]) }} aria-label={`Keyframe ${i + 1} at ${fmt(st[i])}`}
+          title={i ? `Keyframe ${i + 1} at ${fmt(st[i])}. Drag to retime.` : 'Keyframe 1 at the start'}
+          onPointerDown={e => { onSelect(i); if (i) begin(e, 'key', i); else e.stopPropagation() }} />)}
+        {keys.length > 1 && <button className="tl-end" style={{ left: pct(T) }} aria-label="Total duration" title={`Total ${T.toFixed(1)} s. Drag to make the whole timeline longer or shorter.`} onPointerDown={e => begin(e, 'end', 0)} />}
+      </div>
+      <div ref={el => { tlLive.ui.head = el }} className="tl-head" style={{ left: pct(Math.min(tlLive.t, T)) }} />
+      {tip && <div className="tl-tip" style={{ left: tip.x }}>{tip.text}</div>}
+    </div>
+  )
+}

@@ -371,7 +371,9 @@ export default function App() {
   const bgCss = transparent ? undefined : bgMode === 'solid' ? bg1 : `linear-gradient(${angle}deg, ${bg1}, ${bg2})`
 
   // Any change to the scene makes the AI picture stale, so drop it.
-  useEffect(() => { setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return a.url ? { ...a, url: null } : a }) },
+  // (only when there is one: an unconditional setState here runs every frame during timeline playback)
+  const aiHasUrl = !!ai.url
+  useEffect(() => { if (!aiHasUrl) return; setAi(a => { if (a.url) URL.revokeObjectURL(a.url); return a.url ? { ...a, url: null } : a }) },
     [device, opts, media, mediaOuter, pose, light, fx, hands, gesture, handRot, bgMode, bg1, bg2, angle, transparent, style, sk])
   const makePhotoreal = async () => {
     const t = three.current

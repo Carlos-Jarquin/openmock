@@ -48,3 +48,25 @@ button.ghost { background: #fff; color: #1d1d22; }
 .tl-act { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .tl-act span { color: #555; margin-right: 4px; }
 .timeline button { background: #fff; color: #1d1d22; padding: 4px 8px; } .timeline button.primary { background: #1d1d22; color: #fff; }
+/* After Effects style track */
+.tl-track { position: relative; margin: 8px 6px 6px; user-select: none; touch-action: none; }
+.tl-rule { position: relative; height: 18px; border-bottom: 1px solid #d9d9e0; cursor: ew-resize; }
+.tl-tick { position: absolute; bottom: 0; height: 5px; border-left: 1px solid #c4c4cc; }
+.tl-tick.lab { height: 9px; }
+.tl-tick.lab::after { content: none; }
+.tl-tick { font-size: 10px; color: #777; font-variant-numeric: tabular-nums; text-indent: 3px; line-height: 0; white-space: nowrap; }
+.tl-tick:not(.lab) { font-size: 0; }
+.tl-lane { position: relative; height: 30px; margin-top: 4px; background: #f0f0f4; border-radius: 5px; cursor: ew-resize; }
+.tl-out { position: absolute; top: 0; bottom: 0; right: 0; background: repeating-linear-gradient(135deg, transparent 0 4px, #e3e3ea 4px 6px); border-radius: 0 5px 5px 0; pointer-events: none; }
+.tl-seg { position: absolute; top: 5px; height: 20px; box-sizing: border-box; background: #dfe5ff; border: 1px solid #b4c0ff; border-radius: 4px; overflow: hidden; cursor: pointer; }
+.tl-seg.sel { background: #c9d3ff; border-color: #4b6bff; }
+.tl-seg span { position: absolute; left: 50%; top: 2px; transform: translateX(-50%); font-size: 10px; color: #3445a8; white-space: nowrap; font-variant-numeric: tabular-nums; pointer-events: none; }
+.tl-edge { position: absolute; right: 0; top: 0; bottom: 0; width: 7px; cursor: col-resize; background: linear-gradient(90deg, transparent 2px, #8c9cf5 2px 4px, transparent 4px); }
+.tl-dia { position: absolute; top: 8px; width: 13px; height: 13px; margin-left: -6.5px; padding: 0 !important; border-radius: 2px; transform: rotate(45deg); background: #fff !important; border: 2px solid #6b7080; cursor: grab; z-index: 2; }
+.tl-dia.sel { border-color: #4b6bff; background: #4b6bff !important; }
+.tl-end { position: absolute; top: 25px; bottom: -10px; width: 14px; margin-left: -7px; padding: 0 !important; background: transparent !important; border: none; cursor: col-resize; z-index: 1; }
+.tl-end::after { content: ''; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; background: #1d1d22; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.tl-lane { margin-bottom: 12px; }
+.tl-track .tl-head { top: 0; bottom: 0; z-index: 3; }
+.tl-track .tl-head::before { content: ''; position: absolute; top: 0; left: -4px; width: 10px; height: 10px; background: #e0473a; clip-path: polygon(0 0, 100% 0, 50% 100%); }
+.tl-tip { position: absolute; top: -18px; transform: translateX(-50%); background: #1d1d22; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 4px; white-space: pre; pointer-events: none; z-index: 4; font-variant-numeric: tabular-nums; }
