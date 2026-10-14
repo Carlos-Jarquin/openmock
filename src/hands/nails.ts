@@ -25,7 +25,7 @@ function profile(s: NailShape, t: number) {
 
 /** What a nail is built from, measured on the skin. All lengths in the hand model's units (metres). */
 export interface NailFit { bed: number; width: number; tipW: number; skinZ: (x: number) => number }
-export interface NailBuild { geo: THREE.BufferGeometry; /** points along the free edge and tip, nail frame, for the collision check */ edge: THREE.Vector3[] }
+export interface NailBuild { geo: THREE.BufferGeometry; /** points along the free edge and tip, nail frame, for the collision check */ edge: THREE.Vector3[]; /** the nail's top outline as line segment pairs (x, y, z flat), for the Spectral line pass */ outline: number[] }
 
 /** Nail geometry in its own frame: x along the finger from the cuticle, y across, z up out of the nail. */
 export function nailGeometry(f: NailFit, len: number, shape: NailShape): NailBuild {
@@ -62,7 +62,11 @@ export function nailGeometry(f: NailFit, len: number, shape: NailShape): NailBui
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals()
   const edge: THREE.Vector3[] = []
   for (let j = Math.floor(NX * 0.55); j <= NX; j += 2) for (const i of [0, NY / 2, NY]) edge.push(new THREE.Vector3(...pos.slice(at(1, j, i) * 3, at(1, j, i) * 3 + 3) as [number, number, number]))
-  return { geo, edge }
+  const outline: number[] = [], loop: number[] = []
+  for (let j = 0; j <= NX; j++) loop.push(at(0, j, 0)); for (let i = 1; i <= NY; i++) loop.push(at(0, NX, i))
+  for (let j = NX - 1; j >= 0; j--) loop.push(at(0, j, NY)); for (let i = NY - 1; i > 0; i--) loop.push(at(0, 0, i))
+  for (let k = 0; k < loop.length; k++) { const a = loop[k], b = loop[(k + 1) % loop.length]; outline.push(...pos.slice(a * 3, a * 3 + 3), ...pos.slice(b * 3, b * 3 + 3)) }
+  return { geo, edge, outline }
 }
 
 /** Nail colour material: natural is a pale pink-white over the skin tone with a glossy clearcoat; a colour is polish. */

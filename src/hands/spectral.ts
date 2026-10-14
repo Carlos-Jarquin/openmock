@@ -262,9 +262,11 @@ function edgesOf(geo: THREE.BufferGeometry): Edges {
 
 interface LineState { prep: Prepared; skinned: Float32Array; creases: Float32Array; rings: Float32Array[]; lines: LineSegments2; thumb: LineSegments2; ghosts: LineSegments2[]; camKey: string }
 /** Rebuilds the skinned positions and the crease and fingertip lines for the current pose (on each re-solve). */
-export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: SpectralMats) {
+/** noNails: the hand wears procedural nail meshes (nails.ts), so the authored nail curves are left out and only the
+ *  nail meshes' own outline shows. */
+export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: SpectralMats, noNails = false) {
   for (const c of [...mesh.children]) if (c.userData.spectral && !c.userData.spectralHull) { mesh.remove(c); (c as THREE.Mesh).geometry?.dispose() }
-  const prep = prepare(mesh, owner)
+  const prep0 = prepare(mesh, owner), prep = noNails ? { ...prep0, bary: [] } : prep0
   let top: THREE.Object3D = mesh; while (top.parent) top = top.parent
   top.updateMatrixWorld(true); mesh.skeleton.update()
   const N = mesh.geometry.getAttribute('position').count, sk = new Float32Array(N * 3), v = new THREE.Vector3()

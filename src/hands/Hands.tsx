@@ -10,6 +10,8 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { spectralMaterials, buildSpectral, reskinSpectral, updateSpectral, addHull, removeHull, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
 import { LINE_LAYER } from '../sketch/Sketch'
 import * as THREE from 'three'
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { HandMotion, type IdleLevel } from './motion'
 import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, HAND_ROT0, REACH_EVENT, type Gesture, type HandRot } from './gestures'
@@ -55,14 +57,14 @@ interface FingerPlan { curl: [number, number, number, number]; close?: boolean; 
 interface ThumbPlan { oppose: number; abduct: number; curl: [number, number, number]; close?: boolean; max?: [number, number]; tip?: THREE.Vector3; touch?: boolean }
 /** follow: the whole hand (wrist and arm) moves so its touching digits reach their points without strain. */
 /** knuckle: where the middle finger's knuckle (MCP joint) goes. F: palm direction, wrist to knuckles. N: out of the palm. */
-interface HandPlan { side: 'right' | 'left'; knuckle: THREE.Vector3; F: THREE.Vector3; N: THREE.Vector3; roll?: number; seat?: number; follow?: boolean | 'y'; fingers: FingerPlan[]; thumb: ThumbPlan }
+interface HandPlan { side: 'right' | 'left'; knuckle: THREE.Vector3; F: THREE.Vector3; N: THREE.Vector3; roll?: number; seat?: number; follow?: boolean | 'y'; thumbFace?: number; fingers: FingerPlan[]; thumb: ThumbPlan }
 
 const mx = (v: THREE.Vector3) => v3(-v.x, v.y, v.z)
 const mt = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && mx(o.tip) })
 const mirror = (p: HandPlan): HandPlan => ({ ...p, side: p.side === 'right' ? 'left' : 'right', knuckle: mx(p.knuckle), F: mx(p.F), N: mx(p.N), fingers: p.fingers.map(mt), thumb: mt(p.thumb) })
 
 /** Poses in device space: x right and y up seen from the front, z out of the screen. Sizes scale with the device. */
-function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail = 0): HandPlan[] {
+function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail = 0, flat = nail): HandPlan[] {
   // Dev only: a test harness can override the plan to tune poses.
   const dbg = import.meta.env.DEV ? (globalThis as { __handPlan?: (f: HandFit, v: typeof v3) => HandPlan[] | undefined }).__handPlan?.(f, v3) : undefined
   if (dbg) return dbg
@@ -89,7 +91,13 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     // Pointing: the right hand comes in from the lower right, palm towards the glass, index angled down onto the
     // point and the thumb resting against the side of the middle finger. The wrist sits a fixed reach behind the point.
     // long nails: the finger comes in flatter, so it lands on its pad with the nail tip clear of the glass
-    const pointer = (t: THREE.Vector3): HandPlan => ({ side: 'right', knuckle: t.clone().add(v3(0.35, -0.55 - 0.15 * nail, 0.7 - 0.38 * nail)), F: v3(-0.3, 0.72, -0.55 + 0.42 * nail), N: v3(0.15, 0.5, -1), follow: true,
+    // The approach is set by two elevations: the knuckle above the point (47 degrees normally) and the palm's dip
+    // toward the glass (35 degrees); both drop as flat grows, down to 10 and 3 degrees.
+    const approach = (hx: number, hy: number, len: number, e0: number, fx: number, fy: number, d0: number) => {
+      const e = deg(Math.max(10, e0 - 28 * flat)), d = deg(Math.max(3, d0 - 24 * flat)), hl = Math.hypot(hx, hy), fl = Math.hypot(fx, fy)
+      return { off: v3(hx / hl * Math.cos(e) * len, hy / hl * Math.cos(e) * len, Math.sin(e) * len), F: v3(fx / fl * Math.cos(d), fy / fl * Math.cos(d), -Math.sin(d)) } }
+    const ap = approach(0.35, -0.55, 0.9596, 46.85, -0.3, 0.72, 35.2), apZ = approach(0.3, -0.75, 0.9772, 34.25, -0.35, 0.7, 35.1)
+    const pointer = (t: THREE.Vector3): HandPlan => ({ side: 'right', knuckle: t.clone().add(ap.off), F: ap.F, N: v3(0.15, 0.5, -1), follow: true,
       fingers: [{ curl: [0, 18, 22, 12], tip: t, touch: true }, ...fist], thumb: { oppose: -20, abduct: -10, curl: [10, 30, 30] } })
     const tw = import.meta.env.DEV ? (globalThis as { __gestTweak?: (p: HandPlan[], v: typeof v3) => HandPlan[] }).__gestTweak : undefined
     if (tw) return tw(gesturePlans(), v3)
@@ -102,7 +110,7 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
       // Thumb and index spread on the glass about the centre, along the pinch axis (the thumb on the lower left end).
       const a = deg(ges.angle), dx = Math.cos(a) * ges.spread / 2, dy = -Math.sin(a) * ges.spread / 2
       const ti = P(ges.x + dx, ges.y + dy), tt = P(ges.x - dx, ges.y - dy), c = ti.clone().add(tt).multiplyScalar(0.5)
-      return [{ side: 'right', knuckle: c.clone().add(v3(0.3, -0.75 - 0.15 * nail, 0.55 - 0.3 * nail)), F: v3(-0.35, 0.7, -0.55 + 0.38 * nail), N: v3(0.1, 0.45, -1), follow: true,
+      return [{ side: 'right', knuckle: c.clone().add(apZ.off), F: apZ.F, N: v3(0.1, 0.45, -1), follow: true,
         fingers: [{ curl: [0, 20, 20, 10], spread: 4, tip: ti, touch: true }, ...fist],
         thumb: { oppose: 20, abduct: 40, curl: [0, 10, 10], tip: tt, touch: true } }]
     }
@@ -224,6 +232,8 @@ function measureNails(rig: Rig, side: 'right' | 'left'): NailSpot[] {
   const wrist = P('wrist'), F0 = P('middle-finger-phalanx-proximal').clone().sub(wrist).normalize()
   const across = P('index-finger-phalanx-proximal').clone().sub(P('pinky-finger-phalanx-proximal'))
   const N0 = F0.clone().cross(across).multiplyScalar(-h).normalize()
+  const pn = P('index-finger-metacarpal').clone().sub(wrist).cross(P('pinky-finger-metacarpal').clone().sub(wrist)).normalize()
+  if (P('thumb-tip').clone().sub(wrist).dot(pn) < 0) pn.negate()   // towards the palm, as spectral.ts does
   // measure in the rest pose; the rig may already be posed, so put it back afterwards
   const saved = Object.entries(rig.bones).map(([n, b]) => { const k = [b, b.position.clone(), b.quaternion.clone()] as const; if (R[n]) { b.position.copy(R[n].p); b.quaternion.copy(R[n].q) } return k })
   rig.root.updateMatrixWorld(true)
@@ -234,24 +244,26 @@ function measureNails(rig: Rig, side: 'right' | 'left'): NailSpot[] {
     const toP = new THREE.Matrix4().copy(parent.matrixWorld).invert()
     const Pd = R[dn].p.clone(), Pt = R[tn].p.clone()   // rest data only: the rig may already be posed when this runs
     const u = Pt.clone().sub(Pd).normalize()
-    // the nail faces away from the pad: fingers' pads face out of the palm (N0); the thumb's pad is the solver's padRest
-    const d = dn.startsWith('thumb') ? u.clone().cross(N0).normalize().cross(u).multiplyScalar(-PAD_SIGN) : N0.clone().negate()
-    d.sub(u.clone().multiplyScalar(d.dot(u))).normalize()
     const pts: THREE.Vector3[] = [], toLocal = toP.clone().multiply(rig.mesh.matrixWorld)
-    for (let i = 0; i < pos.count; i++) if (rig.owner[i] === dn || rig.owner[i] === tn) { _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); pts.push(_v.clone().applyMatrix4(toLocal).sub(Pd)) }
-    if (pts.length < 20) continue
-    const v = d.clone().cross(u)
-    // The mesh is low-poly, so the fit is kept simple: the tip joint marks the fingertip, the finger's width and the back's
-    // height come from the skin over the last two thirds of the phalanx.
-    const seg = Pt.distanceTo(Pd), Lend = seg * 1.06
-    const near = pts.filter(p => { const a = p.dot(u); return a > seg * 0.3 && a < seg * 1.02 })
-    if (near.length < 6) continue
-    const bs = near.map(p => p.dot(v)), lo = Math.min(...bs), hi = Math.max(...bs), bc = (lo + hi) / 2
-    const width = Math.max(0.006, (hi - lo) * 0.74)
-    const tops = near.filter(p => Math.abs(p.dot(v) - bc) < (hi - lo) * 0.3).map(p => p.dot(d)).sort((x, y) => y - x)
-    const hTop = tops.length ? tops[Math.min(tops.length - 1, 1)] : Math.max(...near.map(p => p.dot(d)))
-    const bed = seg * 0.62, a0 = Lend - bed
-    const fit: NailFit = { bed, width, tipW: width, skinZ: x => hTop + 0.00015 - 0.35 * Math.max(0, x - bed * 0.55) ** 2 / width }
+    for (let i = 0; i < pos.count; i++) if (rig.owner[i] === dn) { _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); pts.push(_v.clone().applyMatrix4(toLocal).sub(Pd)) }
+    if (pts.length < 6) continue
+    // The same nail bed the Spectral outline draws on (spectral.ts, prepare): facing away from the palm plane, the plate
+    // spanning 45% to 90% of the skin's reach past the distal joint, three quarters of the finger's half-width either
+    // side, recentred by half the cross-section's sideways offset. Anchoring on it puts the cuticle where the built-in
+    // nail starts.
+    const side = u.clone().cross(pn).normalize(), nrm = side.clone().cross(u).normalize(), d = nrm.clone().negate(), v = d.clone().cross(u)
+    const seg = Pt.distanceTo(Pd)
+    let hwF = 1e-4, Lmax = seg; for (const p of pts) { hwF = Math.max(hwF, Math.abs(p.dot(side))); Lmax = Math.max(Lmax, p.dot(u)) }
+    const n0 = Lmax * 0.45, n1 = Lmax * 0.9
+    let cs = 0, cn = 0; for (const p of pts) { const a = p.dot(u); if (a > n0 && a < n1) { cs += p.dot(side); cn++ } }
+    const bc = (cn > 4 ? cs / cn * 0.5 : 0) * side.dot(v)
+    const width = Math.max(0.006, 2 * hwF * 0.75)
+    // the back's height along the bed: highest skin near the centre line, per slice, so the plate follows the finger
+    const slice = (a: number) => { let best = -Infinity; for (const p of pts) if (Math.abs(p.dot(u) - a) < Lmax * 0.12 && Math.abs(p.dot(v) - bc) < hwF * 0.45) best = Math.max(best, p.dot(d)); return best }
+    const h0 = slice(n0 + (n1 - n0) * 0.3), h1 = slice(n1)
+    const hTop = isFinite(h0) ? h0 : Math.max(...pts.map(p => p.dot(d))), drop = isFinite(h1) && isFinite(h0) ? Math.max(0, h0 - h1) : 0
+    const bed = n1 - n0, a0 = n0
+    const fit: NailFit = { bed, width, tipW: width, skinZ: x => hTop + 0.0002 - drop * Math.max(0, (x - bed * 0.3) / (bed * 0.7)) ** 2 }
     const frame = new THREE.Matrix4().makeBasis(u, v, d).setPosition(Pd.clone().addScaledVector(u, a0).addScaledVector(v, bc))
     frame.premultiply(new THREE.Matrix4().compose(R[dn].p, R[dn].q, new THREE.Vector3(1, 1, 1)).invert())
     out.push({ bone: dn, fit, frame })
@@ -308,6 +320,8 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
   const wrist = P('wrist'), F0 = P('middle-finger-phalanx-proximal').clone().sub(wrist).normalize()
   const across = P('index-finger-phalanx-proximal').clone().sub(P('pinky-finger-phalanx-proximal'))
   const N0 = F0.clone().cross(across).multiplyScalar(-h).normalize()
+  const pn = P('index-finger-metacarpal').clone().sub(wrist).cross(P('pinky-finger-metacarpal').clone().sub(wrist)).normalize()
+  if (P('thumb-tip').clone().sub(wrist).dot(pn) < 0) pn.negate()   // towards the palm, as spectral.ts does
   N0.sub(F0.clone().multiplyScalar(N0.dot(F0))).normalize()
   // Target frame.
   const F1 = plan.F.clone().normalize(), N1 = plan.N.clone().sub(F1.clone().multiplyScalar(plan.N.dot(F1))).normalize()
@@ -460,7 +474,11 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     }
     const pad = () => padRest.clone().transformDirection(boneM[THUMB[2]]).transformDirection(rig.root.matrixWorld)
     if (import.meta.env.DEV) (globalThis as { __thumbPad?: () => THREE.Vector3 }).__thumbPad = pad
-    const face = PAD_FACE + 0.05 * nail, padW = PAD_W, padCost = () => { const z = pad().z + face; return z > 0 ? padW * z * z : 0 }
+    const face = PAD_FACE + 0.05 * nail + (plan.thumbFace ?? 0), padW = PAD_W, tn = nailEdge[THUMB[2]]
+    // a touching thumb with long nails also keeps its nail's free edge out of the glass (gently, so the pad still lands)
+    const thumbNail = () => { if (!tn || nail <= 0) return 0; const m = rig.bones[THUMB[2]].matrixWorld; let c = 0
+      for (const p of tn) { const pen = 0.001 - sdf(_v.copy(p).applyMatrix4(m), fit); if (pen > 0) c += 20 * pen * pen } return c }
+    const padCost = () => { const z = pad().z + face; return (z > 0 ? padW * z * z : 0) + thumbNail() }
     touches.push({ owners: new Set([THUMB[2], THUMB[3]]), surf: tp.tip.clone(), aim: tp.tip.clone(), run: aim =>
       reach(THUMB, aim, [tp.oppose, tp.abduct, ...tp.curl, 0], [-60, -60, -30, -30, -20, -75], [100, 80, 70, 80, 90, 75], apply, 0.08, true, padCost) })
   } else if (tp.tip) {
@@ -509,6 +527,12 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     } else if (plan.follow === 'y') { rig.root.position.y += Math.max(-0.05, Math.min(0.05, mean.y)); update() }
   }
   rig.root.userData.touchError = worst   // model units; 0.001 is 0.1 mm
+  // How far the touching digits' nail free edges sit above the glass (model units); the caller flattens the approach
+  // and re-solves while it is too small
+  let clear = Infinity
+  for (const t of touches) for (const o of t.owners) { const e = nailEdge[o]; if (!e) continue; const m = rig.bones[o].matrixWorld
+    let c1 = Infinity; for (const p of e) c1 = Math.min(c1, sdf(_v.copy(p).applyMatrix4(m), fit)); clear = Math.min(clear, c1); if (import.meta.env.DEV) ((globalThis as { __nailBy?: Record<string, number> }).__nailBy ??= {})[o] = c1 }
+  rig.root.userData.nailClear = clear
   armFrame(rig, F1, N1)
 }
 
@@ -582,12 +606,12 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const nailMat = useMemo(() => spm ? spm.body : nailMaterial(SKIN_TONES[tone]?.color ?? SKIN_TONES.fair.color, look.nailColor ?? (tone === 'silhouette' ? SKIN_TONES.silhouette?.color ?? null : null)), [spm, tone, look.nailColor])
   useEffect(() => () => { if (!spm) nailMat.dispose() }, [nailMat, spm])
   const nails = useMemo(() => {
-    const out = { right: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[] }[], left: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[] }[] }
+    const out = { right: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[]; outline: number[] }[], left: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[]; outline: number[] }[] }
     for (const side of ['right', 'left'] as const) for (const sp of spots[side]) {
       const b = nailGeometry(sp.fit, look.nailLen, look.nailShape), m = new THREE.Mesh(b.geo)
       sp.frame.decompose(m.position, m.quaternion, m.scale); m.frustumCulled = false
       m.userData = { hand: true, nail: true }
-      out[side].push({ m, bone: sp.bone, edge: b.edge.map(p => p.clone().applyMatrix4(sp.frame)) })
+      out[side].push({ m, bone: sp.bone, edge: b.edge.map(p => p.clone().applyMatrix4(sp.frame)), outline: b.outline })
     }
     return out
   }, [spots, look.nailLen, look.nailShape])
@@ -604,20 +628,30 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = m.receiveShadow = true; m.userData.hand = true } }, [arms, mat])
   useEffect(() => {
     const g = group.current; if (!g) return
-    const list = plans(pose, fit, ges, look.nailLen).map(pl => rotatePlan(pl, rot))
+    const mk = (flat: number) => plans(pose, fit, ges, look.nailLen, flat).map(pl => rotatePlan(pl, rot))
+    const list = mk(look.nailLen)
     const used = new Set<THREE.Object3D>()
-    for (const pl of list) {
+    for (let li = 0; li < list.length; li++) { let pl = list[li]
       const r = rigs[pl.side], key = JSON.stringify([pl, fit, look.size, look.nailLen, look.nailShape])
       if (solved.current[pl.side] !== key || r.root.parent !== g) {
         // spring from the pose on screen to the new solve, unless the hand is just appearing
         const m = motion[pl.side], animate = r.root.parent === g
         if (animate) m.snapshot()
-        g.remove(r.root); solve(r, pl, fit, look.size, look.nailLen); solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); g.add(arms[pl.side])
+        g.remove(r.root); solve(r, pl, fit, look.size, look.nailLen)
+        // long nails: while a touching nail's free edge is within 1 mm of the glass, come in flatter (and turn the thumb's
+        // pad further into the glass) and solve again
+        // and solve again. Each try is scored on touch error plus any clearance shortfall; the best one is kept.
+        const score = () => (r.root.userData.touchError ?? 0) + Math.max(0, 0.01 - (r.root.userData.nailClear ?? 1)) * 0.5
+        let best = { s: score(), pl }
+        for (let k = 1, flat = look.nailLen; look.nailLen > 0 && k <= 4 && (r.root.userData.nailClear ?? 1) < 0.01; k++) {
+          flat += 0.3; pl = { ...mk(flat)[li], thumbFace: 0.08 * k }; solve(r, pl, fit, look.size, look.nailLen); const sc = score(); if (sc < best.s) best = { s: sc, pl } }
+        if (best.pl !== pl) { pl = best.pl; solve(r, pl, fit, look.size, look.nailLen) }
+        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); g.add(arms[pl.side])
         const touching = new Set<string>([...(pl.thumb.touch ? ['thumb'] : []), ...pl.fingers.flatMap((f, i) => f.touch ? [FINGERS[i]] : [])])
         m.capture(r.root, r.bones, r.rest, touching, arms[pl.side], animate)
       }
       used.add(r.root)
-      if (import.meta.env.DEV) (globalThis as { __touchErr?: Record<string, number> }).__touchErr = { ...(globalThis as { __touchErr?: Record<string, number> }).__touchErr, [pl.side]: r.root.userData.touchError ?? 0 }
+      if (import.meta.env.DEV) (globalThis as { __touchErr?: Record<string, number> }).__touchErr = { ...(globalThis as { __touchErr?: Record<string, number> }).__touchErr, [pl.side]: r.root.userData.touchError ?? 0, [pl.side + 'Nail']: r.root.userData.nailClear ?? 0 }
     }
     // Reach report for the panel, in mm (model unit is 100 mm), only for digits that touch.
     const rep: Record<string, number> = { right: 0, left: 0 }
@@ -637,8 +671,11 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
       for (const m of [r.mesh, arm, ...nails[side].map(n => n.m)] as THREE.Mesh[]) { m.layers.set(spm ? LINE_LAYER : 0); m.castShadow = !spm; m.renderOrder = spm ? 10 : 0; if (!spm) removeHull(m) }
       for (const n of nails[side]) n.m.material = nailMat
       if (!spm) continue
-      addHull(r.mesh, spm); addHull(arm, spm); for (const n of nails[side]) addHull(n.m, spm)
-      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm)
+      addHull(r.mesh, spm); addHull(arm, spm)
+      // nails: a thin plate's inflated hull read as a solid patch, so each nail gets its own outline line instead
+      for (const n of nails[side]) { const g = new LineSegmentsGeometry(); g.setPositions(n.outline)
+        const l = new LineSegments2(g, spm.line); l.renderOrder = 12; l.layers.set(LINE_LAYER); l.frustumCulled = false; l.userData = { spectral: true, noBounds: true }; n.m.add(l) }
+      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm, nails[side].length > 0)
     }
     if (import.meta.env.DEV) (globalThis as { __omHands?: unknown }).__omHands = { rigs, arms }
   }, [spm, rigs, arms, pose, fit, ges, rot, nails, nailMat])
