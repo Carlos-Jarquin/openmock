@@ -97,3 +97,11 @@ button.ghost { background: #fff; color: #1d1d22; }
 .tl-scroll i { position: absolute; top: 0; bottom: 0; min-width: 12px; background: #b9bcc8; border-radius: 3px; }
 .tl-scroll:hover i { background: #9ea2b0; }
 .tl-fit { position: absolute; right: 0; top: 0; padding: 0 6px !important; height: 16px; font-size: 10px; line-height: 14px; z-index: 6; border: 1px solid #d9d9e0; border-radius: 4px; }
+
+/* Change indicators above the keyframe diamonds */
+.tl-chg { position: relative; height: 15px; margin-top: 3px; }
+.tl-chg-k { position: absolute; top: 0; display: flex; gap: 1px; transform: translateX(-50%); }
+.tl-chg-i { display: grid; place-items: center; width: 14px; height: 14px; color: #5b6070; cursor: default; }
+.tl-chg-i.phone { color: #4a5bd4; }
+.tl-chg-i.hand { color: #b8621b; }
+.tl-chg-i.camera { color: #2f8a5b; }

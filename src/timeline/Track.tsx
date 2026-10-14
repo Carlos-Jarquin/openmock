@@ -20,6 +20,22 @@ function step(span: number, px: number) { const want = span * 60 / Math.max(1, p
 
 type Drag = { kind: 'key' | 'edge' | 'end' | 'head'; i: number; x0: number; keys: Keyframe[]; span: number; v0: number; px: number; left: number }
 const MIN_VIEW = 1
+// Our own line icons on a 24 grid (1.75 stroke, round caps and joins, currentColor)
+const ChgIco = ({ d }: { d: string }) => <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
+const CHG = {
+  phone: { d: 'M8 2.75h8A1.75 1.75 0 0 1 17.75 4.5v15A1.75 1.75 0 0 1 16 21.25H8A1.75 1.75 0 0 1 6.25 19.5v-15A1.75 1.75 0 0 1 8 2.75ZM10.5 18h3', tip: 'Phone moved' },
+  hand: { d: 'M8.5 12.5V5.25a1.25 1.25 0 0 1 2.5 0V11m0-1.5V3.75a1.25 1.25 0 0 1 2.5 0V11m0-6a1.25 1.25 0 0 1 2.5 0V11m0-3.5a1.25 1.25 0 0 1 2.5 0v6.5c0 4-2.6 7-6.5 7-2.6 0-4.2-1.2-5.6-3.3L5 14.2a1.4 1.4 0 0 1 2.3-1.6l1.2 1.4', tip: 'Hand changed' },
+  camera: { d: 'M3 8.5A1.75 1.75 0 0 1 4.75 6.75h2l1.5-2.25h7.5l1.5 2.25h2A1.75 1.75 0 0 1 21 8.5v9.25a1.75 1.75 0 0 1-1.75 1.75H4.75A1.75 1.75 0 0 1 3 17.75ZM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z', tip: 'Camera changed' },
+} as const
+const ne = (a: unknown, b: unknown) => JSON.stringify(a ?? null) !== JSON.stringify(b ?? null)
+const changesOf = (a: Keyframe['s'], b: Keyframe['s']) => {
+  const out: (keyof typeof CHG)[] = []
+  const p = (k: keyof typeof a.pose) => Math.abs(a.pose[k] - b.pose[k]) > 1e-4
+  if (p('tiltX') || p('tiltY') || p('rotZ') || p('panX') || p('panY') || ne(a.fold, b.fold)) out.push('phone')
+  if (ne(a.hands, b.hands) || ne(a.handRot, b.handRot) || ne(a.tap, b.tap) || ne(a.ges, b.ges)) out.push('hand')
+  if (p('zoom') || p('fov')) out.push('camera')
+  return out
+}
 
 export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
   below?: (span: number, pct: (t: number) => string) => React.ReactNode
@@ -117,6 +133,12 @@ export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
     <div className="tl-track" ref={box} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
       <div className="tl-rule" onPointerDown={e => begin(e, 'head', 0)} title="Drag to scrub">
         {ticks.map(t => <span key={t} className="tl-tick lab" style={{ left: pct(t) }}>{t > v0 + span - s * 0.6 ? '' : t < 60 ? `${+t.toFixed(s < 0.1 ? 2 : 1)}s` : fmt(t)}</span>)}
+      </div>
+      <div className="tl-chg" aria-label="What changes at each keyframe">
+        {keys.slice(1).map((x, j) => { const c = changesOf(keys[j].s, x.s); return c.length ? (
+          <span key={x.id} className="tl-chg-k" style={{ left: pct(st[j + 1]) }}>
+            {c.map(k => <span key={k} className={`tl-chg-i ${k}`} title={`${CHG[k].tip} at keyframe ${j + 2}`} aria-label={CHG[k].tip}><ChgIco d={CHG[k].d} /></span>)}
+          </span>) : null })}
       </div>
       <div className="tl-lane" onPointerDown={e => begin(e, 'head', 0)}>
         {T > 0 && <div className="tl-out" style={{ left: pct(T) }} />}
