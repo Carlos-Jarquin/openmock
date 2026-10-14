@@ -109,3 +109,7 @@ button.ghost { background: #fff; color: #1d1d22; }
 .tl-editing { font-size: 11px; color: #3445a8; background: #eef1ff; border: 1px solid #d3daff; border-radius: 10px; padding: 1px 8px; white-space: nowrap; }
 .tl-seg.tl-next { background: transparent; border: 1px dashed #b4c0ff; cursor: default; }
 .tl-seg.tl-next span { color: #7d88c4; }
+
+.tl-undo { position: absolute; right: 12px; top: -40px; display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px 12px; font-size: 12px; color: #fff; background: #1d1d22; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.18); z-index: 20; }
+.tl-undo button { color: #fff !important; background: #3a3a44 !important; border: none; padding: 3px 10px; border-radius: 5px; }
+section.timeline { position: relative; }
