@@ -135,10 +135,6 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       u.crease.value = m === mats.outer ? 0 : crease
       if (root.current) {
         u.toRoot.value.copy(_inv.copy(root.current.matrixWorld).invert())
-        // pass-through projection from the actual viewer: the content holds still on screen while the panel turns.
-        // A camera behind (or nearly in) the target plane falls back to a fixed eye straight in front of it.
-        const cam = _cam.copy(camera.position).applyMatrix4(_inv), pl = u.plane.value as number
-        if (cam.z - pl > 0.3) u.eye.value.copy(cam); else u.eye.value.set(u.cx.value, 0, pl + 4)
       }
     }
     if (!dis) {
@@ -148,8 +144,11 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
       const dIn = smoother((180 - fold) / 80), dOut = smoother(fold / 80)
       // the outer screen is the exact mirror of the inner moving half: projected fixed in space onto the closed outer
       // screen's plane (full at 0, gone by 160), frosting and darkening as the hinge leaves 0, idle as it faces away
-      const foIn = smoother((70 - fold) / 60), foOut = smoother((fold - 110) / 60), proj = smoother((fold - 20) / 150), projO = smoother((160 - fold) / 150)
-      set(mats.fixed, 1, 0, 0, foIn, 0); set(mats.moving, 1, dIn, dIn, foIn, proj); set(mats.strip, 1, 0, dIn, foIn, 0); set(mats.outer, 1, 0.6 * dOut, 1.3 * dOut, foOut, projO)   // Apple's outer screen darkens more and frosts less
+      // Content is always mapped to the panel's own uv (one continuous image across both halves and the fold strip,
+      // correct from any device rotation or camera). A per-pixel projection through the viewer duplicated the image
+      // and left seams and smeared clamp strips when the device was turned, so it is off (proj 0).
+      const foIn = smoother((70 - fold) / 60), foOut = smoother((fold - 110) / 60)
+      set(mats.fixed, 1, 0, 0, foIn, 0); set(mats.moving, 1, dIn, dIn, foIn, 0); set(mats.strip, 1, 0, dIn, foIn, 0); set(mats.outer, 1, 0.6 * dOut, 1.3 * dOut, foOut, 0)   // Apple's outer screen darkens more and frosts less
     }
   })
   const zf = T / 2 + E          // front face layers
@@ -299,15 +298,16 @@ void main() {
     if (crease > 0.0) {
       // implied crease, in screen units across the hinge line (inner halves only): a soft shadow and a thin sheen beside it
       float dx = abs(vUv.x - 0.5) * 2.0 * sw;
-      float sh0 = exp(-pow(dx / 0.010, 2.0)), hl = exp(-pow((dx - 0.011) / 0.004, 2.0));
-      c = c * (1.0 - 0.45 * crease * sh0) + 0.07 * crease * hl;
+      // broad and soft (no hard line): about 2.5 mm shadow, a faint wide sheen beside it
+      float sh0 = exp(-pow(dx / 0.025, 2.0)), hl = exp(-pow((dx - 0.035) / 0.02, 2.0));
+      c = c * (1.0 - 0.35 * crease * sh0) + 0.03 * crease * hl;
     }
     c = mix(mix(c, idle, dark), idle, fo);
   }
   gl_FragColor = vec4(c, 1.0);
   #include <colorspace_fragment>
 }`
-const _inv = new THREE.Matrix4(), _cam = new THREE.Vector3()
+const _inv = new THREE.Matrix4()
 /** Projection target of a screen: its rest plane (root z), centre x and half width / height there. */
 interface ProjTarget { plane: number; cx: number; sw: number; sh: number; eo: number }
 const INNER_PROJ: ProjTarget = { plane: T / 2 + E * 2, cx: 0, sw: SW, sh: SH, eo: 0 }
