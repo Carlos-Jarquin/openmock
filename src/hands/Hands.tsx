@@ -156,7 +156,12 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     // behind the phone, so it swung about whenever the thumb moved).
     const up = Math.min(1, Math.max(0, (dy + 0.02) / 0.14)), su = up * up * (3 - 2 * up)
     const pinky = (fp: FingerPlan): FingerPlan => ({ ...fp, tip: v3(hw * 0.2 * (1 - su) + hw * 0.1 * su, Math.max(-hh + 0.06, -hh - 0.05 + su * (dy + 0.05 + hh * 0.08)), -ht * 0.3 * (1 - su) + (-ht - 0.05) * su) })
-    return [{ ...grip, knuckle: sh(grip.knuckle)!, follow: 'y', fingers: grip.fingers.map((fp, i) => i === 3 ? pinky(fp) : { ...fp, tip: sh(fp.tip) }),
+    // A smaller hand's thumb is shorter, so the palm wraps further round the frame toward the point (at 50% size the
+    // full-size grip left the thumb about 11 mm short of the centre)
+    const tk = (globalThis as { __thK?: [number, number] }).__thK ?? [1, 0.3], sm = Math.max(0, 1 - size)
+    // and its fingers, too short to reach round the far edge, lie on the back instead of wrapping it
+    const fb = Math.min(1, sm * 2), onBack = (v?: THREE.Vector3) => v && v.set(THREE.MathUtils.lerp(v.x, hw * 0.1, fb), v.y, THREE.MathUtils.lerp(v.z, -ht - 0.05, fb))
+    return [{ ...grip, knuckle: sh(grip.knuckle)!.add(v3(-sm * tk[0], 0, sm * tk[1])), follow: 'y', fingers: grip.fingers.map((fp, i) => i === 3 ? pinky(fp) : { ...fp, tip: onBack(sh(fp.tip)) }),
       thumb: { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: t, touch: true } }]
     }
   }
@@ -363,12 +368,13 @@ function annotate(rig: Rig) {
   const seg: Record<string, [THREE.Vector3, THREE.Vector3]> = {}
   for (const k of Object.keys(NEXT)) if (rig.bones[k] && rig.bones[NEXT[k]]) seg[k] = [J(k), J(NEXT[k])]
   for (const f of [...FINGERS, 'thumb']) seg[`${f}-tip`] = seg[`${f}-phalanx-distal`]
-  const W = J('wrist'), out = W.clone().sub(J('middle-finger-phalanx-proximal')).normalize(), v = new THREE.Vector3(), ab = new THREE.Vector3()
+  const W = J('wrist'), out = W.clone().sub(J('middle-finger-phalanx-proximal')).normalize(), v = new THREE.Vector3(), ab = new THREE.Vector3(), arm = new Float32Array(n)
   for (let i = 0; i < n; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(m.bindMatrix); const sg = seg[rig.owner[i]]
     if (sg) { ab.subVectors(sg[1], sg[0]); const t = Math.max(0, Math.min(1, v.clone().sub(sg[0]).dot(ab) / Math.max(1e-9, ab.lengthSq())))
       const r = v.distanceTo(sg[0].clone().addScaledVector(ab, t)); mass[i] = THREE.MathUtils.smoothstep(r, 0.007, 0.021) }
-    cut[i] = rig.owner[i] === 'wrist' && v.clone().sub(W).dot(out) > -0.004 ? 1 : 0 }
-  geo.setAttribute('aMass', new THREE.BufferAttribute(mass, 1)); geo.setAttribute('aCut', new THREE.BufferAttribute(cut, 1)); geo.userData.annotated = true
+    const d = v.clone().sub(W).dot(out); arm[i] = d * 10
+    cut[i] = rig.owner[i] === 'wrist' && d > -0.004 ? 1 : 0 }
+  geo.setAttribute('aMass', new THREE.BufferAttribute(mass, 1)); geo.setAttribute('aCut', new THREE.BufferAttribute(cut, 1)); geo.setAttribute('aArm', new THREE.BufferAttribute(arm, 1)); geo.userData.annotated = true
 }
 
 const _m = new THREE.Matrix4(), _t = new THREE.Matrix4(), _r = new THREE.Matrix4(), _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3()
@@ -683,7 +689,6 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   useFrame(({ clock, camera }) => { if (!spm) return
     spm.frame(size.width, size.height, gl.getPixelRatio(), clock.elapsedTime)
     for (const side of ['right', 'left'] as const) if (rigs[side].root.parent) updateSpectral(rigs[side].mesh, camera) })
-  useEffect(() => { rigs.right.mesh.material = mat; rigs.left.mesh.material = mat }, [rigs, mat])
   // Only the gesture fields the pose uses, so moving a marker re-solves just the touching hand.
   const ges = isGesture(pose) ? gesture : undefined
   // Nails: measured on each hand at rest (before any solve), rebuilt when length or shape change, riding on the distal bones
@@ -692,16 +697,17 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     return { right: measureNails(rigs.right, 'right'), left: measureNails(rigs.left, 'left') } }, [rigs, build])
   const nailMat = useMemo(() => spm ? spm.body : nailMaterial(SKIN_TONES[tone]?.color ?? SKIN_TONES.fair.color, look.nailColor ?? (tone === 'silhouette' ? SKIN_TONES.silhouette?.color ?? null : null)), [spm, tone, look.nailColor])
   useEffect(() => () => { if (!spm) nailMat.dispose() }, [nailMat, spm])
+  const nailsOn = look.nails !== false, nailLen = nailsOn ? look.nailLen : 0
   const nails = useMemo(() => {
     const out = { right: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[]; outline: number[] }[], left: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[]; outline: number[] }[] }
-    for (const side of ['right', 'left'] as const) for (const sp of spots[side]) {
+    if (nailsOn) for (const side of ['right', 'left'] as const) for (const sp of spots[side]) {
       const b = nailGeometry(sp.fit, look.nailLen, look.nailShape), m = new THREE.Mesh(b.geo)
       sp.frame.decompose(m.position, m.quaternion, m.scale); m.frustumCulled = false
       m.userData = { hand: true, nail: true }
       out[side].push({ m, bone: sp.bone, edge: b.edge.map(p => p.clone().applyMatrix4(sp.frame)), outline: b.outline })
     }
     return out
-  }, [spots, look.nailLen, look.nailShape])
+  }, [spots, nailsOn, look.nailLen, look.nailShape])
   useEffect(() => {
     for (const side of ['right', 'left'] as const) {
       const r = rigs[side]; r.root.userData.nailEdge = Object.fromEntries(nails[side].map(n => [n.bone, n.edge]))
@@ -712,37 +718,39 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const solved = useRef<Record<string, string>>({})
   const lastRep = useRef('')
   const arms = useMemo(() => ({ right: new THREE.Mesh(forearmGeometry()), left: new THREE.Mesh(forearmGeometry()) }), [])
-  // Arm off (photo): the forearm takes a copy of the skin that fades out past the wrist; Sketch hides it (its flat
-  // shading has no fade). Spectral fades through its own uniform above.
+  // Arm off: the forearm is hidden and the hand itself fades out over the 20 mm its mesh runs past the wrist joint
+  // (aArm, 0 at the joint, 0.2 at the open rim), so there is no overlap band and the open rim is fully clear. Photo and
+  // Sketch (whose hands keep the skin material) take a copy of the skin with that fade; Spectral fades by uniform.
   const armOff = look.arm === false
-  const armMat = useMemo(() => { if (spm || !armOff) return mat
-    const m2 = (mat as THREE.MeshPhysicalMaterial).clone(); m2.transparent = true; m2.depthWrite = false
+  const handMat = useMemo(() => { if (spm || !armOff) return mat
+    const m2 = (mat as THREE.MeshPhysicalMaterial).clone(); m2.transparent = true; m2.depthWrite = true
     m2.onBeforeCompile = sh => { sh.vertexShader = 'attribute float aArm; varying float vArm;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvArm = aArm;')
-      sh.fragmentShader = 'varying float vArm;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.a *= 1.0 - smoothstep(0.03, 0.3, vArm);') }
-    m2.customProgramCacheKey = () => 'arm-fade'; return m2 }, [mat, spm, armOff])
-  useEffect(() => () => { if (armMat !== mat) armMat.dispose() }, [armMat, mat])
-  useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = armMat; m.castShadow = !armOff; m.receiveShadow = true; m.userData.hand = true; m.userData.sketchEdges = false; m.userData.sketchHide = armOff } }, [arms, armMat, armOff])
+      sh.fragmentShader = 'varying float vArm;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.a *= 1.0 - smoothstep(0.0, 0.19, vArm);\nif (gl_FragColor.a < 0.01) discard;') }
+    m2.customProgramCacheKey = () => 'hand-fade'; return m2 }, [mat, spm, armOff])
+  useEffect(() => () => { if (handMat !== mat) handMat.dispose() }, [handMat, mat])
+  useEffect(() => { rigs.right.mesh.material = handMat; rigs.left.mesh.material = handMat }, [rigs, handMat])
+  useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = true; m.receiveShadow = true; m.userData.hand = true; m.userData.sketchEdges = false; m.userData.armOff = armOff } }, [arms, mat, armOff])
   useEffect(() => {
     const g = group.current; if (!g) return
-    const mk = (flat: number) => plans(pose, fit, ges, look.nailLen, flat, look.size).map(pl => rotatePlan(pl, rot))
-    const list = mk(look.nailLen)
+    const mk = (flat: number) => plans(pose, fit, ges, nailLen, flat, look.size).map(pl => rotatePlan(pl, rot))
+    const list = mk(nailLen)
     const used = new Set<THREE.Object3D>()
     for (let li = 0; li < list.length; li++) { let pl = list[li]
-      const r = rigs[pl.side], key = JSON.stringify([pl, fit, look.size, look.nailLen, look.nailShape, build])
+      const r = rigs[pl.side], key = JSON.stringify([pl, fit, look.size, nailLen, look.nailShape, build, nailsOn, armOff])
       if (solved.current[pl.side] !== key || r.root.parent !== g) {
         // spring from the pose on screen to the new solve, unless the hand is just appearing
         const m = motion[pl.side], animate = r.root.parent === g
         if (animate) m.snapshot()
-        g.remove(r.root); solve(r, pl, fit, look.size, look.nailLen)
+        g.remove(r.root); solve(r, pl, fit, look.size, nailLen)
         // long nails: while a touching nail's free edge is within 1 mm of the glass, come in flatter (and turn the thumb's
         // pad further into the glass) and solve again
         // and solve again. Each try is scored on touch error plus any clearance shortfall; the best one is kept.
         const score = () => (r.root.userData.touchError ?? 0) + Math.max(0, 0.01 - (r.root.userData.nailClear ?? 1)) * 0.5
         let best = { s: score(), pl }
-        for (let k = 1, flat = look.nailLen; look.nailLen > 0 && k <= 4 && (r.root.userData.nailClear ?? 1) < 0.01; k++) {
-          flat += 0.3; pl = { ...mk(flat)[li], thumbFace: 0.08 * k }; solve(r, pl, fit, look.size, look.nailLen); const sc = score(); if (sc < best.s) best = { s: sc, pl } }
-        if (best.pl !== pl) { pl = best.pl; solve(r, pl, fit, look.size, look.nailLen) }
-        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); arms[pl.side].scale.set(build, 1, build); g.add(arms[pl.side])
+        for (let k = 1, flat = nailLen; nailLen > 0 && k <= 4 && (r.root.userData.nailClear ?? 1) < 0.01; k++) {
+          flat += 0.3; pl = { ...mk(flat)[li], thumbFace: 0.08 * k }; solve(r, pl, fit, look.size, nailLen); const sc = score(); if (sc < best.s) best = { s: sc, pl } }
+        if (best.pl !== pl) { pl = best.pl; solve(r, pl, fit, look.size, nailLen) }
+        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); arms[pl.side].scale.set(build * look.size, look.size, build * look.size); if (!armOff) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
         const touching = new Set<string>([...(pl.thumb.touch ? ['thumb'] : []), ...pl.fingers.flatMap((f, i) => f.touch ? [FINGERS[i]] : [])])
         m.capture(r.root, r.bones, r.rest, touching, arms[pl.side], animate)
       }
@@ -757,7 +765,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     // posted after the effect, so the panel's update is not a state change inside this effect (which React flags every frame)
     const repKey = JSON.stringify(rep); if (lastRep.current !== repKey) { lastRep.current = repKey; setTimeout(() => window.dispatchEvent(new CustomEvent(REACH_EVENT, { detail: rep })), 0) }
     for (const side of ['right', 'left'] as const) if (!used.has(rigs[side].root)) { g.remove(rigs[side].root, arms[side]); delete solved.current[side] }
-  }, [pose, fit, rigs, ges, arms, rot, look.size, nails])
+  }, [pose, fit, rigs, ges, arms, rot, look.size, nails, armOff])
   // Spectral: outlines, inner lines and stars follow each re-solve; the hands leave the shadow pass (line layer) and cast none.
   useEffect(() => {
     for (const side of ['right', 'left'] as const) {
@@ -771,10 +779,10 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
       // nails: a thin plate's inflated hull read as a solid patch, so each nail gets its own outline line instead
       for (const n of nails[side]) { const g = new LineSegmentsGeometry(); g.setPositions(n.outline)
         const l = new LineSegments2(g, spm.line); l.renderOrder = 12; l.layers.set(LINE_LAYER); l.frustumCulled = false; l.userData = { spectral: true, noBounds: true }; n.m.add(l) }
-      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm, nails[side].length > 0)
+      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm, true, armOff)
     }
     if (import.meta.env.DEV) (globalThis as { __omHands?: unknown }).__omHands = { rigs, arms }
-  }, [spm, rigs, arms, pose, fit, ges, rot, nails, nailMat])
+  }, [spm, rigs, arms, pose, fit, ges, rot, nails, nailMat, armOff])
   useEffect(() => () => { const g = group.current; for (const side of ['right', 'left'] as const) g?.remove(rigs[side].root, arms[side]); solved.current = {} }, [rigs, arms])
   return <group ref={group} userData={{ noBounds: true }} />
 }

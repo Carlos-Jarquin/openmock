@@ -81,8 +81,8 @@ void main() {
   // Contours: faint level lines every 4 mm on the skin (bind space, so they ride with it), one pixel wide
   float ch = vB.y + 0.35 * vB.x, cg = abs(fract(ch / 0.004) - 0.5) * 0.004, cw = fwidth(ch) * 0.8;
   float cl = 1.0 - smoothstep(0.0, max(cw, 1e-6), cg); col = mix(col, mix(uTint, vec3(1.0), 0.2), uContours * cl * 0.7); a += uContours * cl * 0.25;
-  // Arm off: the forearm fades out from 3 to 30 mm past the wrist (vArm is in model units, 100 mm)
-  a *= 1.0 - uArmFade * smoothstep(0.03, 0.3, vArm);
+  // Arm off: the hand fades out over the 19 mm past the wrist joint (the arm is hidden) (vArm is in model units, 100 mm)
+  a *= 1.0 - uArmFade * smoothstep(0.0, 0.19, vArm);
   gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
   #include <colorspace_fragment>
 }`
@@ -98,7 +98,7 @@ ${SKIN_BODY}
 // vCut: the hand mesh's open wrist rim, whose hull read as a ring where the forearm joins, so hand and arm draw as one
 // outline. With the arm off, the forearm's outline fades with its body.
 const hullFrag = /* glsl */`uniform vec3 uTint; uniform float uArmFade; varying float vArm; varying float vCut;
-void main() { if (vCut > 0.5) discard; float k = 1.0 - uArmFade * smoothstep(0.03, 0.3, vArm); if (k < 0.02) discard; gl_FragColor = vec4(uTint, k);
+void main() { if (vCut > 0.5) discard; float k = 1.0 - uArmFade * smoothstep(0.0, 0.19, vArm); if (k < 0.02) discard; gl_FragColor = vec4(uTint, k);
   #include <colorspace_fragment>
 }`
 export function spectralMaterials(o: SpectralOptions) {
@@ -283,9 +283,12 @@ interface LineState { prep: Prepared; skinned: Float32Array; creases: Float32Arr
 /** Rebuilds the skinned positions and the crease and fingertip lines for the current pose (on each re-solve). */
 /** noNails: the hand wears procedural nail meshes (nails.ts), so the authored nail curves are left out and only the
  *  nail meshes' own outline shows. */
-export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: SpectralMats, noNails = false) {
+export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: SpectralMats, noNails = false, armOff = false) {
   for (const c of [...mesh.children]) if (c.userData.spectral && !c.userData.spectralHull) { mesh.remove(c); (c as THREE.Mesh).geometry?.dispose() }
-  const prep0 = prepare(mesh, owner), prep = noNails ? { ...prep0, bary: [] } : prep0
+  const prep0 = prepare(mesh, owner), prep1 = noNails ? { ...prep0, bary: [] } : prep0
+  // Arm off: the wrist fades out, so creases and rings out there are dropped (the fill and hull fade in the shaders)
+  const fa = mesh.geometry.getAttribute('aArm'), far = (i: number) => armOff && !!fa && fa.getX(i) > 0.08
+  const prep = armOff && fa ? { ...prep1, segs: prep1.segs.filter(s => !far(s[0]) && !far(s[3])), rings: prep1.rings.filter(r => !r.some(q => far(q[0]))) } : prep1
   let top: THREE.Object3D = mesh; while (top.parent) top = top.parent
   top.updateMatrixWorld(true); mesh.skeleton.update()
   const N = mesh.geometry.getAttribute('position').count, sk = new Float32Array(N * 3), v = new THREE.Vector3()
@@ -304,6 +307,7 @@ export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: Spect
   // thenar bulge it runs past) can hide it; with its 7 mm pull it also clears the frame it rests on.
   const thumb = new LineSegments2(new LineSegmentsGeometry(), m.line); thumb.renderOrder = 8
   thumb.userData = { spectral: true, noBounds: true }; thumb.layers.set(LINE_LAYER); thumb.frustumCulled = false; mesh.add(thumb)
+  mesh.userData.spectralFar = armOff && fa ? Uint8Array.from({ length: fa.count }, (_, i) => far(i) ? 1 : 0) : null
   mesh.userData.spectralLines = { prep, skinned: sk, creases: new Float32Array(cr), rings, lines, thumb, ghosts, camKey: '' } as LineState
 }
 
@@ -330,7 +334,7 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
   _inv.copy(mesh.matrixWorld).invert(); _cam.setFromMatrixPosition(camera.matrixWorld).applyMatrix4(_inv)
   const key = `${_cam.x.toFixed(4)},${_cam.y.toFixed(4)},${_cam.z.toFixed(4)}`; if (key === st.camKey) return
   st.camKey = key
-  const { tris, edges } = edgesOf(mesh.geometry), sk = st.skinned, T = tris.length / 3
+  const { tris, edges } = edgesOf(mesh.geometry), sk = st.skinned, T = tris.length / 3, fr = mesh.userData.spectralFar as Uint8Array | null
   const facing = new Int8Array(T)
   for (let t = 0; t < T; t++) {
     const a = tris[t * 3] * 3, b = tris[t * 3 + 1] * 3, c = tris[t * 3 + 2] * 3
@@ -351,6 +355,7 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
   for (let e = 0; e < edges.length; e += 4) {
     const t1 = edges[e + 2], t2 = edges[e + 3]
     if (t2 === 0xffffffff || facing[t1] === facing[t2]) continue
+    if (fr && (fr[edges[e]] || fr[edges[e + 1]])) continue   // Arm off: no silhouette out at the faded wrist
     const a = edges[e] * 3, b = edges[e + 1] * 3
     nudge(sk[a], sk[a + 1], sk[a + 2]); nudge(sk[b], sk[b + 1], sk[b + 2])
   }
