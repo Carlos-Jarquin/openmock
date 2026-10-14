@@ -91,7 +91,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter }: Dev
   for (const [k, m] of Object.entries(mats)) {
     const isOut = k === 'outer', aspect = isOut ? OUTER_ASPECT : INNER_ASPECT, u = m.uniforms
     const ma = isOut ? outAspect : mediaAspect, fit = (isOut ? opts.fitOuter : opts.fitInner) === 'fit'
-    u.map.value = isOut ? outTex : texture; u.blur.value = (opts.foldBlur ?? 0.6) * 0.09; u.aspect.value = aspect
+    u.map.value = isOut ? outTex : texture; u.blur.value = (opts.foldBlur ?? 0.15) * 0.09; u.aspect.value = aspect
     if (fit) {
       if (ma > aspect) { const q = ma / aspect; u.rep.value.set(1, q); u.off.value.set(0, (1 - q) / 2) }
       else { const q = aspect / ma; u.rep.value.set(q, 1); u.off.value.set((1 - q) / 2, 0) }
@@ -269,8 +269,8 @@ const smoother = (x: number) => { const t = clamp01(x); return t * t * t * (t * 
 export interface FoldAnim { from: number; target: number; to: 'inner' | 'outer'; t0: number; dur: number; swapped?: boolean; camD0?: number; w0?: number
   onSwap?: () => void; onDone?: (fold: number, zoomK: number) => void }
 /** Live fold state shared by the studio and the Duo, read every frame (no React state per frame). */
-/** Live fold state read in the frame loop. dark scales the dissolve's darkening (0 = blur only, 1 = default, 1.5 max). */
-export const foldLive: { anim: FoldAnim | null; follow: boolean; dark: number; log: [number, number][] | null } = { anim: null, follow: true, dark: 1, log: null }
+/** Live fold state read in the frame loop. dark scales the dissolve's darkening (0 = blur only and the default, 1 = full, 1.5 max). */
+export const foldLive: { anim: FoldAnim | null; follow: boolean; dark: number; log: [number, number][] | null } = { anim: null, follow: true, dark: 0, log: null }
 /** Hinge swing at speed 1, in ms, on smootherstep (no snap, no rebound). The dissolve has no timer of its own. */
 export const FOLD_MS = 900
 
@@ -360,7 +360,7 @@ function screenMaterial(pt: ProjTarget = INNER_PROJ) {
 /** Fold dissolve timing (hinge angle: 180 = open, 0 = closed). The inner dissolve ramps from 180 and is at its full
  *  extent at INNER_FULL_AT; between that and OUTER_START_AT the inner holds and the outer has not started; the outer
  *  runs from OUTER_START_AT (fully dissolved) down to 0 (clear). Opening is the exact reverse. */
-export const INNER_FULL_AT = 90, OUTER_START_AT = 80
+export const INNER_FULL_AT = 115, OUTER_START_AT = 80
 const FC = 0.003, STRIP_N = 24
 /** Fold strip: STRIP_N + 1 columns, top and bottom rows; uv u runs across the fold region, v up the screen. */
 function foldStripGeometry() {
