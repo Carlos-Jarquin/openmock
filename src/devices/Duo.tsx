@@ -467,20 +467,21 @@ function spineGeo(phi: number) {
   const R = T + GAP - 0.0003, r0 = R * 0.45, a = phi / 2, d = R * Math.cos(a) + R * SPINE_FLAT * Math.sin(a) * Math.sin(a)
   // c (back planes pulled in) ramps in over the first 60 degrees, so the cover is recessed between the rails at every
   // angle beyond that; near flat it widens (del) into a strip just under the backs that closes the rails' V groove
-  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 0, 60), cIn = RAIL.c * cl, P = 16, BS = 0.0005
+  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 0, 60), cIn = RAIL.c * cl, P = 16 + 400 * (1 - cl), BS = 0.0012
   const dmax = Math.max(d, R * Math.cos(a) + 0.0001), del = THREE.MathUtils.degToRad(1.5 + 30 * (1 - cl)), N = 160
   const outer: [number, number][] = [], inner: [number, number][] = []
   for (let i = 0; i <= N; i++) {
     const t = -del + (phi + 2 * del) * i / N
     // distance limits along direction t: cylinder R, bisector plane, and the two back planes (normals at t = 0 and phi)
     const lim = [R, ...[[t - a, dmax], [t, R - cIn], [t - phi, R - cIn]].map(([u, D]) => Math.cos(u) > 1e-4 ? D / Math.cos(u) : 1)]
-    const rho = Math.pow(lim.reduce((s, v) => s + Math.pow(v, -P), 0), -1 / P) - BS   // BS: the extrude bevel grows it back
-    const ri = Math.min(r0, rho * 0.5)
+    const m = Math.min(...lim), rho = m * Math.pow(lim.reduce((s, v) => s + Math.pow(v / m, -P), 0), -1 / P) - BS   // BS: the extrude bevel grows it back
+    const ri = Math.min(r0, rho * 0.5, 0.003)   // 3 mm clear of the axis: the axis sits above the screen plane, so a solid core would cut through the open screen
     outer.push([-Math.sin(t) * rho, -Math.cos(t) * rho]); inner.push([-Math.sin(t) * ri, -Math.cos(t) * ri])
   }
   const sh = new THREE.Shape(outer.map(([x, z]) => new THREE.Vector2(x, -z)).concat(inner.reverse().map(([x, z]) => new THREE.Vector2(x, -z))))
-  // ends: a small rounded cap 0.8 mm inside the frame's top and bottom faces (y = +-(H/2 + EO))
-  const L = H + 2 * EO - 0.0016, b = 0.0008
+  // ends: flush with the frame's top and bottom faces (y = +-(H/2 + EO)) and rounded exactly like the rails' end caps
+  // (1.2 mm bevel), so rails and spine end together as one closed rounded corner
+  const L = H + 2 * EO - 0.0002, b = 0.0012   // 0.1 mm under the rails' top plane: no z-fighting on the top face
   const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: BS, bevelSegments: 4, curveSegments: 4 })
   g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return smooth(g)
 }
@@ -496,10 +497,13 @@ const RAIL = { RB: 0.02, k: 0.021, c: 0.033 }
  *  flat to a 0.5 mm screen-side corner; overlaps the slab by 4 mm. */
 function railGeo(side: number) {
   const { RB, k } = RAIL, bv = 0.0012, xo = -EO + bv, rb = RB - bv   // the extrude bevel grows the profile by bv
-  const xc = xo + rb, zc = -T / 2 + bv + rb, th = Math.acos(Math.min(1, xc / rb))
-  const pts: [number, number][] = [[k + 0.004, -T / 2 + bv]]
+  // the arc rolls back only to XF (just behind the closed spine panel's face), so no groove opens between rail and panel
+  const XF = -0.0011 + bv, xc = xo + rb, zc = -T / 2 + bv + rb, th = Math.acos(Math.min(1, (xc - XF) / rb))
+  // the rail ends where the slab's hinge edge begins (x = k), so their top faces meet in one seam
+  const kIn = k + 0.0002 - bv
+  const pts: [number, number][] = [[kIn, -T / 2 + bv]]
   for (let i = 0; i <= 32; i++) { const al = -Math.PI / 2 - (Math.PI / 2 + th) * i / 32; pts.push([xc + rb * Math.cos(al), zc + rb * Math.sin(al)]) }
-  pts.push([0.0005, T / 2 - bv - 0.0005], [0.0012, T / 2 - bv], [k + 0.004, T / 2 - bv])
+  pts.push([XF, T / 2 - bv - 0.0005], [XF + 0.0007, T / 2 - bv], [kIn, T / 2 - bv])
   const sh = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(side * x, -z)))
   const L = H + 2 * EO
   const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * bv, bevelEnabled: true, bevelThickness: bv, bevelSize: bv, bevelSegments: 4, curveSegments: 4 })
