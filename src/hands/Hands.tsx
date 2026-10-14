@@ -121,7 +121,12 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT): Hand
     // reaches across. Beyond the thumb's reach it rests as close as it can and the panel says how far short it is.
     const a = pose === 'thumbswipe' ? swipeAt(ges) : ges
     const t = P(a.x, a.y), dy = Math.min(hh * 0.5, Math.max(-hh * 0.5, t.y + hh * 0.05 + 0.35 * (hw - t.x))) - (-hh * 0.05), sh = (v?: THREE.Vector3) => v && v.clone().setY(v.y + dy)
-    return [{ ...grip, knuckle: sh(grip.knuckle)!, follow: 'y', fingers: grip.fingers.map(fp => ({ ...fp, tip: sh(fp.tip) })),
+    // The little finger supports the bottom edge only while the hand is low enough to reach it; as the grip slides up it
+    // moves onto the back below the ring finger (shifting its under-the-edge point up left it reaching for empty space
+    // behind the phone, so it swung about whenever the thumb moved).
+    const up = Math.min(1, Math.max(0, (dy + 0.02) / 0.14)), su = up * up * (3 - 2 * up)
+    const pinky = (fp: FingerPlan): FingerPlan => ({ ...fp, tip: v3(hw * 0.2 * (1 - su) + hw * 0.1 * su, Math.max(-hh + 0.06, -hh - 0.05 + su * (dy + 0.05 + hh * 0.08)), -ht * 0.3 * (1 - su) + (-ht - 0.05) * su) })
+    return [{ ...grip, knuckle: sh(grip.knuckle)!, follow: 'y', fingers: grip.fingers.map((fp, i) => i === 3 ? pinky(fp) : { ...fp, tip: sh(fp.tip) }),
       thumb: { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: t, touch: true } }]
     }
   }
@@ -245,6 +250,9 @@ function setBone(rig: Rig, name: string, M: THREE.Matrix4) {
 
 // Thumb pad: which side of the distal phalanx is the pad (+1 or -1 along curl axis x bone), how far it should face into
 // the glass (1 = straight down, 0.85 leans back so the nail shows from above and behind), and how hard to ask.
+// Finger anatomy: the outer joint (DIP) bends about two thirds of the middle one (PIP); sideways spread per finger
+// (index widest); knuckle (MCP) a touch of hyperextension at most, middle joint none.
+const DIP_K = 2 / 3, SPREAD = [15, 10, 10, 14], MCP_LO = [-8, 0], MCP_HI = [92, 105]
 const PAD_SIGN = 1, PAD_FACE = 0.85, PAD_W = 2e-2
 function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
   const R = rig.rest, P = (n: string) => R[n].p
@@ -346,29 +354,37 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit) {
   }
   // Touching digits, placed after the rest of the hand by the contact pass.
   const touches: { owners: Set<string>; surf: THREE.Vector3; aim: THREE.Vector3; run: (aim: THREE.Vector3) => void }[] = []
+  const mcpOf: number[] = []; let lastMcp = 0
   FINGERS.forEach((fn, i) => {
     const fp = plan.fingers[i], names = JOINTS.map(j => `${fn}-${j}`)
+    // ring and little finger share tendons: keep the little finger's knuckle bend near the ring finger's
+    const couple = i === 3 && mcpOf[2] !== undefined ? () => { const d = Math.max(0, Math.abs(lastMcp - mcpOf[2]) - 20); return 4e-6 * d * d } : undefined
     const axes = names.slice(0, 4).map((n, k) => curlAxis(n, names[k + 1]))
     const angles = fp.curl.map(deg)
     const pre0 = fp.spread ? (M: THREE.Matrix4) => hinge(M, P(names[1]), N0, deg(fp.spread!) * h) : undefined
     if (fp.tip && fp.touch) {
       chainPose(names, axes, angles, pre0); update()
       touches.push({ owners: new Set([names[3], names[4]]), surf: fp.tip.clone(), aim: fp.tip.clone(), run: aim => {
-        const apply = (x: number[]) => chainPose(names, axes, [0, x[1], x[2], x[3]].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h))
-        reach(names.slice(1), aim, [fp.spread ?? 0, ...fp.curl.slice(1)], [-25, -15, 0, 0], [25, 95, 105, 80], apply, 0.07, true)
+        const apply = (x: number[]) => { lastMcp = x[1]; chainPose(names, axes, [0, x[1], x[2], x[2] * DIP_K].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h)) }
+        reach(names.slice(1), aim, [fp.spread ?? 0, ...fp.curl.slice(1, 3)], [-SPREAD[i], ...MCP_LO], [SPREAD[i], ...MCP_HI], apply, 0.07, true, couple)
       } })
       return
     }
     if (fp.tip) {
       // Start from a contact wrap (so the finger begins outside the phone), then reach for the target.
       chainPose(names, axes, angles, pre0); update(); close(names, axes, angles, 1, fp.max ?? [95, 95, 70], pre0)
-      const apply = (x: number[]) => chainPose(names, axes, [0, x[1], x[2], x[3]].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h))
-      reach(names.slice(1), fp.tip, [fp.spread ?? 0, ...angles.slice(1).map(a => a * 180 / Math.PI)], [-25, -15, 0, 0], [25, 95, 105, 80], apply, 0.07)
+      const apply = (x: number[]) => { lastMcp = x[1]; chainPose(names, axes, [0, x[1], x[2], x[2] * DIP_K].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h)) }
+      const x0 = [fp.spread ?? 0, ...angles.slice(1, 3).map(a => Math.min(MCP_HI[1], a * 180 / Math.PI))]
+      reach(names.slice(1), fp.tip, [Math.max(-SPREAD[i], Math.min(SPREAD[i], x0[0])), Math.max(MCP_LO[0], x0[1]), x0[2]], [-SPREAD[i], ...MCP_LO], [SPREAD[i], ...MCP_HI], apply, 0.07, false, couple)
+      mcpOf[i] = lastMcp
       return
     }
     const pre = fp.spread ? (M: THREE.Matrix4) => hinge(M, P(names[1]), N0, deg(fp.spread!) * h) : undefined
+    // free fingers: the outer joint follows the middle one (about two thirds), clamped to natural ranges
+    angles[3] = Math.max(angles[3], angles[2] * DIP_K * 0.8)
     chainPose(names, axes, angles, pre); update()
-    if (fp.close) close(names, axes, angles, 1, fp.max ?? [80, 90, 70], pre)
+    if (fp.close) { close(names, axes, angles, 1, fp.max ?? [80, 90, 70], pre); const dk = angles[2] * DIP_K; if (Math.abs(angles[3] - dk) > deg(15)) { angles[3] = dk; chainPose(names, axes, angles, pre); update() } }
+    mcpOf[i] = angles[1] * 180 / Math.PI
   })
   // Thumb: opposition turns it about the palm's long axis, abduction swings it out from the index; then it closes.
   const tp = plan.thumb, axesT = THUMB.slice(0, 3).map((n, k) => curlAxis(n, THUMB[k + 1]))

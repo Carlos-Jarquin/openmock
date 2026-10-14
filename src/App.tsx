@@ -457,7 +457,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive, setSbOn, setSb, setSpectral }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive, setSbOn, setSb, setSpectral, setIdle }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5

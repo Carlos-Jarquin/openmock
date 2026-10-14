@@ -11,7 +11,10 @@ const IDLE_AMP: Record<IdleLevel, number> = { off: 0, low: 0.035, medium: 0.08 }
 
 interface St { o: THREE.Object3D; tq: THREE.Quaternion; tp: THREE.Vector3; w: THREE.Vector3; v: THREE.Vector3; rest?: THREE.Quaternion; depth: number; phase: number; idle: boolean }
 // natural frequency (rad/s) and damping ratio by depth: 0 hand, 1 metacarpal, 2 proximal, 3 middle, 4 distal and tip
-const OMEGA = [15, 16, 13, 11.5, 10.5], ZETA = [0.95, 0.9, 0.72, 0.66, 0.62], DRAG = [0, 0.1, 0.22, 0.32, 0.4]
+const OMEGA = [15, 16, 13, 11.5, 10.5], ZETA = [0.95, 0.92, 0.82, 0.8, 0.78], DRAG = [0, 0.05, 0.12, 0.16, 0.2]
+// Guards so nothing swings into an odd pose: at most 3 deg past the target, at most 6 deg of drag behind it, and a
+// top joint speed of 10 rad/s.
+const OVERSHOOT = THREE.MathUtils.degToRad(3), MAX_LAG = THREE.MathUtils.degToRad(6), MAX_W = 10
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _pw = new THREE.Quaternion(), _e = new THREE.Vector3(), _v = new THREE.Vector3(), _d = new THREE.Vector3()
 
 const depthOf = (name: string) => name === '' ? 0 : name.endsWith('metacarpal') ? 1 : name.endsWith('proximal') ? 2 : name.endsWith('intermediate') ? 3 : name.includes('distal') || name.endsWith('tip') ? (name.startsWith('thumb') && name.includes('distal') ? 3 : 4) : 1
@@ -66,12 +69,16 @@ export class HandMotion {
       if (k > 0 && DRAG[k] && turn.lengthSq() > 1e-10) {
         s.o.parent!.getWorldQuaternion(_pw); this.root.parent ? this.root.parent.getWorldQuaternion(_q) : _q.identity()
         _v.copy(turn).applyQuaternion(_q).applyQuaternion(_pw.invert()).multiplyScalar(-DRAG[k])
-        s.o.quaternion.premultiply(fromRotVec(_v, _q))
+        if (_v.length() > 1e-9) { s.o.quaternion.premultiply(fromRotVec(_v, _q)); if (s.o.quaternion.angleTo(s.tq) > MAX_LAG) s.o.quaternion.rotateTowards(s.tq, s.o.quaternion.angleTo(s.tq) - MAX_LAG) }
       }
       // quaternion spring toward the target
       _q.copy(s.o.quaternion).invert().premultiply(_q2); rotVec(_q, _e)
-      s.w.addScaledVector(_e, om * om * dt).multiplyScalar(Math.max(0, 1 - 2 * ze * om * dt))
+      s.w.addScaledVector(_e, om * om * dt).multiplyScalar(Math.max(0, 1 - 2 * ze * om * dt)); if (s.w.length() > MAX_W) s.w.setLength(MAX_W)
+      const e0 = _e.clone()
       s.o.quaternion.premultiply(fromRotVec(_v.copy(s.w).multiplyScalar(dt), _q)).normalize()
+      // past the target: allow a small follow-through, never more
+      _q.copy(s.o.quaternion).invert().premultiply(_q2); const e1 = rotVec(_q, new THREE.Vector3())
+      if (e1.dot(e0) < 0 && e1.length() > OVERSHOOT) { s.o.quaternion.copy(_q2).premultiply(fromRotVec(e1.setLength(OVERSHOOT), _q).invert()); s.w.multiplyScalar(0.3) }
       // position spring (the hand root mostly; bone offsets barely change)
       _v.copy(s.tp).sub(s.o.position)
       s.v.addScaledVector(_v, om * om * dt).multiplyScalar(Math.max(0, 1 - 2 * ze * om * dt))
