@@ -4,6 +4,8 @@ import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { foldLive } from '../devices/Duo'
 import { Track, viewSpan } from './Track'
+import { ScreenLane } from './ScreenLane'
+import { loadClips, saveClips, screenLive, sortClips, updateScreens, type ScreenClip } from './screenTrack'
 import { EASES, fmt, loadKeys, quatPose, sample, saveKeys, starts, tlLive, total, type Ease, type Frame, type KfState, type Keyframe } from './tlCore'
 
 /** Applies the timeline to the scene every frame while it owns it: device rotation (slerp) and position, camera zoom
@@ -13,7 +15,9 @@ export function TimelineDriver({ group, onCommit, onSide }: { group: React.RefOb
   const side = useRef<boolean | null>(null)
   const handQueued = useRef(false)
   useFrame(() => {
-    const L = tlLive; if (!L.active) return
+    const L = tlLive
+    updateScreens(L.t, L.playing)
+    if (!L.active) return
     const now = performance.now(), T = total(L.keys)
     if (L.playing) {
       L.t += Math.min(0.1, (now - L.last) / 1000); L.last = now
@@ -53,9 +57,13 @@ const I = {
 
 const uid = () => Math.random().toString(36).slice(2, 9)
 
-export function Timeline({ snapshot, apply, canvas, transparent, flash }: {
+export function Timeline({ snapshot, apply, canvas, transparent, flash, duo, duoScreen, current }: {
   snapshot: () => KfState; apply: (s: KfState) => void; canvas: () => HTMLCanvasElement | null; transparent: boolean; flash: (t: string, err?: boolean) => void
+  duo: boolean; duoScreen: 'inner' | 'outer'; current: (t: 'inner' | 'outer') => { texture: THREE.Texture; kind: 'image' | 'video'; name: string } | null
 }) {
+  // Screen track (saved separately, so timelines from before it load with an empty one)
+  const [clips, setClipsState] = useState<ScreenClip[]>(() => { const c = loadClips(); screenLive.clips = c; return c })
+  const setClips = useCallback((c: ScreenClip[]) => { setClipsState(c); screenLive.clips = c; saveClips(c) }, [])
   const [open, setOpen] = useState(true)
   const [keys, setKeysState] = useState<Keyframe[]>(() => loadKeys())
   const [sel, setSel] = useState<string | null>(null)
@@ -99,13 +107,15 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash }: {
   const jump = (i: number) => { setSel(keys[i].id); if (playing) pause(); apply(keys[i].s); tlLive.t = st[i]; seek(st[i]) }
 
   const exportJson = () => {
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ openmockTimeline: 1, keys }, null, 2)], { type: 'application/json' }))
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify({ openmockTimeline: 1, keys, screen: clips.filter(c => c.src).map(({ thumb: _t, ...c }) => c) }, null, 2)], { type: 'application/json' }))
     a.download = 'openmock-timeline.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000)
   }
   const importJson = (f: File) => f.text().then(t => {
     const v = JSON.parse(t), k = Array.isArray(v) ? v : v.keys
     if (!Array.isArray(k) || !k.every((x: Keyframe) => x && x.s && x.s.pose)) throw new Error('bad')
-    setKeys(k.map((x: Keyframe) => ({ ...x, id: x.id || uid() }))); flash(`Imported ${k.length} keyframes.`)
+    setKeys(k.map((x: Keyframe) => ({ ...x, id: x.id || uid() })))
+    if (!Array.isArray(v)) { const sc: ScreenClip[] = Array.isArray(v.screen) ? v.screen : []; saveClips(sc); setClips(sortClips(loadClips())) }
+    flash(`Imported ${k.length} keyframes.`)
   }).catch(() => flash('That file is not an Openmock timeline.', true))
 
   /** Plays the timeline once from the start and records the canvas in real time. */
@@ -149,7 +159,8 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash }: {
         <label className="ghost icon btnlike" title="Load keyframes from JSON" aria-label="Load keyframes from JSON"><Ico d={I.up} /><input type="file" accept="application/json,.json" hidden onChange={e => { const f = e.target.files?.[0]; if (f) importJson(f); e.target.value = '' }} /></label>
       </div>
       {open && <>
-        <Track keys={keys} sel={sel} setKeys={setKeys} seek={seek} onSelect={i => { setSel(keys[i].id); if (playing) pause() }} />
+        <Track keys={keys} sel={sel} setKeys={setKeys} seek={seek} onSelect={i => { setSel(keys[i].id); if (playing) pause() }}
+          below={(span, pct) => <ScreenLane clips={clips} setClips={setClips} span={span} T={T} duo={duo} defTarget={duoScreen} current={current} flash={flash} pct={pct} />} />
         <div className="tl-cards">
           {keys.length === 0 && <p className="hint">Set up the phone, hand and thumb, then press Add keyframe. Change them, add another keyframe, then press Play to animate between them.</p>}
           {keys.map((x, i) => (

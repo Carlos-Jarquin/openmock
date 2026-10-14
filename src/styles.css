@@ -75,3 +75,18 @@ button.ghost { background: #fff; color: #1d1d22; }
 .tl-edit input { width: 52px; border: none; outline: none; font: 12px -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums; padding: 2px 0; background: transparent; }
 .tl-edit input[aria-invalid="true"] { color: #c0392b; }
 .tl-edit-err { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px; white-space: nowrap; background: #fff4f2; color: #b03a2e; border: 1px solid #f0c4bd; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
+
+/* Screen track */
+.tl-screen-h { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.tl-screen-h .tl-lab { font-weight: 600; font-size: 11px; color: #555; min-width: 44px; }
+.tl-screen-h button { padding: 2px 7px; font-size: 11px; display: inline-flex; align-items: center; gap: 3px; }
+.tl-screen-h .hint { color: #888; font-size: 11px; }
+.tl-lane.tl-screen { height: 34px; margin-top: 4px; margin-bottom: 4px; cursor: default; }
+.tl-clip { position: absolute; top: 4px; height: 26px; box-sizing: border-box; display: flex; align-items: center; gap: 5px; padding: 0 6px 0 2px; overflow: hidden;
+  background: #e6f4ea; border: 1px solid #9fd3ae; border-radius: 4px; cursor: grab; font-size: 10px; color: #245c33; white-space: nowrap; }
+.tl-clip.sel { border-color: #2e9a52; box-shadow: 0 0 0 1px #2e9a52; background: #d3eedb; }
+.tl-clip.miss { background: repeating-linear-gradient(135deg, #fbecec 0 5px, #f6dede 5px 10px); border-color: #e3b3b3; color: #8a3a3a; }
+.tl-clip img { height: 20px; width: auto; border-radius: 2px; flex: none; pointer-events: none; }
+.tl-clip span { overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.tl-fade { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(46,154,82,.35), rgba(46,154,82,0)); pointer-events: none; }
+.tl-screen-act { margin-top: 2px; }

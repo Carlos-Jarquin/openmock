@@ -27,7 +27,7 @@ function topLuma(src: HTMLCanvasElement, probe: HTMLCanvasElement, y0 = 0, hPt =
   return s / (d.length / 4)
 }
 
-type Src = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; video?: HTMLVideoElement } | null
+type Src = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; video?: HTMLVideoElement ; live?: boolean } | null
 
 /** Returns a texture with the status bar on top when on, otherwise the media texture unchanged. size: screen in pt. */
 export function useStatusComposite(media: Src, on: boolean, sb: SbCfg, size: { w: number; h: number } | null, look?: IslandLook) {
@@ -71,7 +71,7 @@ export function useStatusComposite(media: Src, on: boolean, sb: SbCfg, size: { w
       if (import.meta.env.DEV) (window as unknown as { __omSb: unknown }).__omSb = { canvas, tone, time, sb, W }
     }
     draw()
-    if (media?.kind !== 'video') return
+    if (media?.kind !== 'video' && !media?.live) return
     let raf = 0; const loop = () => { draw(); raf = requestAnimationFrame(loop) }; raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
   }, [active, bars, media, sb.mode, sb.homeBar, W, H, canvas, probe, tex])

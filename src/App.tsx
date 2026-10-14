@@ -24,9 +24,10 @@ import { StatusBarControls } from './statusbar/Panel'
 import { useStatusComposite } from './statusbar/composite'
 import { islandSketch } from './statusbar/StatusBar'
 import { Timeline, TimelineDriver } from './timeline/Timeline'
+import { mixers, screenLive } from './timeline/screenTrack'
 import { GES_KEYS, quatPose, tlLive, type Frame, type KfState } from './timeline/tlCore'
 
-type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement; svg?: string }
+type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement; svg?: string; live?: boolean }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const wrap = (v: number) => ((v + 540) % 360) - 180
 const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
@@ -293,7 +294,14 @@ export default function App() {
   // Screen in iPhone points for the status bar: Pro 402x874, Pro Max 440x956
   const sbSize = device === 'ip18' ? { w: 402, h: 874 } : device === 'ip18max' ? { w: 440, h: 956 } : null
   const islandLook = useMemo(() => sketch ? islandSketch(sk.line) : undefined, [sketch, sk.line])
-  const screenTex = useStatusComposite(media, sbOn, sb, sbSize, islandLook)
+  // Screen track: while a clip covers a screen, its mixer canvas is that screen's media
+  const [screenGen, bumpScreen] = useState(0)
+  useEffect(() => { screenLive.onShape = () => bumpScreen(n => n + 1); return () => { screenLive.onShape = null } }, [])
+  const mixMedia = (m: typeof mixers.inner): Media | null => m.on ? { texture: m.tex, aspect: m.aspect, kind: 'image', name: 'Screen track', live: true } : null
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const mixIn = useMemo(() => mixMedia(mixers.inner), [screenGen]), mixOut = useMemo(() => mixMedia(mixers.outer), [screenGen])
+  const shownInner = mixIn ?? media, shownOuter = mixOut ?? mediaOuter
+  const screenTex = useStatusComposite(shownInner, sbOn, sb, sbSize, islandLook)
   // status bar on: its island is the single island, so the 3D island mesh and front lens are hidden
   const devOpts = useMemo(() => sbOn && sbSize ? { ...opts, hideIsland: true } : opts, [opts, sbOn, !!sbSize])
 
@@ -707,7 +715,7 @@ export default function App() {
             <Centred off={device === 'duo'} deps={[device, ...(device === 'duo' ? [] : [opts.fold, opts.screen]), screenTex.texture, hands.pose]}>
               <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture} rot={handRot} idle={idle}>
                 <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
-                  {...(device === 'duo' ? { textureOuter: mediaOuter?.texture ?? null, mediaAspectOuter: mediaOuter?.aspect } : {})} /></SketchStyle>
+                  {...(device === 'duo' ? { textureOuter: shownOuter?.texture ?? null, mediaAspectOuter: shownOuter?.aspect } : {})} /></SketchStyle>
               </HandRig>
             </Centred>
           </group>
@@ -737,7 +745,8 @@ export default function App() {
         {toast && <div className="toast" role="status" style={{ position: 'absolute', left: '50%', bottom: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8,
           background: toast.error ? 'rgba(192,57,43,0.92)' : 'rgba(29,29,31,0.85)', color: '#fff', font: '13px -apple-system, system-ui, sans-serif', pointerEvents: 'none', maxWidth: 420, textAlign: 'center' }}>{toast.text}</div>}
       </main>
-      <Timeline snapshot={tlSnapshot} apply={tlApply} canvas={() => document.querySelector('.stage canvas')} transparent={transparent} flash={flash} />
+      <Timeline snapshot={tlSnapshot} apply={tlApply} canvas={() => document.querySelector('.stage canvas')} transparent={transparent} flash={flash}
+        duo={device === 'duo'} duoScreen={opts.screen === 'outer' ? 'outer' : 'inner'} current={t => (t === 'outer' ? mediaOuter ?? media : media)} />
       </div>
     </div>
   )

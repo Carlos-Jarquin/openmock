@@ -20,7 +20,8 @@ function step(span: number, px: number) { const want = span * 60 / Math.max(1, p
 
 type Drag = { kind: 'key' | 'edge' | 'end' | 'head'; i: number; x0: number; keys: Keyframe[]; span: number; px: number; left: number }
 
-export function Track({ keys, sel, setKeys, onSelect, seek }: {
+export function Track({ keys, sel, setKeys, onSelect, seek, below }: {
+  below?: (span: number, pct: (t: number) => string) => React.ReactNode
   keys: Keyframe[]; sel: string | null; setKeys: (k: Keyframe[]) => void; onSelect: (i: number) => void; seek: (t: number) => void
 }) {
   const box = useRef<HTMLDivElement>(null)
@@ -106,6 +107,7 @@ export function Track({ keys, sel, setKeys, onSelect, seek }: {
           onPointerDown={e => { onSelect(i); if (i) begin(e, 'key', i); else e.stopPropagation() }} />)}
         {keys.length > 1 && <button className="tl-end" style={{ left: pct(T) }} aria-label="Total duration" title={`Total ${T.toFixed(1)} s. Drag to make the whole timeline longer or shorter.`} onPointerDown={e => begin(e, 'end', 0)} />}
       </div>
+      {below?.(span, pct)}
       <div ref={el => { tlLive.ui.head = el }} className="tl-head" style={{ left: pct(Math.min(tlLive.t, T)) }} />
       {edit && (() => { const a = edit.kind === 'seg' ? st[edit.i - 1] + keys[edit.i].dur / 2 : st[edit.i]; return (
         <div className="tl-edit" style={{ left: pct(a) }} onPointerDown={e => e.stopPropagation()}>
