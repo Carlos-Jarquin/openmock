@@ -16,6 +16,7 @@ import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type
 import { IDLE_LEVELS } from './hands/motion'
 import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
 import { SPECTRAL_DEFAULTS } from './hands/spectral'
+import { HAND_LOOK0, NAIL_SHAPES, NAIL_SWATCHES } from './hands/nails'
 import { GestureControls, HAND_ROT0, isGesture, rescale, screenOf } from './hands/gestures'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER, SKETCH_SHADOW } from './sketch/Sketch'
@@ -153,6 +154,7 @@ function Rig({ zoom, fov }: { zoom: number; fov: number }) {
 
 const mixMedia = (m: { on: boolean; tex: THREE.Texture; aspect: number }): Media | null => m.on ? { texture: m.tex, aspect: m.aspect, kind: 'image', name: 'Screen track', live: true } : null
 const D2R = THREE.MathUtils.degToRad
+const nailWord = (l: number) => l < 0.08 ? 'Short' : l < 0.4 ? 'Medium' : l < 0.75 ? 'Long' : 'Extra long'
 /** Rough width of each model in scene units, for placing new devices and the layout presets. */
 /** Rough height of each model in scene units, for zoom-to-fit. */
 const HEIGHT: Partial<Record<DeviceId, number>> = { ip18: 1.5, ip18max: 1.63, duo: 1.55, phone: 1.5, ipmini: 1.96, ippro11: 2.5, ippro13: 2.85, browser: 1.75 }
@@ -194,7 +196,7 @@ const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, s
     <group ref={ref} position={pos} rotation={rot}
       onPointerDown={e => { if (e.button !== 0 || e.shiftKey || e.altKey || e.intersections.some(i => onGizmo(i.object))) return; e.stopPropagation(); sceneHit.current = true; onGrab(d.uid, e.nativeEvent) }}>
       <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, screenTex.texture, d.hands.pose]}>
-        <HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={HAND_FITS[device] ?? null} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle}>
+        <HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={HAND_FITS[device] ?? null} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle} look={d.look}>
           <SketchStyle on={sketch} o={sk}><D uid={d.uid} texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
             {...(device === 'duo' ? { textureOuter: shownOuter?.texture ?? null, mediaAspectOuter: shownOuter?.aspect } : {})} /></SketchStyle>
         </HandRig>
@@ -313,6 +315,7 @@ export default function App() {
   const gesture = D0.gesture, setGesture = S.dev.gesture
   const handRot = D0.handRot, setHandRot = S.dev.handRot
   const idle = D0.idle, setIdle = S.dev.idle
+  const look = D0.look, setLook = S.dev.look
   useEffect(() => { const f = HAND_FITS[device], was = fitOfDev.get(D0.uid) ?? HAND_FITS.ip18!
     if (f && f !== was) setGesture(g => rescale(g, screenOf(was), screenOf(f)))
     if (f) fitOfDev.set(D0.uid, f) }, [device, D0.uid])
@@ -342,7 +345,7 @@ export default function App() {
   const devRot = useMemo(() => [THREE.MathUtils.degToRad(pose.tiltX), THREE.MathUtils.degToRad(pose.tiltY), THREE.MathUtils.degToRad(pose.rotZ)] as [number, number, number], [pose.tiltX, pose.tiltY, pose.rotZ])
   // A keyframe holds every device (devs); its top-level device fields mirror the first device, as single-device timelines did.
   const tlSnapshot = useCallback((): KfState => { const v = live.current, ds = S.get().devices, d0 = ds[0]
-    const one = (d: DeviceState) => ({ uid: d.uid, xf: { ...d.xf }, fold: d.model === 'duo' ? d.opts.fold : null, hands: { ...d.hands }, handRot: { ...d.handRot }, tap: { x: d.gesture.x, y: d.gesture.y }, ges: Object.fromEntries(GES_KEYS.map(k => [k, d.gesture[k]])) })
+    const one = (d: DeviceState) => ({ uid: d.uid, xf: { ...d.xf }, fold: d.model === 'duo' ? d.opts.fold : null, hands: { ...d.hands }, handRot: { ...d.handRot }, tap: { x: d.gesture.x, y: d.gesture.y }, ges: Object.fromEntries(GES_KEYS.map(k => [k, d.gesture[k]])), look: { ...d.look } })
     const f = one(d0); return {
     pose: { ...v.pose }, fold: f.fold, hands: f.hands, handRot: f.handRot, tap: f.tap, ges: f.ges,
     light: { intensity: v.light.intensity, azimuth: v.light.azimuth, elevation: v.light.elevation, floor: v.light.floor }, fx: { focus: v.fx.focus, blur: v.fx.blur },
@@ -351,7 +354,8 @@ export default function App() {
     S.get().devices.forEach((d, i) => { const x = devKf(k, d.uid, i); if (!x) return
       S.devAt(d.uid, 'hands', h => h.pose === x.hands.pose && h.tone === x.hands.tone ? h : { pose: x.hands.pose as HandPose, tone: x.hands.tone })
       S.devAt(d.uid, 'handRot', r => r.tilt === x.handRot.tilt && r.spin === x.handRot.spin && r.roll === x.handRot.roll ? r : { ...x.handRot })
-      S.devAt(d.uid, 'gesture', g => ({ ...g, ...x.ges, x: x.tap.x, y: x.tap.y })) })
+      S.devAt(d.uid, 'gesture', g => ({ ...g, ...x.ges, x: x.tap.x, y: x.tap.y }))
+      if (x.look) { const lk = x.look; S.devAt(d.uid, 'look', o => JSON.stringify(o) === JSON.stringify({ ...o, ...lk }) ? o : { ...o, ...lk }) } })
     setLight(l => ({ ...l, ...k.light })); setFx(f => ({ ...f, ...k.fx }))
   }, [])
   const setXfAt = (uid: string, v: Xf) => S.devAt(uid, 'xf', o => (Object.keys(v) as (keyof Xf)[]).every(k => o[k] === v[k]) ? o : { ...v })
@@ -831,7 +835,7 @@ export default function App() {
       <label className="check"><input type="checkbox" checked={foldFollow} onChange={e => setFoldFollow(e.target.checked)} /> Camera follows the fold</label>
       <p className="hint">Switching screens swings the hinge in 0.9 s at 1×. Each screen frosts and darkens as it leaves its rest and is clear as the hinge settles. Untick Dissolve while folding for a sharp still at any angle.</p>
     </> }] : []),
-    { id: 'hand', side: 'device', title: 'Hand', icon: 'hand', settings: ['Grip', 'Gesture', ...HAND_POSES.map(([, l]) => l), 'Touch target', 'Show marker', 'Skin tone', ...tones.map(([, t]) => t.label), 'Tint', 'Transparency', 'Glimmer', 'Rotation', 'Tilt', 'Spin', 'Roll', 'Idle motion', 'Reset hand', 'Hand size', 'Nail length', 'Nail shape'], render: () => handOk ? <>
+    { id: 'hand', side: 'device', title: 'Hand', icon: 'hand', settings: ['Hand size', 'Nail length', 'Nail shape', 'Nail colour', ...NAIL_SHAPES.map(([, l]) => `${l} nails`), 'Grip', 'Gesture', ...HAND_POSES.map(([, l]) => l), 'Touch target', 'Show marker', 'Skin tone', ...tones.map(([, t]) => t.label), 'Tint', 'Transparency', 'Glimmer', 'Rotation', 'Tilt', 'Spin', 'Roll', 'Idle motion', 'Reset hand', 'Hand size', 'Nail length', 'Nail shape'], render: () => handOk ? <>
       <div className="om-sub"><h3>Grip</h3>
         <div className="seg wrap">{HAND_POSES.filter(([k]) => !isGesture(k)).map(([k, l]) => <button key={k} className={hands.pose === k ? 'on' : ''} aria-pressed={hands.pose === k} onClick={() => setHands({ ...hands, pose: k })}>{l}</button>)}</div></div>
       <div className="om-sub"><h3>Gesture</h3>
@@ -865,11 +869,16 @@ export default function App() {
           <div className="seg">{IDLE_LEVELS.map(([k, l]) => <button key={k} className={idle === k ? 'on' : ''} onClick={() => setIdle(k)}>{l}</button>)}</div></div>
         <button className="ghost" onClick={() => setHandRot(HAND_ROT0)}>Reset hand</button>
       </>}
-      <div className="om-sub om-later" aria-disabled="true"><h3>Appearance <span className="om-badge">Later</span></h3>
-        <label className="row"><span>Hand size</span><input type="range" disabled min={0} max={1} defaultValue={0.5} /><output>100%</output></label>
-        <label className="row"><span>Nail length</span><input type="range" disabled min={0} max={1} defaultValue={0.3} /><output>Short</output></label>
-        <div className="seg wrap" aria-label="Nail shape">{['Round', 'Square', 'Almond', 'Oval', 'Stiletto', 'Coffin'].map(n => <button key={n} disabled>{n}</button>)}</div>
-        <p className="hint">Per-hand size and nails are coming in a later update.</p></div>
+      <div className="om-sub"><h3>Appearance</h3>
+        {slider('Hand size', Math.round(look.size * 100), 85, 115, 1, n => setLook(o => ({ ...o, size: n / 100 })), '%')}
+        <label className="row"><span>Nail length</span><input type="range" min={0} max={100} step={1} value={Math.round(look.nailLen * 100)} aria-valuetext={nailWord(look.nailLen)} onChange={e => setLook(o => ({ ...o, nailLen: +e.target.value / 100 }))} /><output>{nailWord(look.nailLen)}</output></label>
+        <div className="seg wrap" role="group" aria-label="Nail shape">{NAIL_SHAPES.map(([k, l]) => <button key={k} className={look.nailShape === k ? 'on' : ''} aria-pressed={look.nailShape === k} onClick={() => setLook(o => ({ ...o, nailShape: k }))}>{l}</button>)}</div>
+        <div className="row om-nailcol"><span>Nail colour</span>
+          <button className={`om-sw ${!look.nailColor ? 'on' : ''}`} aria-pressed={!look.nailColor} onClick={() => setLook(o => ({ ...o, nailColor: null }))}>Natural</button>
+          {NAIL_SWATCHES.map(c => <button key={c} className={`om-sw dot ${look.nailColor === c ? 'on' : ''}`} style={{ background: c }} aria-label={`Nail colour ${c}`} aria-pressed={look.nailColor === c} onClick={() => setLook(o => ({ ...o, nailColor: c }))} />)}
+          <input type="color" aria-label="Custom nail colour" value={look.nailColor ?? '#f2d4cf'} onChange={e => setLook(o => ({ ...o, nailColor: e.target.value }))} /></div>
+        <button className="ghost" onClick={() => setLook(HAND_LOOK0)}>Reset appearance</button>
+        <p className="hint">Size and nails belong to this device's hand and go into keyframes. Long nails keep clear of the glass; the finger lands on its pad.</p></div>
     </> : <p className="hint">Hands are available for the iPhone 18 Pro and 18 Pro Max.</p> },
   ]
 
@@ -895,6 +904,7 @@ export default function App() {
       { id: 'lay-grid', group: 'scene' as const, section: 'devices', label: 'Layout › Grid', meta: 'APPLY' as const, run: () => layout('grid') },
     ] : []),
     ...(multi || moved ? [{ id: 'xf0', group: 'device' as const, section: 'place', label: 'Position › Reset position', meta: 'APPLY' as const, run: () => S.dev.xf(XF0) }] : []),
+    ...(HAND_FITS[device] ? NAIL_SHAPES.map(([k, l]) => ({ id: `nail-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Nails › ${l}`, meta: look.nailShape === k ? 'CURRENT' as const : 'APPLY' as const, run: () => setLook(o => ({ ...o, nailShape: k, nailLen: Math.max(o.nailLen, 0.5) })) })) : []),
     { id: 'violet', group: 'scene', section: 'preset', label: 'Preset › Violet silhouette', meta: 'APPLY', run: violetScene },
     { id: 'photo', group: 'scene', section: 'style', label: 'Style › Photo', meta: style === 'photo' ? 'CURRENT' : 'APPLY', run: () => setStyle('photo') },
     { id: 'sketch', group: 'scene', section: 'style', label: 'Style › Sketch', meta: sketch ? 'CURRENT' : 'APPLY', run: () => { setStyle('sketch'); setBgMode('solid'); setBg1(SKETCH_PAPER); setTransparent(false) } },

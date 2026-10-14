@@ -20,7 +20,7 @@ export interface KfState {
 }
 export interface Xf { x: number; y: number; z: number; rx: number; ry: number; rz: number }
 export const XF0: Xf = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0 }
-export interface DevKf { uid: string; xf: Xf; fold: number | null; hands: { pose: string; tone: string }; handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges?: Partial<Record<GesKey, number>> }
+export interface DevKf { uid: string; xf: Xf; fold: number | null; hands: { pose: string; tone: string }; handRot: { tilt: number; spin: number; roll: number }; tap: { x: number; y: number }; ges?: Partial<Record<GesKey, number>>; /** hand size and nails (switch at the midpoint) */ look?: import('../hands/nails').HandLook }
 /** One device's part of a keyframe: by uid, then by position, and an old (single-device) keyframe counts as the first device. */
 export function devKf(s: KfState, uid: string, i: number): DevKf | null {
   if (s.devs) return s.devs.find(d => d.uid === uid) ?? (s.devs[i] && !tlLive.devs.includes(s.devs[i].uid) ? s.devs[i] : null)

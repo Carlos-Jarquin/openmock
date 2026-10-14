@@ -276,3 +276,9 @@ kbd, .om-kbd { display: inline-grid; place-items: center; min-width: 20px; heigh
 .om-chrome .tl-open .tl-time { font-size: 13px; letter-spacing: 0; }
 .om-chrome .tl-open .tl-bar > .tl-editing { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .om-fps { position: absolute; left: 50%; top: 64px; transform: translateX(-50%); padding: 3px 8px; border-radius: 6px; background: rgba(29,29,31,.78); color: #fff; font: 400 10px var(--mono); pointer-events: none; z-index: 5; white-space: nowrap; }
+.om-nailcol { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.om-nailcol > span { flex: 1 0 100%; }
+.om-chrome .om-sw { min-height: 24px; padding: 0 8px; text-transform: none; }
+.om-chrome .om-sw.dot { width: 24px; padding: 0; border-radius: 50%; }
+.om-chrome .om-sw.on { outline: 2px solid var(--ink); outline-offset: 1px; }
+.om-nailcol input[type=color] { width: 28px; height: 24px; padding: 0; border: 0; background: none; }

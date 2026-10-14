@@ -10,6 +10,7 @@ import type { IdleLevel } from '../hands/motion'
 import { SB_DEFAULT, type SbCfg } from '../statusbar/config'
 import { SKETCH_DEFAULTS } from '../sketch/Sketch'
 import { XF0, type Xf } from '../timeline/tlCore'
+import { HAND_LOOK0, type HandLook } from '../hands/nails'
 
 export type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement; svg?: string; live?: boolean }
 export const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
@@ -39,6 +40,8 @@ export interface DeviceState {
   handRot: HandRot
   idle: IdleLevel
   /** shown name ('' = the model's name, numbered when there are several) */
+  /** hand size and nails */
+  look: HandLook
   name: string
   hidden: boolean
   /** placement inside the view: position in scene units and rotation in degrees (all 0 for the first device) */
@@ -68,7 +71,7 @@ export const newDevice = (model: DeviceId = 'ip18'): DeviceState => ({
   sb: SB_DEFAULT, sbReset: 0,
   foldFollow: true, foldSpeed: 1, foldDark: 0,
   hands: { pose: 'off', tone: 'fair' }, spectral: SPECTRAL_DEFAULTS, gesture: GESTURE_DEFAULT, handRot: HAND_ROT0, idle: 'low',
-  name: '', hidden: false, xf: XF0,
+  look: HAND_LOOK0, name: '', hidden: false, xf: XF0,
 })
 const GLOBAL0: GlobalState = { pose: POSE, light: LIGHT, fx: FX, style: 'photo', sk: SKETCH_DEFAULTS, bgMode: 'gradient', bg1: '#dfe7ff', bg2: '#f7d9e8', angle: 135, transparent: false, scale: 2 }
 /** The device list and each device's settings persist (not screen media or the logo, which do not fit in storage). Device ids
@@ -80,7 +83,7 @@ function loadDevices(): { devices: DeviceState[]; selected: string } | null {
     const v = JSON.parse(localStorage.getItem(SKEY) || 'null'); if (!v || !Array.isArray(v.devices) || !v.devices.length) return null
     const devices: DeviceState[] = v.devices.filter((d: Partial<DeviceState>) => d && typeof d.uid === 'string' && typeof d.model === 'string').map((d: DeviceState) => {
       const base = newDevice(d.model)
-      return { ...base, ...d, media: null, mediaOuter: null, opts: { ...base.opts, ...d.opts, logo: null, trans: null }, xf: { ...base.xf, ...d.xf } } })
+      return { ...base, ...d, media: null, mediaOuter: null, opts: { ...base.opts, ...d.opts, logo: null, trans: null }, xf: { ...base.xf, ...d.xf }, look: { ...base.look, ...d.look } } })
     if (!devices.length) return null
     // carry on numbering after the highest saved id
     n = Math.max(n, ...devices.map(d => +(d.uid.match(/(\d+)$/)?.[1] ?? 0)))
@@ -118,7 +121,7 @@ export function useScene() {
       const d = s.devices[i], nv = resolve(v, d[k]); if (Object.is(nv, d[k])) return s
       const devices = s.devices.slice(); devices[i] = { ...d, [k]: nv }; return { ...s, devices }
     })
-    const devKeys = ['model', 'opts', 'media', 'mediaOuter', 'mediaTo', 'sbOn', 'sb', 'sbReset', 'foldFollow', 'foldSpeed', 'foldDark', 'hands', 'spectral', 'gesture', 'handRot', 'idle', 'name', 'hidden', 'xf'] as const
+    const devKeys = ['model', 'opts', 'media', 'mediaOuter', 'mediaTo', 'sbOn', 'sb', 'sbReset', 'foldFollow', 'foldSpeed', 'foldDark', 'hands', 'spectral', 'gesture', 'handRot', 'idle', 'name', 'hidden', 'xf', 'look'] as const
     const gloKeys = ['pose', 'light', 'fx', 'style', 'sk', 'bgMode', 'bg1', 'bg2', 'angle', 'transparent', 'scale'] as const
     return {
       dev: Object.fromEntries(devKeys.map(k => [k, dev(k)])) as { [K in typeof devKeys[number]]: Setter<DeviceState[K]> },
