@@ -11,6 +11,7 @@ import { spectralMaterials, buildSpectral, updateSpectral, addHull, removeHull, 
 import { LINE_LAYER } from '../sketch/Sketch'
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
+import { HandMotion, type IdleLevel } from './motion'
 import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, HAND_ROT0, REACH_EVENT, type Gesture, type HandRot } from './gestures'
 
 export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap' | 'flat'
@@ -468,17 +469,19 @@ function placeArm(mesh: THREE.Mesh, rig: Rig) {
 }
 
 /** Wraps the device: turns it for landscape and adds the posed hands, which Centred leaves out of its bounds. */
-export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTRAL_DEFAULTS, rot = HAND_ROT0, children }: { pose: HandPose; tone: string; rot?: HandRot; fit: HandFit | null; spectral?: SpectralOptions; gesture?: Gesture; onGesture?: (g: Gesture) => void; children: React.ReactNode }) {
+export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTRAL_DEFAULTS, rot = HAND_ROT0, idle = 'low', children }: { idle?: IdleLevel; pose: HandPose; tone: string; rot?: HandRot; fit: HandFit | null; spectral?: SpectralOptions; gesture?: Gesture; onGesture?: (g: Gesture) => void; children: React.ReactNode }) {
   const on = pose !== 'off' && !!fit
   return (
     <group rotation={[0, 0, on && pose === 'landscape' ? Math.PI / 2 : 0]} userData={{ handRig: true }}>
       {children}
-      {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} gesture={gesture} sp={spectral} rot={rot} /></Suspense>}
+      {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} gesture={gesture} sp={spectral} rot={rot} idle={idle} /></Suspense>}
       {on && isGesture(pose) && gesture && onGesture && <ScreenTarget pose={pose} fit={fit!} g={gesture} onChange={onGesture} />}
     </group>)
 }
 
-function Hands({ pose, tone, fit, gesture, sp, rot }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture; sp: SpectralOptions; rot: HandRot }) {
+function Hands({ pose, tone, fit, gesture, sp, rot, idle }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture; sp: SpectralOptions; rot: HandRot; idle: IdleLevel }) {
+  const motion = useMemo(() => ({ right: new HandMotion(), left: new HandMotion() }), [])
+  useFrame(({ clock }, dt) => { motion.right.step(dt, clock.elapsedTime, idle); motion.left.step(dt, clock.elapsedTime, idle) })
   const right = useGLTF(URL_R), left = useGLTF(URL_L)
   const group = useRef<THREE.Group>(null)
   const rigs = useMemo(() => ({ right: makeRig(right.scene), left: makeRig(left.scene) }), [right.scene, left.scene])
@@ -509,7 +512,14 @@ function Hands({ pose, tone, fit, gesture, sp, rot }: { pose: HandPose; tone: st
     const used = new Set<THREE.Object3D>()
     for (const pl of list) {
       const r = rigs[pl.side], key = JSON.stringify([pl, fit])
-      if (solved.current[pl.side] !== key || r.root.parent !== g) { g.remove(r.root); solve(r, pl, fit); solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); g.add(arms[pl.side]) }
+      if (solved.current[pl.side] !== key || r.root.parent !== g) {
+        // spring from the pose on screen to the new solve, unless the hand is just appearing
+        const m = motion[pl.side], animate = r.root.parent === g
+        if (animate) m.snapshot()
+        g.remove(r.root); solve(r, pl, fit); solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); g.add(arms[pl.side])
+        const touching = new Set<string>([...(pl.thumb.touch ? ['thumb'] : []), ...pl.fingers.flatMap((f, i) => f.touch ? [FINGERS[i]] : [])])
+        m.capture(r.root, r.bones, r.rest, touching, arms[pl.side], animate)
+      }
       used.add(r.root)
       if (import.meta.env.DEV) (globalThis as { __touchErr?: Record<string, number> }).__touchErr = { ...(globalThis as { __touchErr?: Record<string, number> }).__touchErr, [pl.side]: r.root.userData.touchError ?? 0 }
     }

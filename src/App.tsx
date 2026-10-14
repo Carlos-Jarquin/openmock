@@ -13,6 +13,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { loadLogo, loadLocalLogo } from './localLogo'
 import { Env, retryEnvironment } from './Env'
 import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type Guide } from './hands/aiHands'
+import { IDLE_LEVELS, type IdleLevel } from './hands/motion'
 import { HandRig, HAND_POSES, SKIN_TONES, type HandFit, type HandPose } from './hands/Hands'
 import { SPECTRAL_DEFAULTS, type SpectralOptions } from './hands/spectral'
 import { GestureControls, GESTURE_DEFAULT, HAND_ROT0, type HandRot, isGesture, rescale, screenOf, type Gesture } from './hands/gestures'
@@ -221,6 +222,7 @@ export default function App() {
   const [spectral, setSpectral] = useState<SpectralOptions>(SPECTRAL_DEFAULTS)
   const [gesture, setGesture] = useState<Gesture>(GESTURE_DEFAULT)
   const [handRot, setHandRot] = useState<HandRot>(HAND_ROT0)
+  const [idle, setIdle] = useState<IdleLevel>('low')
   const gestureFit = useRef(HAND_FITS.ip18!)
   useEffect(() => { const f = HAND_FITS[device]; if (f && f !== gestureFit.current) { setGesture(g => rescale(g, screenOf(gestureFit.current), screenOf(f))); gestureFit.current = f } }, [device])
   // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
@@ -572,6 +574,8 @@ export default function App() {
               {slider('Spin', handRot.spin, -60, 60, 1, n => setHandRot({ ...handRot, spin: n }), '°')}
               {slider('Roll', handRot.roll, -45, 45, 1, n => setHandRot({ ...handRot, roll: n }), '°')}
               <button className="ghost" onClick={() => setHandRot(HAND_ROT0)}>Reset hand</button>
+              <h3 title="A slight, natural movement of the fingers that are not touching the screen">Idle motion</h3>
+              <div className="seg">{IDLE_LEVELS.map(([k, l]) => <button key={k} className={idle === k ? 'on' : ''} onClick={() => setIdle(k)}>{l}</button>)}</div>
               <p className="hint">Turns the hand about the touching fingertip or the grip, so contacts and targets stay put.</p>
               {isGesture(hands.pose) && <GestureControls pose={hands.pose} fit={HAND_FITS[device]!} g={gesture} set={setGesture} />}
               <h3>Photoreal hands</h3>
@@ -701,7 +705,7 @@ export default function App() {
           </>}
           <group ref={devGroup} position={devPos} rotation={devRot}>
             <Centred off={device === 'duo'} deps={[device, ...(device === 'duo' ? [] : [opts.fold, opts.screen]), screenTex.texture, hands.pose]}>
-              <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture} rot={handRot}>
+              <HandRig pose={hands.pose} tone={hands.tone} spectral={spectral} fit={HAND_FITS[device] ?? null} gesture={gesture} onGesture={setGesture} rot={handRot} idle={idle}>
                 <SketchStyle on={sketch} o={sk}><D texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
                   {...(device === 'duo' ? { textureOuter: mediaOuter?.texture ?? null, mediaAspectOuter: mediaOuter?.aspect } : {})} /></SketchStyle>
               </HandRig>
