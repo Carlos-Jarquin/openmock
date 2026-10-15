@@ -13,7 +13,8 @@ import { XF0, type Xf } from '../timeline/tlCore'
 import { HAND_LOOK0, type HandLook } from '../hands/nails'
 
 export type Media = { texture: THREE.Texture; aspect: number; kind: 'image' | 'video'; name: string; video?: HTMLVideoElement; svg?: string; live?: boolean }
-export const POSE = { tiltX: -10, tiltY: -30, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
+// default: front face to the camera, upright (Carlos, Oct 14)
+export const POSE = { tiltX: 0, tiltY: 0, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 }
 export type Pose = typeof POSE
 export type LightPreset = 'soft' | 'apple' | 'violet'
 export type BgMode = 'solid' | 'gradient' | 'streaks'

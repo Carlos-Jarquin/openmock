@@ -81,6 +81,9 @@ function fill(a: KfState, b: KfState, e: number) {
   tlLive.devs.forEach((uid, i) => {
     const x = devKf(a, uid, i) ?? devKf(b, uid, i), y = devKf(b, uid, i) ?? x; if (!x || !y) return
     const xf = {} as Xf; for (const k of Object.keys(XF0) as (keyof Xf)[]) xf[k] = lerp(x.xf?.[k] ?? 0, y.xf?.[k] ?? 0, e)
+    // placement rotation: slerp (shortest way across the wrap, no 350 degree spin from 359 to 1), back to XYZ angles
+    qa.setFromEuler(eu.set(d2r(x.xf?.rx ?? 0), d2r(x.xf?.ry ?? 0), d2r(x.xf?.rz ?? 0))); qb.setFromEuler(eu.set(d2r(y.xf?.rx ?? 0), d2r(y.xf?.ry ?? 0), d2r(y.xf?.rz ?? 0)))
+    qa.slerp(qb, e); eu.setFromQuaternion(qa, 'XYZ'); xf.rx = THREE.MathUtils.radToDeg(eu.x); xf.ry = THREE.MathUtils.radToDeg(eu.y); xf.rz = THREE.MathUtils.radToDeg(eu.z)
     const g: Partial<Record<GesKey, number>> = {}
     for (const k of GES_KEYS) { const p = x.ges?.[k], q = y.ges?.[k]; if (p != null || q != null) g[k] = p == null ? q! : q == null ? p : lerp(p, q, e) }
     const mech = x.mech && y.mech && x.mech.length === y.mech.length ? x.mech.map((v, k) => lerp(v, y.mech![k], e)) : (y.mech ?? x.mech ?? null)

@@ -120,3 +120,6 @@ section.timeline { position: relative; }
 .om-clrpop p { margin: 0 0 10px; }
 .om-clrbtns { display: flex; justify-content: flex-end; gap: 8px; }
 .om-clrundo { position: fixed; left: 50%; right: auto; top: 72px; bottom: auto; transform: translateX(-50%); z-index: 60; }
+.om-angle .om-scrub { cursor: ew-resize; user-select: none; touch-action: none; }
+.om-angle .om-angle-n { width: 52px; font: inherit; font-size: 11px; text-align: right; padding: 2px 4px; border: 1px solid rgba(0,0,0,.12); border-radius: 6px; background: transparent; }
+.om-angle output { min-width: 0; }

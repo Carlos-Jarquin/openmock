@@ -41,7 +41,34 @@ import { GES_KEYS, XF0, devKf, quatPose, tlLive, type Frame, type KfState, type 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 /** The animatable mechanism of a device for the timeline: MacBook lid angle, iMac G4 tilt and stand height. */
 const mechOf = (d: DeviceState): number[] | null => d.model === 'mbp16' ? [d.opts.lid ?? LID0] : d.model === 'imacg4' ? [d.opts.tilt ?? TILT0, d.opts.rise ?? RISE0] : d.model === 'studio' ? [d.opts.tilt ?? SD_TILT0, d.opts.rise ?? SD_RISE0] : null
-const wrap = (v: number) => ((v + 540) % 360) - 180
+/** Any angle into -180..180 (370 -> 10, -190 -> 170); rotation has no limits anywhere, it only wraps for display. */
+const wrap = (v: number) => { const w = (((v + 180) % 360) + 360) % 360 - 180; return Math.round(w * 1000) / 1000 }
+/** Orbit drag: turn about the screen's vertical (dx) and horizontal (dy) axes with quaternions, so there is no gimbal lock
+ *  and no end stop; the result goes back to the pose's XYZ angles, wrapped. */
+const qOrb = new THREE.Quaternion(), qAx = new THREE.Quaternion(), eOrb = new THREE.Euler(), vY = new THREE.Vector3(0, 1, 0), vX = new THREE.Vector3(1, 0, 0)
+function orbitBy<P extends { tiltX: number; tiltY: number; rotZ: number }>(p: P, dYaw: number, dPitch: number): P {
+  const d = THREE.MathUtils.degToRad
+  qOrb.setFromEuler(eOrb.set(d(p.tiltX), d(p.tiltY), d(p.rotZ)))
+  qOrb.premultiply(qAx.setFromAxisAngle(vY, d(dYaw))).premultiply(qAx.setFromAxisAngle(vX, d(dPitch)))
+  eOrb.setFromQuaternion(qOrb, 'XYZ'); const r = THREE.MathUtils.radToDeg
+  return { ...p, tiltX: wrap(r(eOrb.x)), tiltY: wrap(r(eOrb.y)), rotZ: wrap(r(eOrb.z)) }
+}
+/** An angle control without ends: slider (wraps at either end with the arrow keys), a number field (any value, wrapped),
+ *  and the label is a scrub handle: drag sideways to keep turning past +/-180 for as long as you like. */
+function AngleRow({ label, v, set }: { label: string; v: number; set: (n: number) => void }) {
+  const w = wrap(v), scrub = useRef<{ x: number; v: number } | null>(null)
+  const [txt, setTxt] = useState<string | null>(null)
+  return <label className="row om-angle"><span className="om-scrub" title={`${label}: drag sideways to turn without limits`}
+      onPointerDown={e => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); scrub.current = { x: e.clientX, v } }}
+      onPointerMove={e => { const s = scrub.current; if (!s) return; set(wrap(s.v + (e.clientX - s.x) * 0.5)) }}
+      onPointerUp={() => { scrub.current = null }} onPointerCancel={() => { scrub.current = null }}>{label}</span>
+    <input type="range" min={-180} max={180} step={1} value={Math.round(w)} style={{ ['--p' as string]: `${(w + 180) / 360 * 100}%` }} onChange={e => set(wrap(+e.target.value))}
+      onKeyDown={e => { const up = e.key === 'ArrowRight' || e.key === 'ArrowUp', dn = e.key === 'ArrowLeft' || e.key === 'ArrowDown'
+        if ((up && w >= 179.5) || (dn && w <= -179.5)) { e.preventDefault(); set(wrap(w + (up ? 1 : -1))) } }} />
+    <input className="om-angle-n" type="number" step={1} aria-label={`${label} in degrees`} value={txt ?? String(Math.round(w))}
+      onChange={e => { setTxt(e.target.value); const n = parseFloat(e.target.value); if (Number.isFinite(n)) set(wrap(n)) }}
+      onBlur={() => setTxt(null)} onKeyDown={e => { if (e.key === 'Enter') { setTxt(null); (e.target as HTMLInputElement).blur() } }} /><output>°</output></label>
+}
 /** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
 /** One-click camera presets (beside Reset camera). Zoom and pan stay at the framed defaults; Flat lay uses a long lens. */
 const VIEW_PRESETS: [string, Pose][] = [
@@ -330,12 +357,12 @@ export default function App() {
   /** Ease to a preset over 0.6 s (shortest way round for the spin); jumps straight there when reduced motion is on. */
   const goView = useCallback((to: Pose) => {
     cancelAnimationFrame(viewAnim.current)
-    const from = { ...poseRef.current }, dy = ((to.tiltY - from.tiltY) % 360 + 540) % 360 - 180
+    const from = { ...poseRef.current }, sd = (a: number, b: number) => ((b - a) % 360 + 540) % 360 - 180, dy = sd(from.tiltY, to.tiltY), dX = sd(from.tiltX, to.tiltX), dZ = sd(from.rotZ, to.rotZ)
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { setPose(to); return }
     const t0 = performance.now(), D = 600
     const step = (t: number) => { const k = Math.min(1, (t - t0) / D), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2
       const p = {} as Pose; for (const key of Object.keys(to) as (keyof Pose)[]) p[key] = from[key] + (to[key] - from[key]) * e
-      p.tiltY = k < 1 ? from.tiltY + dy * e : to.tiltY
+      p.tiltY = k < 1 ? wrap(from.tiltY + dy * e) : to.tiltY; p.tiltX = k < 1 ? wrap(from.tiltX + dX * e) : to.tiltX; p.rotZ = k < 1 ? wrap(from.rotZ + dZ * e) : to.rotZ
       setPose(p); if (k < 1) viewAnim.current = requestAnimationFrame(step) }
     viewAnim.current = requestAnimationFrame(step)
   }, [])
@@ -754,7 +781,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { rigs, devGroup, defaultPose, resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -849,9 +876,9 @@ export default function App() {
       </>}
     </> },
     { id: 'camera', side: 'scene', title: 'Camera', icon: 'camera', settings: ['Tilt X', 'Tilt Y', 'Rotate', 'Zoom', 'Field of view', 'Pan X', 'Pan Y', 'Reset camera', 'View presets', 'Apple hero angle'], render: () => <>
-      {slider('Tilt X', pose.tiltX, -90, 90, 1, n => setPose({ ...pose, tiltX: n }), '°')}
-      {slider('Tilt Y', pose.tiltY, -180, 180, 1, n => setPose({ ...pose, tiltY: n }), '°')}
-      {slider('Rotate', pose.rotZ, -45, 45, 1, n => setPose({ ...pose, rotZ: n }), '°')}
+      <AngleRow label="Tilt X" v={pose.tiltX} set={n => setPose(p => ({ ...p, tiltX: n }))} />
+      <AngleRow label="Tilt Y" v={pose.tiltY} set={n => setPose(p => ({ ...p, tiltY: n }))} />
+      <AngleRow label="Rotate" v={pose.rotZ} set={n => setPose(p => ({ ...p, rotZ: n }))} />
       {slider('Zoom', pose.zoom, 0.5, 2.5, 0.01, n => setPose({ ...pose, zoom: n }))}
       {slider('Field of view', pose.fov, 8, 60, 1, n => setPose({ ...pose, fov: n }), '°')}
       {slider('Pan X', pose.panX, -1.5, 1.5, 0.01, n => setPose({ ...pose, panX: n }))}
@@ -907,9 +934,9 @@ export default function App() {
         {slider('Across', +xf.x.toFixed(2), -4, 4, 0.01, set('x'))}
         {slider('Up and down', +xf.y.toFixed(2), -4, 4, 0.01, set('y'))}
         {slider('Depth', +xf.z.toFixed(2), -4, 4, 0.01, set('z'))}
-        {slider('Turn', Math.round(xf.ry), -180, 180, 1, set('ry'), '°')}
-        {slider('Tilt', Math.round(xf.rx), -90, 90, 1, set('rx'), '°')}
-        {slider('Roll', Math.round(xf.rz), -180, 180, 1, set('rz'), '°')}
+        <AngleRow label="Turn" v={xf.ry} set={set('ry')} />
+        <AngleRow label="Tilt" v={xf.rx} set={set('rx')} />
+        <AngleRow label="Roll" v={xf.rz} set={set('rz')} />
         <button className="ghost" onClick={() => S.dev.xf(XF0)}>Reset position</button>
         <p className="hint">Places this device in the scene. Drag it in the view to move it across and up.</p>
       </> } }] : []),
@@ -1172,7 +1199,7 @@ export default function App() {
           const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY
           setPose(p => d.pan
             ? { ...p, panX: clamp(p.panX + dx * 0.004 / p.zoom, -1.5, 1.5), panY: clamp(p.panY - dy * 0.004 / p.zoom, -1.5, 1.5) }
-            : { ...p, tiltY: wrap(p.tiltY + dx * 0.4), tiltX: clamp(p.tiltX + dy * 0.4, -90, 90) })
+            : orbitBy(p, dx * 0.4, dy * 0.4))
         }}
         onPointerUp={e => {
           drag.current = null; (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId)
