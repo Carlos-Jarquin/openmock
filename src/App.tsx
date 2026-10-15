@@ -896,12 +896,13 @@ export default function App() {
         <p className="hint">Drawn onto the screen in iPhone points, so it shows in renders and exports. Auto picks dark or light text from the top of your image or video.</p>
       </>}
     </> : <p className="hint">Available for the iPhone 18 Pro and Pro Max. iPad status bars are coming later.</p> },
-    ...(device === 'studio' ? [{ id: 'sdstand', side: 'device' as const, title: 'Stand', icon: 'stand', settings: ['Stand', 'Tilt stand', 'Tilt and height stand', 'VESA mount adapter', 'Portrait', 'Display tilt', 'Stand height', 'Nano-texture glass'], render: () => { const st = opts.sdStand ?? 'tilt'; return <>
+    ...(device === 'studio' ? [{ id: 'sdstand', side: 'device' as const, title: 'Stand', icon: 'stand', settings: ['Stand', 'Tilt stand', 'Tilt and height stand', 'VESA mount adapter', 'Portrait', 'Display tilt', 'Stand height', 'Power cable', 'Nano-texture glass'], render: () => { const st = opts.sdStand ?? 'tilt'; return <>
       <label className="row"><span>Stand</span><select value={st} onChange={e => { const v = e.target.value as SdStand; setOpts(x => ({ ...x, sdStand: v })) }}>
         <option value="tilt">Tilt stand</option><option value="height">Tilt and height stand</option><option value="vesa">VESA mount adapter</option></select></label>
       {st === 'vesa' && <div className="seg" role="group" aria-label="Orientation"><button className={!opts.sdPortrait ? 'on' : ''} aria-pressed={!opts.sdPortrait} onClick={() => setOpts(x => ({ ...x, sdPortrait: false }))}>Landscape</button><button className={opts.sdPortrait ? 'on' : ''} aria-pressed={!!opts.sdPortrait} onClick={() => setOpts(x => ({ ...x, sdPortrait: true }))}>Portrait</button></div>}
       {slider('Display tilt', Math.round(opts.tilt ?? SD_TILT0), SD_TILT_RANGE[0], SD_TILT_RANGE[1], 1, n => setOpts(x => ({ ...x, tilt: n })), '°')}
       {st === 'height' && slider('Stand height', Math.round((opts.rise ?? SD_RISE0) * 100), 0, 100, 1, n => setOpts(x => ({ ...x, rise: n / 100 })), '%')}
+      <label className="check"><input type="checkbox" checked={!!opts.sdCable} onChange={e => { const on = e.target.checked; setOpts(x => ({ ...x, sdCable: on })) }} /> Power cable</label>
       <label className="check"><input type="checkbox" checked={!!opts.nano} onChange={e => { const on = e.target.checked; setOpts(x => ({ ...x, nano: on })) }} /> Nano-texture glass</label>
       <p className="hint">Add keyframes at different tilts and heights to animate the stand. Nano-texture glass is matte and reflects less.</p>
       <button className="ghost" onClick={() => setOpts(x => ({ ...x, tilt: SD_TILT0, rise: SD_RISE0 }))}>Reset stand</button>
@@ -1005,6 +1006,7 @@ export default function App() {
     ...(handOk ? tones.map(([k, t]) => ({ id: `tone-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Skin tone › ${t.label}`, meta: 'APPLY' as const, run: () => setHands(h => ({ ...h, tone: k })) })) : []),
     ...(device === 'studio' ? ([['tilt', 'Tilt stand'], ['height', 'Tilt and height stand'], ['vesa', 'VESA mount adapter']] as [SdStand, string][]).map(([k, l]) => ({ id: `sd-${k}`, group: 'device' as const, section: 'sdstand', label: `Stand › ${l}`, meta: (opts.sdStand ?? 'tilt') === k ? 'CURRENT' as const : 'APPLY' as const, run: () => setOpts(x => ({ ...x, sdStand: k })) })).concat([
       { id: 'sd-portrait', group: 'device' as const, section: 'sdstand', label: opts.sdPortrait ? 'Stand › Landscape' : 'Stand › Portrait (VESA)', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, sdStand: 'vesa', sdPortrait: !x.sdPortrait })) },
+      { id: 'sd-cable', group: 'device' as const, section: 'sdstand', label: opts.sdCable ? 'Power cable › Hide' : 'Power cable › Show', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, sdCable: !x.sdCable })) },
       { id: 'sd-nano', group: 'device' as const, section: 'sdstand', label: opts.nano ? 'Glass › Standard' : 'Glass › Nano-texture', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, nano: !x.nano })) },
       { id: 'sd-reset', group: 'device' as const, section: 'sdstand', label: 'Stand › Reset', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, tilt: SD_TILT0, rise: SD_RISE0 })) }]) : []),
     ...(device === 'watchu' ? Object.entries(WATCH_BANDS).map(([k, b]) => ({ id: `band-${k}`, group: 'device' as const, section: 'band', label: `Band › ${b.label}`, meta: (opts.band ?? 'orange') === k ? 'CURRENT' as const : 'APPLY' as const, run: () => setOpts(x => ({ ...x, band: k })) })) : []),

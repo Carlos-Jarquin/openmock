@@ -17,7 +17,7 @@ export interface DeviceOptions { fold: number; screen: 'inner' | 'outer'; finish
   /** Apple TV: show the Siri Remote (default on); held: the remote stands upright in the hand instead of lying beside the box. */
   remote?: boolean; held?: boolean
   /** Studio Display: stand, portrait on the VESA mount, nano-texture glass (tilt and rise above are shared with the iMac G4) */
-  sdStand?: 'tilt' | 'height' | 'vesa'; sdPortrait?: boolean; nano?: boolean }
+  sdStand?: 'tilt' | 'height' | 'vesa'; sdPortrait?: boolean; sdCable?: boolean; nano?: boolean }
 export interface DeviceProps { texture: THREE.Texture | null; mediaAspect: number; opts: DeviceOptions
   /** Duo only: the outer screen's own media (the inner screen uses texture). */
   textureOuter?: THREE.Texture | null; mediaAspectOuter?: number

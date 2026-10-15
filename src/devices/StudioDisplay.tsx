@@ -52,34 +52,68 @@ function Pivot({ at, mat, r = mm(13), w = mm(160) }: { at: THREE.Vector3; mat: T
 const POST_SLOT_Y = 150
 export const SLOT = { w: 46, h: 74, plug: 19 }
 function slotShape(cy: number) { const w = mm(SLOT.w), h = mm(SLOT.h), r = w / 2, p = new THREE.Path()
-  p.absarc(0, cy + h / 2 - r, r, 0, Math.PI, false); p.absarc(0, cy - h / 2 + r, r, Math.PI, Math.PI * 2, false); p.closePath(); return p }
+  // clockwise (a hole must wind against the outline, or the bevel offset pinches it into a teardrop)
+  p.absarc(0, cy - h / 2 + r, r, 0, Math.PI, true); p.absarc(0, cy + h / 2 - r, r, Math.PI, 0, true); p.closePath(); return p }
+/** Speaker grille: a strip of fine perforations (dark holes on aluminium), drawn once. */
+let grilleTex: THREE.CanvasTexture | null = null
+function grille() { if (grilleTex) return grilleTex
+  const c = document.createElement('canvas'); c.width = 2048; c.height = 32; const x = c.getContext('2d')!
+  x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height); x.fillStyle = '#2a2b2e'
+  for (let row = 0; row < 4; row++) for (let i = 0; i < 512; i++) { x.beginPath(); x.arc(i * 4 + (row % 2) * 2 + 1, row * 8 + 4, 1.3, 0, Math.PI * 2); x.fill() }
+  grilleTex = new THREE.CanvasTexture(c); grilleTex.colorSpace = THREE.SRGBColorSpace; grilleTex.anisotropy = 8; return grilleTex }
 /** Flat foot plate, its front end rounded (seen from above) and its edges eased. */
-function Foot({ w, d, z0, alu, t = mm(5) }: { w: number; d: number; z0: number; alu: THREE.Material; t?: number }) {
-  const geo = useMemo(() => { const r = Math.min(w / 2, mm(28)), b = slab(rrect(w, d, [mm(6), mm(6), r, r]), t, mm(1.6), 4); b.rotateX(-Math.PI / 2); return b }, [w, d, t])
+function Foot({ w, d, z0, alu, t = mm(5), rear = mm(6), edge = mm(1.6) }: { w: number; d: number; z0: number; alu: THREE.Material; t?: number; rear?: number; edge?: number }) {
+  const geo = useMemo(() => { const r = Math.min(w / 2, mm(28)), b = slab(rrect(w, d, [rear, rear, r, r]), t, edge, 4); b.rotateX(-Math.PI / 2); return b }, [w, d, t, rear, edge])
   useEffect(() => () => geo.dispose(), [geo])
-  return <mesh geometry={geo} position={[0, t / 2, z0 - d / 2]} castShadow receiveShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
+  return <group><mesh geometry={geo} position={[0, t / 2, z0 - d / 2]} castShadow receiveShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
+    {/* two long black rubber pads under the left and right edges */}
+    {[-1, 1].map(sx => <mesh key={sx} position={[sx * (w / 2 - mm(9)), -E, z0 - d / 2]} rotation={[Math.PI / 2, 0, 0]}><planeGeometry args={[mm(8), d - mm(24)]} /><meshStandardMaterial color="#111113" roughness={0.9} side={THREE.DoubleSide} /></mesh>)}</group>
 }
 /** Tilt stand: one wide aluminium sheet bent into an L. The flat foot runs back under the panel, bends up at its rear
  * end and the upright slants forward to the round hinge behind the panel (chrome caps on its ends). A round cable hole
  * with the black power plug sits in the upright just below the panel. */
 function TiltStand({ f, alu, chrome }: { f: ReturnType<typeof sdFrame>; alu: THREE.Material; chrome: THREE.Material }) {
-  const t = SD.tilt, w = mm(t.arm.w), th = mm(5), a = f.p1.clone().setY(th), b = f.j, d = b.clone().sub(a), L = d.length(), ang = Math.atan2(d.z, d.y)
-  const bend = mm(10)
-  const slotY = (0.63 - 0.5) * L
-  const upright = useMemo(() => { const sh = rrect(w, L, all(mm(1))); sh.holes.push(slotShape(slotY)); return slab(sh, th, mm(1.2), 3) }, [w, L, th, slotY])
-  useEffect(() => () => upright.dispose(), [upright])
+  const t = SD.tilt, w = mm(t.arm.w), tb = mm(13), tu = mm(9), rf = mm(22), b = f.j, a = f.p1.clone().setY(tb)
+  // thick flat base; the upright meets it through a concave fillet on its front and back faces (one solid, no seams)
+  const u = new THREE.Vector2(b.z - a.z, b.y - a.y).normalize(), n = new THREE.Vector2(u.y, -u.x)
+  const sTop = mm(70), L = Math.hypot(b.z - a.z, b.y - a.y) - sTop, ang = Math.atan2(u.x, u.y)
+  const mid = new THREE.Vector3(0, a.y + u.y * (sTop + L / 2), a.z + u.x * (sTop + L / 2))
+  const slotY = (0.63 - 0.5) * (L + sTop) - sTop / 2 + mm(0)
+  const fillet = useMemo(() => { const P = (s: number, side: number) => new THREE.Vector2(a.z + u.x * s + n.x * side * tu / 2, a.y + u.y * s + n.y * side * tu / 2)
+    const centre = (side: number) => { const q = P(0, side), nn = n.clone().multiplyScalar(side); return new THREE.Vector2(q.x + (rf - (tb + rf - q.y) * nn.y) / nn.x, tb + rf) }
+    const Cf = centre(1), Cr = centre(-1), sh = new THREE.Shape(), lo = tb - mm(2)
+    sh.moveTo(Cr.x, lo); sh.lineTo(Cr.x, tb)
+    let r0 = -Math.PI / 2, r1 = Math.atan2(n.y, n.x); if (r1 < r0) r1 += Math.PI * 2; sh.absarc(Cr.x, Cr.y, rf, r0, r1, false)
+    const Sr = P(sTop, -1), Sf = P(sTop, 1); sh.lineTo(Sr.x, Sr.y); sh.lineTo(Sf.x, Sf.y)
+    let f0 = Math.atan2(-n.y, -n.x), f1 = -Math.PI / 2; if (f1 < f0) f1 += Math.PI * 2; sh.absarc(Cf.x, Cf.y, rf, f0, f1, false)
+    sh.lineTo(Cf.x, lo); sh.closePath()
+    const g = new THREE.ExtrudeGeometry(sh, { depth: w, bevelEnabled: false, curveSegments: 32 }); g.translate(0, 0, -w / 2); g.rotateY(-Math.PI / 2); return g }, [w, a.y, a.z, u.x, u.y, n.x, n.y, tu, tb, rf, sTop])
+  const upright = useMemo(() => { const sh = rrect(w, L, all(mm(0.5))); sh.holes.push(slotShape(slotY)); return slab(sh, tu, mm(0.6), 3) }, [w, L, tu, slotY])
+  useEffect(() => () => { upright.dispose(); fillet.dispose() }, [upright, fillet])
   return <group>
-    <Foot w={w} d={mm(t.base.d)} z0={mm(t.base.z0)} alu={alu} t={th} />
-    {/* bend: a quarter round joining the foot's rear end to the upright */}
-    <mesh position={[0, bend, a.z + bend * Math.sin(ang)]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[bend, bend, w, 24, 1, false, Math.PI, Math.PI / 2 + ang]} /><primitive object={alu} attach="material" /></mesh>
+    <Foot w={w} d={mm(t.base.d)} z0={mm(t.base.z0)} alu={alu} t={tb} rear={mm(14)} edge={mm(3)} />
+    <mesh geometry={fillet} castShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
     {/* upright: the sheet with the cable slot through it */}
-    <group position={a.clone().add(b).multiplyScalar(0.5).toArray()} rotation={[ang, 0, 0]}>
+    <group position={mid.toArray()} rotation={[ang, 0, 0]}>
       <mesh geometry={upright} castShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
     </group>
-    {/* hinge: a round cylinder across the top with chrome end caps */}
     <mesh position={b.toArray()} rotation={[0, 0, Math.PI / 2]} castShadow><cylinderGeometry args={[mm(12), mm(12), w, 40]} /><primitive object={alu} attach="material" /></mesh>
     {[-1, 1].map(sx => <mesh key={sx} position={[sx * (w / 2 + mm(1)), b.y, b.z]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[mm(11), mm(11), mm(2), 32]} /><primitive object={chrome} attach="material" /></mesh>)}
   </group>
+}
+/** Black braided power cable: plugs into the round port on the panel back, runs back through the stand's slot and curves down to the floor. */
+function Cable({ f }: { f: ReturnType<typeof sdFrame> }) {
+  const geo = useMemo(() => { const X = new THREE.Vector3(1, 0, 0), at = (y: number, z: number) => new THREE.Vector3(0, y, z).applyAxisAngle(X, f.rx).add(f.centre)
+    const py = -mm(SD.panel.h) / 2 + mm(28), p0 = at(py, -PT / 2 - mm(14)), dir = at(py, -PT / 2 - 1).sub(at(py, -PT / 2)).normalize()
+    const at2 = (k: number, y: number) => new THREE.Vector3(0, y, p0.z + dir.z * k)
+    const pts = [p0, p0.clone().addScaledVector(dir, mm(70)), at2(mm(130), p0.y - mm(8)), at2(mm(190), p0.y * 0.7), at2(mm(225), p0.y * 0.35), at2(mm(238), mm(10)), at2(mm(240), -mm(40))]
+    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'centripetal'), 160, mm(3.5), 14, false) }, [f.rx, f.centre.y, f.centre.z])
+  const mat = useMemo(() => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d')!; x.fillStyle = '#1a1a1c'; x.fillRect(0, 0, 64, 64)
+    x.strokeStyle = '#2c2c30'; x.lineWidth = 3; for (let i = -64; i < 128; i += 8) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i + 64, 64); x.stroke(); x.beginPath(); x.moveTo(i + 64, 0); x.lineTo(i, 64); x.stroke() }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(220, 2); t.colorSpace = THREE.SRGBColorSpace
+    return new THREE.MeshStandardMaterial({ map: t, roughness: 0.85 }) }, [])
+  useEffect(() => () => { geo.dispose(); mat.map?.dispose(); mat.dispose() }, [geo, mat])
+  return <mesh geometry={geo} castShadow><primitive object={mat} attach="material" /></mesh>
 }
 
 function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
@@ -125,6 +159,7 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
   return (
     <group>
       {stand === 'tilt' && <TiltStand f={f0} alu={alu} chrome={chrome} />}
+      {opts.sdCable && <Cable f={f0} />}
       {stand === 'height' && <group>
         <Foot w={mm(h.base.w)} d={mm(h.base.d)} z0={mm(h.base.z0)} alu={alu} />
         {/* post: a flat plate with a rounded top and the cable hole near its foot */}
@@ -153,6 +188,11 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
             <mesh position={[0, 0, E]}><ringGeometry args={[mm(7), mm(11), 40]} /><meshStandardMaterial color="#2a2a2e" roughness={0.3} /></mesh>
           </group>
           {logo}
+          {/* plug in the port: a short black barrel, flush on the panel back */}
+          {opts.sdCable && <mesh position={[0, -ph / 2 + mm(28), -PT / 2 - mm(7)]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[mm(10), mm(10.5), mm(14), 32]} /><meshStandardMaterial color="#141416" roughness={0.6} /></mesh>}
+          {/* speaker grilles: fine perforated strips along the full width of the bottom and top edges */}
+          {[-1, 1].map(sy => <mesh key={sy} position={[0, sy * (ph / 2 + E), 0]} rotation={[sy * -Math.PI / 2, 0, 0]}><planeGeometry args={[pw - mm(2 * SD.panel.r + 6), mm(8)]} />
+            <meshStandardMaterial map={grille()} color={fin.body} metalness={0.5} roughness={0.5} polygonOffset polygonOffsetFactor={-2} /></mesh>)}
           {stand !== 'tilt' && stand !== 'height' && <group position={[0, 0, -PT / 2]}>
             {/* VESA mount adapter: the 100 x 100 plate with its four bolts, on a bar to the cable entry */}
             {/* two rails carrying the 100 x 100 bolt pattern, joined by a bridge at the bottom */}
