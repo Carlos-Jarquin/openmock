@@ -369,6 +369,7 @@ export default function App() {
   const sbReset = D0.sbReset, setSbReset = S.dev.sbReset
   const pose = G.pose, setPose = S.glo.pose
   const poseRef = useRef(pose); poseRef.current = pose
+  const histDev = useRef<unknown>(null)
   // AI hand swap: the generated hand as a layer over the live scene; while it is in, camera, devices and hand are locked
   const [swap, setSwap] = useState<{ url: string; w: number; h: number } | null>(() => { try { const v = JSON.parse(localStorage.getItem(SWAP_KEY) || 'null'); return v && typeof v.url === 'string' ? v : null } catch { return null } })
   useEffect(() => { try { if (swap) localStorage.setItem(SWAP_KEY, JSON.stringify(swap)); else localStorage.removeItem(SWAP_KEY) } catch { /* too big for storage: this session only */ } }, [swap])
@@ -473,7 +474,7 @@ export default function App() {
   useEffect(() => { const prev = lastModel.current; lastModel.current = device
     const cur = poseRef.current, same = (a: Pose, b: Pose) => (Object.keys(a) as (keyof Pose)[]).every(k => Math.abs(a[k] - b[k]) < 1e-3)
     const lastDefault = useRefLast.current; const untouched = prev === null ? same(cur, POSE) : !!lastDefault && same(cur, lastDefault)
-    if (!untouched) return
+    if (!untouched || performance.now() < hist.current.applying) return
     // wait a few frames so the new model is mounted and centred before measuring it
     const t = setTimeout(() => { const p = defaultPose(device); useRefLast.current = p; setPose(p) }, 350); return () => clearTimeout(t) }, [device, standKey, defaultPose, setPose])
   const speedRef = useRef(foldSpeed); speedRef.current = foldSpeed
@@ -861,7 +862,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { swapInAiHand, restoreHand, rigs, devGroup, defaultPose, resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { histRef: histDev, swapInAiHand, restoreHand, rigs, devGroup, defaultPose, resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -1172,14 +1173,59 @@ export default function App() {
   ]
 
   // Palette commands that apply straight away
-  // Clear canvas: every device, its settings, timeline rows and the saved list go; one fresh default device remains. Undo for 6 s
-  const [clrAsk, setClrAsk] = useState(false), [clrUndo, setClrUndo] = useState<{ scene: SceneState; tl: TlSaved | null } | null>(null), clrTimer = useRef(0)
+  // ── Scene undo and redo (⌘Z, ⌘⇧Z; Ctrl elsewhere). Every change to the scene is recorded; a run of changes with no gap
+  // longer than BURST ms (or while a pointer is held: drags, scrubs, camera moves) is one step. AI hands made at a scene state
+  // come back, locked, when undo or redo lands on that exact state.
+  type HistE = { scene: SceneState; tl?: TlSaved | null }
+  const HIST_MAX = 100, BURST = 500
+  const hist = useRef<{ past: HistE[]; future: HistE[]; base: SceneState; until: number; down: boolean; applying: number; tl: TlSaved | null | undefined }>({ past: [], future: [], base: S.scene, until: 0, down: false, applying: performance.now() + 2500, tl: undefined })
+  const [histN, setHistN] = useState({ u: 0, r: 0 })
+  const sceneKey = (sc: SceneState) => JSON.stringify([sc.global.pose, sc.global.trueScale, sc.devices.map(d => [d.model, d.xf, d.hands, d.gesture, d.handRot, d.hidden, d.look, d.opts])])
+  const aiAt = useRef(new Map<string, { url: string; w: number; h: number }>())
+  useEffect(() => { if (swap) { const m = aiAt.current; m.delete(sceneKey(S.get())); m.set(sceneKey(S.get()), swap); while (m.size > 12) m.delete(m.keys().next().value!) } }, [swap]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const h = hist.current
+    const dn = () => { h.down = true }, up = () => { h.down = false; h.until = Math.max(h.until, performance.now() + BURST) }
+    window.addEventListener('pointerdown', dn, true); window.addEventListener('pointerup', up, true); window.addEventListener('pointercancel', up, true)
+    return () => { window.removeEventListener('pointerdown', dn, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', up, true) } }, [])
+  useEffect(() => { const h = hist.current, sc = S.scene, now = performance.now()
+    if (sc === h.base) return
+    const same = sceneKey(sc) === sceneKey(h.base) && sc.selected === h.base.selected && JSON.stringify(sc) === JSON.stringify(h.base)
+    if (now < h.applying || same) { h.base = sc; return }
+    if (!(h.down || now < h.until) || h.tl !== undefined) {
+      h.past.push({ scene: h.base, tl: h.tl }); if (h.past.length > HIST_MAX) h.past.shift(); h.tl = undefined }
+    else if (!h.past.length) h.past.push({ scene: h.base })
+    h.future = []; h.base = sc; h.until = now + BURST; setHistN({ u: h.past.length, r: 0 }) }, [S.scene])
+  const histGo = useCallback((dir: -1 | 1) => { const h = hist.current, from = dir < 0 ? h.past : h.future, to = dir < 0 ? h.future : h.past
+    const e = from.pop(); if (!e) { flash(dir < 0 ? 'Nothing to undo.' : 'Nothing to redo.'); return }
+    to.push({ scene: h.base, tl: e.tl })
+    // a Clear canvas step also wipes and brings back the timeline
+    if (e.tl) { if (dir < 0) tlApi.current?.unwipe(e.tl); else tlApi.current?.wipe() }
+    h.applying = performance.now() + 700; h.until = 0; h.base = e.scene
+    // undo is the user's choice: no lock modal; the AI hand made at the landing state comes back, otherwise the 3D hand shows
+    lockRef.current = null; setSceneGuard(null); askRef.current = false; setLockAsk(null)
+    const ai = aiAt.current.get(sceneKey(e.scene)) ?? null
+    setSwap(ai); if (ai) { lockRef.current = lockRun; setSceneGuard(lockRun) }
+    S.restoreAll(e.scene); poseRef.current = e.scene.global.pose
+    setHistN({ u: h.past.length, r: h.future.length })
+    flash(dir < 0 ? (ai ? 'Undone. AI hand restored.' : 'Undone.') : (ai ? 'Redone. AI hand restored.' : 'Redone.')) }, [S, flash, lockRun])
+  const undo = useCallback(() => histGo(-1), [histGo]), redo = useCallback(() => histGo(1), [histGo])
+  histDev.current = { undo, redo, hist: hist.current }
+  useEffect(() => { const on = (e: KeyboardEvent) => {
+      if (!(IS_MAC ? e.metaKey : e.ctrlKey) || e.altKey) return
+      const z = e.code === 'KeyZ' || e.key.toLowerCase() === 'z', y = !IS_MAC && !e.shiftKey && (e.code === 'KeyY' || e.key.toLowerCase() === 'y')
+      if (!z && !y) return
+      const a = document.activeElement as HTMLElement | null
+      if (a && (a.isContentEditable || a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !/^(range|checkbox|radio|button|color)$/.test((a as HTMLInputElement).type)))) return
+      e.preventDefault(); if (y || e.shiftKey) redo(); else undo() }
+    window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on) }, [undo, redo])
+  // Clear canvas: every device, its settings, timeline rows and the saved list go; one fresh default device remains. no undo past it
+  const [clrAsk, setClrAsk] = useState(false)
   const clearCanvas = useCallback(() => { setClrAsk(false)
     if (lockRef.current && !lockRef.current(() => clearCanvas())) return
-    const tl = tlApi.current?.wipe() ?? null, scene = S.clearAll()
-    setClrUndo({ scene, tl }); clearTimeout(clrTimer.current); clrTimer.current = window.setTimeout(() => setClrUndo(null), 6000)
-    setTimeout(() => { const p = defaultPose(S.get().devices[0]?.model ?? 'ip18'); useRefLast.current = p; setPose(p) }, 400) }, [S, defaultPose, setPose])
-  const undoClear = useCallback(() => { if (!clrUndo) return; clearTimeout(clrTimer.current); S.restoreAll(clrUndo.scene); if (clrUndo.tl) tlApi.current?.unwipe(clrUndo.tl); setClrUndo(null); flash('Canvas restored.') }, [S, clrUndo, flash])
+    tlApi.current?.wipe(); S.clearAll()
+    // a hard boundary: no undo past a reset, and the AI hands made before it are gone too
+    { const h = hist.current; h.past = []; h.future = []; h.tl = undefined; h.until = 0; h.applying = performance.now() + 1500; aiAt.current.clear(); setHistN({ u: 0, r: 0 }) }
+    setTimeout(() => { const p = defaultPose(S.get().devices[0]?.model ?? 'ip18'); useRefLast.current = p; hist.current.applying = performance.now() + 600; hist.current.past = []; setPose(p) }, 400) }, [S, defaultPose, setPose])
   useEffect(() => { if (!clrAsk) return; const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setClrAsk(false) }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k) }, [clrAsk])
   const commands: Cmd[] = [
     ...DEVICES.map(d => ({ id: `model-${d.id}`, group: 'device' as const, section: 'model', label: `Model › ${d.label}`, meta: (d.id === device ? 'CURRENT' : 'APPLY') as Cmd['meta'],
@@ -1237,6 +1283,8 @@ export default function App() {
     { id: 'orbit', group: 'view', label: 'View › Orbit tool', meta: 'APPLY', run: () => setNavMode('orbit') },
     { id: 'pan', group: 'view', label: 'View › Pan tool', meta: 'APPLY', run: () => setNavMode('pan') },
     { id: 'truescale', group: 'scene', section: 'devices', label: trueOn ? 'Scene › True scale off' : 'Scene › True scale on', meta: 'APPLY', run: () => S.glo.trueScale(!trueOn) },
+    { id: 'undo', group: 'scene', label: IS_MAC ? 'Scene › Undo (⌘Z)' : 'Scene › Undo (Ctrl+Z)', meta: 'APPLY', run: undo },
+    { id: 'redo', group: 'scene', label: IS_MAC ? 'Scene › Redo (⇧⌘Z)' : 'Scene › Redo (Ctrl+Shift+Z)', meta: 'APPLY', run: redo },
     { id: 'clearcanvas', group: 'scene', label: 'Scene › Clear canvas', meta: 'APPLY', run: clearCanvas },
     { id: 'resetview', group: 'view', label: 'View › Reset view', meta: 'APPLY', run: resetView, keys: RESET_KEYS },
   ]
@@ -1248,7 +1296,7 @@ export default function App() {
     <span className="om-clrwrap">
       <button className={`om-ibtn ${clrAsk ? 'on' : ''}`} aria-label="Clear canvas" aria-haspopup="dialog" aria-expanded={clrAsk} title="Clear canvas: remove every device" onClick={() => setClrAsk(a => !a)}><Icon name="clearcanvas" size={16} /></button>
       {clrAsk && <div className="om-clrpop" role="dialog" aria-label="Clear canvas">
-        <p>Clear the canvas? Every device, its settings and its timeline rows are removed. You can undo this.</p>
+        <p>Clear the canvas? Every device, its settings and its timeline rows are removed. This can't be undone.</p>
         <div className="om-clrbtns"><button className="ghost" onClick={() => setClrAsk(false)}>Cancel</button><button className="om-primary" autoFocus onClick={clearCanvas}>Clear</button></div>
       </div>}
     </span>
@@ -1370,7 +1418,6 @@ export default function App() {
           <div className="om-clrbtns"><button className="ghost" autoFocus onClick={() => { askRef.current = false; setLockAsk(null) }}>Cancel</button>
             <button className="om-primary" onClick={() => restoreHand(lockAsk)}>Continue</button></div></div></div>}
         {dragging && <div className="dropnote">Drop to use as the screen</div>}
-        {clrUndo && <div className="tl-undo om-clrundo" role="status">Canvas cleared. <button onClick={undoClear}>Undo</button></div>}
         {toast && <div className="toast" role="status" style={{ position: 'absolute', left: '50%', bottom: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8,
           background: toast.error ? 'rgba(192,57,43,0.92)' : 'rgba(29,29,31,0.85)', color: '#fff', font: '13px -apple-system, system-ui, sans-serif', pointerEvents: 'none', maxWidth: 420, textAlign: 'center' }}>{toast.text}</div>}
       </main>
