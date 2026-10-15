@@ -18,7 +18,10 @@ const E = 0.0006
 export type SdStand = 'tilt' | 'height' | 'vesa'
 export const SD = { panel: { w: 623, h: 362, t: 20, r: 9, edge: 1.8 }, screen: { w: 596.5, h: 335.5 }, px: { w: 5120, h: 2880 },
   tilt: { base: { w: 151, d: 168, t: 7, z0: 71 }, hinge: { y: 208, z: 12 }, foot: 140, arm: { w: 151, t: 9 } },
-  height: { base: { w: 151, d: 215, t: 7, z0: 20 }, post: { z: -168, top: 293, t: 12 }, p1: 261, link: 92, a0: -35, a1: 35, attach: 90, fwd: 17, gap: 17, side: 79.5, plate: 6 },
+  // measured on Apple's side profile (362 mm panel = 3.564 px/mm): column 9 mm thick, top cut flat 300 mm up, its front face 176 mm
+  // behind the base's front edge; one wide link 117 x 32 mm (stadium, pivots 85 mm apart, r 16), lower pivot 259 mm up (261.5 here: Apple's 479 and 583 mm heights), the
+  // upper pivot 90 mm below the panel centre and 18 mm behind its back. +/-38.1 deg gives Apple's 105 mm of height travel.
+  height: { base: { w: 151, d: 215, t: 7, z0: 20 }, post: { z: -160.5, top: 302, t: 9 }, p1: 261.5, link: 85, a0: -38.1, a1: 38.1, attach: 90, fwd: 20.5, gap: 18, armW: 146, armR: 16, capR: 8.8 },
   vesa: { plate: 100, depth: 11, y: 300 }, bottom: 117 }
 export const SD_ASPECT = SD.px.w / SD.px.h
 export const SD_FINISHES: Record<string, { label: string; body: string }> = { silver: { label: 'Silver', body: '#e6e7e9' } }
@@ -149,9 +152,9 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
   const g = useMemo(() => ({
     body: once('body', () => slab(rrect(pw, ph, all(mm(SD.panel.r))), PT, mm(SD.panel.edge))),
     // black glass inside the aluminium lip: inset by the bevel width, its corner concentric with the frame's (r minus the lip)
-    pill: once('pill', () => { const L = mm(SD.height.link), r = mm(17), sh = new THREE.Shape(); sh.absarc(-L / 2, 0, r, Math.PI / 2, Math.PI * 1.5, false); sh.absarc(L / 2, 0, r, -Math.PI / 2, Math.PI / 2, false)
-      const d = mm(SD.height.plate), b = mm(1.6), e = new THREE.ExtrudeGeometry(sh, { depth: d - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: b, bevelOffset: -b, bevelSegments: 4, curveSegments: 32 }); e.translate(0, 0, -(d - 2 * b) / 2); return e }),
-    post: once('post', () => { const sh = rrect(mm(SD.height.base.w), mm(SD.height.post.top), [0, 0, mm(22), mm(22)]); sh.holes.push(slotShape(mm(POST_SLOT_Y - SD.height.post.top / 2))); return slab(sh, mm(SD.height.post.t), mm(2), 4) }),
+    pill: once('pill', () => { const L = mm(SD.height.link), r = mm(SD.height.armR), sh = new THREE.Shape(); sh.absarc(-L / 2, 0, r, Math.PI / 2, Math.PI * 1.5, false); sh.absarc(L / 2, 0, r, -Math.PI / 2, Math.PI / 2, false)
+      const d = mm(SD.height.armW), b = mm(1.6), e = new THREE.ExtrudeGeometry(sh, { depth: d - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: b, bevelOffset: -b, bevelSegments: 4, curveSegments: 32 }); e.translate(0, 0, -(d - 2 * b) / 2); return e }),
+    post: once('post', () => { const sh = rrect(mm(SD.height.base.w), mm(SD.height.post.top), [0, 0, mm(1.5), mm(1.5)]); sh.holes.push(slotShape(mm(POST_SLOT_Y - SD.height.post.top / 2))); return slab(sh, mm(SD.height.post.t), mm(2), 4) }),
     rail: once('rail', () => slab(rrect(mm(18), mm(150), all(mm(9))), mm(SD.vesa.depth), mm(2), 4)),
     // lower bridge: 118 mm wide from 62 to 150 mm below centre, a semicircular notch over the round port (r 24, centre 153 below)
     bridge: once('bridge', () => { const sh = new THREE.Shape(), W = mm(59), T = -mm(62), B = -mm(150), r = mm(10), pc = -mm(153), pr = mm(24), xi = Math.sqrt(pr * pr - (B - pc) ** 2), ai = Math.atan2(B - pc, xi)
@@ -202,12 +205,12 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
         {/* counterbalanced arm: a flat pill plate on the post's side face, pivoting near the post's top and on the side
             of the bracket behind the panel, a screw head at each pivot; it clears the post and the panel */}
         <group ref={link} position={f0.p1.toArray()} rotation={[-f0.a, 0, 0]}>
-          {[-1, 1].map(sx => <group key={sx} position={[sx * mm(h.side), 0, 0]} scale={[sx, 1, 1]}>
-            <mesh position={[0, 0, mm(h.link) / 2]} rotation={[0, Math.PI / 2, 0]} castShadow userData={{ sketchHull: true }}><primitive object={g.pill} attach="geometry" /><primitive object={alu} attach="material" /></mesh>
-            {[0, mm(h.link)].map(z => <group key={z} position={[mm(h.plate) / 2 + E, 0, z]} rotation={[0, Math.PI / 2, 0]}>
-              <mesh><circleGeometry args={[mm(7.5), 32]} /><primitive object={chrome} attach="material" /></mesh>
-              <mesh position={[0, 0, E]}><circleGeometry args={[mm(2.6), 6]} /><meshStandardMaterial color="#3a3b3f" roughness={0.4} /></mesh></group>)}
-          </group>)}
+          {/* one wide link, flat sided, stadium seen from the side; a recessed round cap over each pivot on both faces */}
+          <mesh position={[0, 0, mm(h.link) / 2]} rotation={[0, Math.PI / 2, 0]} castShadow userData={{ sketchHull: true }}><primitive object={g.pill} attach="geometry" /><primitive object={alu} attach="material" /></mesh>
+          {[-1, 1].map(sx => [0, mm(h.link)].map(z => <group key={`${sx}${z}`} position={[sx * (mm(h.armW) / 2 + E), 0, z]} rotation={[0, sx * Math.PI / 2, 0]}>
+            <mesh><ringGeometry args={[mm(h.capR), mm(h.capR + 1.1), 40]} /><meshStandardMaterial color="#8e9196" roughness={0.5} metalness={0.6} /></mesh>
+            <mesh position={[0, 0, -E / 2]}><circleGeometry args={[mm(h.capR), 40]} /><primitive object={chrome} attach="material" /></mesh>
+            <mesh position={[0, 0, E]}><circleGeometry args={[mm(2.4), 6]} /><meshStandardMaterial color="#55575c" roughness={0.4} /></mesh></group>))}
         </group>
       </group>}
       <group ref={panel} position={f0.centre.toArray()} rotation={[f0.rx, 0, 0]}>
@@ -234,7 +237,6 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
             {[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y], i) => <mesh key={i} position={[x * mm(50), y * mm(50), -mm(SD.vesa.depth) - E]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(3.4), 20]} /><meshStandardMaterial color="#8d8f93" metalness={0.8} roughness={0.3} /></mesh>)}
           </group>}
           {stand === 'tilt' && <mesh position={[0, mm(SD.tilt.hinge.y - SD.bottom - SD.panel.h / 2), -PT / 2 - mm(4)]} castShadow><primitive object={g.boss} attach="geometry" /><primitive object={alu} attach="material" /></mesh>}
-          {stand === 'height' && <mesh position={[0, mm(-h.attach), -PT / 2 - mm(h.gap + 6) / 2]} castShadow><boxGeometry args={[mm(2 * h.side - h.plate - 2), mm(26), mm(h.gap + 6)]} /><primitive object={alu} attach="material" /></mesh>}
         </group>
         <mesh position={[0, 0, PT / 2 + E * 3]} name="screen">
           <planeGeometry args={portrait ? [sh, sw] : [sw, sh]} />
