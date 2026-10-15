@@ -47,7 +47,8 @@ function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
   const g = useMemo(() => {
     const base = once('base', () => slab(rrect(W, D, all(mm(MBP.r))), TB, mm(MBP.edge)))
     const lid = once('lid', () => { const s = slab(rrect(W, DL, all(mm(MBP.r))), TL, mm(MBP.edge) * 0.8); s.translate(0, DL / 2, -TL / 2); return s })
-    const front = once('front', () => new THREE.ShapeGeometry(rrect(W - 0.02, DL - 0.02, all(mm(MBP.r) - 0.01), 0, DL / 2), 48))
+    // black glass inside the lid's lip: inset by the lid's bevel width, its corner concentric with the lid's (r minus the lip)
+    const lip = mm(MBP.edge) * 0.8, front = once('front', () => new THREE.ShapeGeometry(rrect(W - 2 * lip, DL - 2 * lip, all(mm(MBP.r) - lip), 0, DL / 2), 48))
     const dw = mm(MBP.disp.w), dh = mm(MBP.disp.h), dy = DL - mm(MBP.disp.top) - dh / 2
     const screen = once('screen', () => { const s = new THREE.ShapeGeometry(rrect(dw, dh, [0, 0, mm(MBP.disp.r), mm(MBP.disp.r)], 0, dy), 24)
       const pos = s.attributes.position, uv = s.attributes.uv
