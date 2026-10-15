@@ -5,7 +5,7 @@ import { Icon } from './icons'
 
 export type Side = 'scene' | 'device'
 export interface Section { id: string; side: Side; title: string; icon: string; settings: string[]; render: () => ReactNode }
-export interface Cmd { id: string; group: Side | 'view'; section?: string; label: string; meta: 'APPLY' | 'TOGGLE' | 'PEEK' | 'CURRENT'; run?: () => void }
+export interface Cmd { id: string; group: Side | 'view'; section?: string; label: string; meta: 'APPLY' | 'TOGGLE' | 'PEEK' | 'CURRENT'; run?: () => void; keys?: string }
 export interface ChromeApi { closeFloating: () => void }
 type UiState = { pinned: Record<Side, boolean>; railHidden: Record<Side, boolean>; pillHidden: boolean; pinSec: Record<Side, string | null> }
 const UI0: UiState = { pinned: { scene: false, device: false }, railHidden: { scene: false, device: false }, pillHidden: false, pinSec: { scene: null, device: null } }
@@ -277,6 +277,7 @@ export function Chrome({ sections, commands, deviceName, tools, exportMenu, time
               {results.map((r, i) => r.c.group !== g ? null : <div key={r.c.id} id={`om-opt-${i}`} role="option" aria-selected={i === hi} className={`om-opt ${i === hi ? 'on' : ''}`}
                 onMouseMove={() => setHi(i)} onClick={() => applyCmd(r.c)}>
                 <span className="om-opt-l">{bold(r.c.label, r.i)}</span>
+                {r.c.keys && <kbd className="om-opt-k" aria-label={`Shortcut ${r.c.keys}`}>{r.c.keys}</kbd>}
                 <button tabIndex={-1} className="om-opt-m" onClick={e => { e.stopPropagation(); if (r.c.meta === 'PEEK' || r.c.section) toPeek(r.c); else applyCmd(r.c) }}>{r.c.meta === 'PEEK' && i === hi ? '→ Peek' : r.c.meta === 'APPLY' && i === hi ? 'Apply ↵' : r.c.meta}</button>
               </div>)}
             </div>)}

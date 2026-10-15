@@ -53,6 +53,10 @@ const VIEW_PRESETS: [string, Pose][] = [
   ['Flat lay', { tiltX: 0, tiltY: 0, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 12 }],
   ['Hero 3/4', { tiltX: -14, tiltY: -32, rotZ: -9, zoom: 1.08, panX: 0, panY: 0, fov: 24 }],
 ]
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
+const RESET_KEYS = IS_MAC ? '⌘0' : 'Ctrl+0'
+/** Base orientation per model where it differs from the shared three-quarter default: the Studio Display faces the camera. */
+const BASE_POSE: Partial<Record<DeviceId, Pose>> = { studio: { tiltX: 0, tiltY: 0, rotZ: 0, zoom: 1, panX: 0, panY: 0, fov: 30 } }
 const APPLE_HERO = { tiltX: -18.438, tiltY: 230.375, rotZ: -3.125, zoom: 1.937, panX: 0.347, panY: -0.307, fov: 21.375 }
 // Device bodies the hands can grip, in model units (1 = 100 mm).
 type BodySpec = { body: { w: number; h: number; t: number; cornerR: number; edge: number }; active: { w: number; h: number }; px: { w: number; h: number } }
@@ -178,13 +182,13 @@ function SceneBg({ mode, c1, c2, angle }: { mode: BgMode; c1: string; c2: string
 /** Keeps its children centred on their own bounding-box centre (measured unrotated), so the view orbits the device. */
 function Centred({ deps, children, off = false }: { deps: unknown[]; children: React.ReactNode; off?: boolean }) {
   const inner = useRef<THREE.Group>(null)
-  const dirty = useRef(true)
+  const dirty = useRef(30) // frames left to re-centre: parts placed by useFrame (stands, lids) settle over the first frames
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { dirty.current = true }, deps)
+  useEffect(() => { dirty.current = 30 }, deps)
   useFrame(() => {
-    const g = inner.current; if (!g || !dirty.current) return
+    const g = inner.current; if (!g || dirty.current <= 0) return
     // the Duo positions itself about its hinge (see Duo.tsx), so a bbox re-centre would shift it with the fold
-    if (off) { g.position.set(0, 0, 0); dirty.current = false; return }
+    if (off) { g.position.set(0, 0, 0); dirty.current = 0; return }
     const parent = g.parent!
     const saved = parent.matrixWorld.clone()
     parent.matrixWorld.identity()
@@ -198,7 +202,7 @@ function Centred({ deps, children, off = false }: { deps: unknown[]; children: R
     for (const [o, p] of skip) p.add(o)
     parent.matrixWorld.copy(saved)
     if (!box.isEmpty()) { const c = box.getCenter(new THREE.Vector3()); g.position.set(-c.x, -c.y, -c.z) }
-    dirty.current = false
+    dirty.current--
   })
   return <group ref={inner}>{children}</group>
 }
@@ -358,6 +362,56 @@ export default function App() {
       onSwap: () => setOpts(x => ({ ...x, screen: to })),
       onDone: (fold, k) => { setOpts(x => ({ ...x, screen: to, fold, trans: null })); if (k !== 1) setPose(p => ({ ...p, zoom: z0 * k })); then?.() } }
   }, [])
+  /** The default view of a model, framed to fit: head-on for the Studio Display, the three-quarter view for the rest.
+   * The device is centred by its bounding box (Centred); the zoom fits its height and width into the stage. */
+  const defaultPose = useCallback((model: DeviceId, at?: Pose): Pose => {
+    const st = document.querySelector('main.stage') as HTMLElement | null, asp = st ? st.clientWidth / Math.max(1, st.clientHeight) : 1.6
+    const base = at ?? BASE_POSE[model] ?? POSE
+    // measured fit: the visible devices' boxes (in the turntable's frame), turned to the default angle, against the view
+    // (4.2 units away at 30 degrees shows 2.25 units of height at zoom 1); falls back to the rough size table
+    const wx = WIDTH[model] ?? 0.8, wy = HEIGHT[model] ?? 1.6; let fitPts: THREE.Vector3[] | null = null
+    const dg = devGroup.current, vis = S.get().devices.filter(d => !d.hidden).map(d => rigs.current.get(d.uid)).filter(Boolean) as THREE.Group[]
+    if (dg && vis.length) {
+      dg.updateWorldMatrix(true, true); const inv = dg.matrixWorld.clone().invert(), q = new THREE.Quaternion().setFromEuler(new THREE.Euler(D2R(base.tiltX), D2R(base.tiltY), D2R(base.rotZ)))
+      const pts: THREE.Vector3[] = [], m = new THREE.Matrix4()
+      for (const g of vis) g.traverse(o => { const me = o as THREE.Mesh
+        if (!me.isMesh || !me.geometry || !o.visible || (o as THREE.InstancedMesh).isInstancedMesh || o.userData.sketchHide) return
+        for (let a: THREE.Object3D | null = o; a; a = a.parent) if (a.userData.noBounds) return
+        if (!me.geometry.boundingBox) me.geometry.computeBoundingBox(); const bb = me.geometry.boundingBox!; m.multiplyMatrices(inv, o.matrixWorld)
+        for (let k = 0; k < 8; k++) { const v = new THREE.Vector3(k & 1 ? bb.max.x : bb.min.x, k & 2 ? bb.max.y : bb.min.y, k & 4 ? bb.max.z : bb.min.z).applyMatrix4(m).applyQuaternion(q); if (Number.isFinite(v.x + v.y + v.z)) pts.push(v) } })
+      if (pts.length) { fitPts = pts }
+    }
+    // perspective fit: the camera sits D = 4.2 / zoom from the turntable (in units where the view shows 2.25 / zoom of
+    // height at its centre); a point at depth z projects scaled by D / (D - z). Iterate pan and zoom on the projected box.
+    const view = 2.25, r3 = (x: number) => Math.round(x * 1000) / 1000
+    let zoom = clamp(Math.min(view * 0.68 / wy, view * asp * 0.72 / wx), 0.3, 2.5), px = 0, py = 0
+    if (fitPts) for (let it = 0; it < 6; it++) {
+      const D = 4.2 / zoom; let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9
+      for (const v of fitPts) { const k = D / Math.max(D * 0.2, D - v.z), X = (v.x + px) * k, Y = (v.y + py) * k; x0 = Math.min(x0, X); x1 = Math.max(x1, X); y0 = Math.min(y0, Y); y1 = Math.max(y1, Y) }
+      px -= (x0 + x1) / 2; py -= (y0 + y1) / 2
+      const W = (x1 - x0) * 1.04, H = (y1 - y0) * 1.04
+      zoom = clamp(zoom * Math.min(view * 0.68 / zoom / H, view * asp * 0.72 / zoom / W), 0.3, 2.5)
+    }
+    if (!Number.isFinite(zoom + px + py)) { zoom = 1; px = 0; py = 0 }
+    return { ...base, zoom: r3(zoom), panX: r3(clamp(px, -1.5, 1.5)), panY: r3(clamp(py, -1.5, 1.5)) } }, [])
+  // presets are relative to the model's framed default: same angles, zoom scaled by the fit zoom
+  const goPreset = useCallback((p: Pose) => { const f = defaultPose(device, p); goView({ ...f, zoom: Math.round(p.zoom * f.zoom * 1000) / 1000 }) }, [goView, defaultPose, device])
+  const resetView = useCallback(() => { const p = defaultPose(device); useRefLast.current = p; goView(p) }, [goView, defaultPose, device])
+  // Cmd+0 (Ctrl+0 elsewhere): reset the camera to the default view; replaces the browser's zoom reset, camera only
+  useEffect(() => { const on = (e: KeyboardEvent) => {
+      if (!(IS_MAC ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || (e.key !== '0' && e.code !== 'Digit0' && e.code !== 'Numpad0')) return
+      const a = document.activeElement as HTMLElement | null
+      if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return
+      e.preventDefault(); resetView() }
+    window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on) }, [resetView])
+  // switching model (or first load) moves the camera to the new model's default view unless it has been changed by hand
+  const lastModel = useRef<DeviceId | null>(null), useRefLast = useRef<Pose | null>(null)
+  useEffect(() => { const prev = lastModel.current; lastModel.current = device
+    const cur = poseRef.current, same = (a: Pose, b: Pose) => (Object.keys(a) as (keyof Pose)[]).every(k => Math.abs(a[k] - b[k]) < 1e-3)
+    const lastDefault = useRefLast.current; const untouched = prev === null ? same(cur, POSE) : !!lastDefault && same(cur, lastDefault)
+    if (!untouched) return
+    // wait a few frames so the new model is mounted and centred before measuring it
+    const t = setTimeout(() => { const p = defaultPose(device); useRefLast.current = p; setPose(p) }, 350); return () => clearTimeout(t) }, [device, defaultPose, setPose])
   const speedRef = useRef(foldSpeed); speedRef.current = foldSpeed
   /** Stops the Play loop; finish also ends a running transition at its target (for the Fold slider). */
   const stopFold = useCallback((finish = true) => {
@@ -692,7 +746,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -795,8 +849,8 @@ export default function App() {
       {slider('Pan X', pose.panX, -1.5, 1.5, 0.01, n => setPose({ ...pose, panX: n }))}
       {slider('Pan Y', pose.panY, -1.5, 1.5, 0.01, n => setPose({ ...pose, panY: n }))}
       <h3>View presets</h3>
-      <div className="seg wrap" aria-label="View presets">{VIEW_PRESETS.map(([n, p]) => <button key={n} onClick={() => goView(p)}>{n}</button>)}</div>
-      <div className="om-tiles"><button className="ghost" onClick={() => setPose(APPLE_HERO)}>Apple hero angle</button><button className="ghost" onClick={() => setPose(POSE)}>Reset camera</button></div>
+      <div className="seg wrap" aria-label="View presets">{VIEW_PRESETS.map(([n, p]) => <button key={n} onClick={() => goPreset(p)}>{n}</button>)}</div>
+      <div className="om-tiles"><button className="ghost" onClick={() => setPose(APPLE_HERO)}>Apple hero angle</button><button className="ghost" onClick={resetView}>Reset camera</button></div>
     </> },
     { id: 'lighting', side: 'scene', title: 'Lighting', icon: 'lighting', settings: ['Soft studio', 'Apple studio', 'Violet rim', 'Intensity', 'Direction', 'Height', 'Floor shadow', 'Shadow', 'Distance to floor', 'Reflections'], render: () => <>
       <div className="seg">{([['soft', 'Soft studio'], ['apple', 'Apple studio'], ['violet', 'Violet rim']] as const).map(([k, l]) =>
@@ -1035,9 +1089,9 @@ export default function App() {
     { id: 'sketch', group: 'scene', section: 'style', label: 'Style › Sketch', meta: sketch ? 'CURRENT' : 'APPLY', run: () => { setStyle('sketch'); setBgMode('solid'); setBg1(SKETCH_PAPER); setTransparent(false) } },
     { id: 'transp', group: 'scene', section: 'background', label: 'Background › Transparent', meta: 'TOGGLE', run: () => setTransparent(v => !v) },
     ...(['solid', 'gradient', 'streaks'] as const).map(m => ({ id: `bg-${m}`, group: 'scene' as const, section: 'background', label: `Background › ${m[0].toUpperCase() + m.slice(1)}`, meta: 'APPLY' as const, run: () => { setTransparent(false); setBgMode(m) } })),
-    ...VIEW_PRESETS.map(([n, p]) => ({ id: `view-${n}`, group: 'scene' as const, section: 'camera', label: `Camera › View › ${n}`, meta: 'APPLY' as const, run: () => goView(p) })),
+    ...VIEW_PRESETS.map(([n, p]) => ({ id: `view-${n}`, group: 'scene' as const, section: 'camera', label: `Camera › View › ${n}`, meta: 'APPLY' as const, run: () => goPreset(p) })),
     { id: 'hero', group: 'scene', section: 'camera', label: 'Camera › Apple hero angle', meta: 'APPLY', run: () => setPose(APPLE_HERO) },
-    { id: 'resetcam', group: 'scene', section: 'camera', label: 'Camera › Reset camera', meta: 'APPLY', run: () => setPose(POSE) },
+    { id: 'resetcam', group: 'scene', section: 'camera', label: 'Camera › Reset camera', meta: 'APPLY', run: resetView },
     ...([['soft', 'Soft studio'], ['apple', 'Apple studio'], ['violet', 'Violet rim']] as const).map(([k, l]) => ({ id: `light-${k}`, group: 'scene' as const, section: 'lighting', label: `Lighting › ${l}`, meta: (light.preset === k ? 'CURRENT' : 'APPLY') as Cmd['meta'], run: () => setLight(x => ({ ...x, preset: k })) })),
     { id: 'shadow', group: 'scene', section: 'lighting', label: 'Lighting › Floor shadow', meta: 'TOGGLE', run: () => setLight(x => ({ ...x, shadowOn: !x.shadowOn })) },
     { id: 'dof', group: 'scene', section: 'effects', label: 'Effects › Depth of field', meta: 'TOGGLE', run: () => setFx(x => ({ ...x, dof: !x.dof })) },
@@ -1051,13 +1105,13 @@ export default function App() {
     { id: 'tl', group: 'view', label: 'Timeline › Expand or minimise (T)', meta: 'TOGGLE', run: toggleTimeline },
     { id: 'orbit', group: 'view', label: 'View › Orbit tool', meta: 'APPLY', run: () => setNavMode('orbit') },
     { id: 'pan', group: 'view', label: 'View › Pan tool', meta: 'APPLY', run: () => setNavMode('pan') },
-    { id: 'resetview', group: 'view', label: 'View › Reset view', meta: 'APPLY', run: () => setPose(POSE) },
+    { id: 'resetview', group: 'view', label: 'View › Reset view', meta: 'APPLY', run: resetView, keys: RESET_KEYS },
   ]
 
   const tools = <div className="om-tools" role="group" aria-label="View tools">
     <button className={`om-ibtn ${navMode === 'orbit' ? 'on' : ''}`} aria-label="Orbit" aria-pressed={navMode === 'orbit'} title="Orbit: drag to turn the device" onClick={() => setNavMode('orbit')}><Icon name="orbit" size={16} /></button>
     <button className={`om-ibtn ${navMode === 'pan' ? 'on' : ''}`} aria-label="Pan" aria-pressed={navMode === 'pan'} title="Pan: drag to move the device (or right-drag, or Shift-drag)" onClick={() => setNavMode('pan')}><Icon name="pan" size={16} /></button>
-    <button className="om-ibtn" aria-label="Reset view" title="Reset view" onClick={() => setPose(POSE)}><Icon name="reset" size={16} /></button>
+    <button className="om-ibtn" aria-label="Reset view" title={`Reset view (${RESET_KEYS})`} onClick={resetView}><Icon name="reset" size={16} /></button>
   </div>
   const exportMenu = (close: () => void) => <>
     <h3>Image</h3>
