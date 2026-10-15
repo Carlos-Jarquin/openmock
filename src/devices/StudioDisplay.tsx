@@ -80,16 +80,21 @@ function Grilles({ pw, ph }: { pw: number; ph: number }) {
 }
 const padCache = new Map<number, THREE.BufferGeometry>()
 function padGeo(d: number, pw: number) { const k = d * 1000 + pw; let g = padCache.get(k); if (g) return g
-  const r = pw / 2, L = d - mm(8), sh = new THREE.Shape(); sh.absarc(0, -L / 2 + r, r, Math.PI, 0, false); sh.absarc(0, L / 2 - r, r, 0, Math.PI, false); sh.closePath()
+  const r = pw / 2, L = d, sh = new THREE.Shape(); sh.absarc(0, -L / 2 + r, r, Math.PI, 0, false); sh.absarc(0, L / 2 - r, r, 0, Math.PI, false); sh.closePath()
   g = new THREE.ExtrudeGeometry(sh, { depth: mm(0.4), bevelEnabled: false, curveSegments: 24 }); g.rotateX(Math.PI / 2); g.translate(0, mm(0.05), 0); padCache.set(k, g); return g }
 /** Flat foot plate, its front end rounded (seen from above) and its edges eased. */
-function Foot({ w, d, z0, alu, t = mm(5), rear = mm(6), edge = mm(1.6) }: { w: number; d: number; z0: number; alu: THREE.Material; t?: number; rear?: number; edge?: number }) {
-  const geo = useMemo(() => { const r = Math.min(w / 2, mm(28)), b = slab(rrect(w, d, [rear, rear, r, r]), t, edge, 4); b.rotateX(-Math.PI / 2); return b }, [w, d, t, rear, edge])
+function Foot({ w, d, z0, alu, t = mm(5), rear = mm(6), front = mm(28), edge = mm(1.6) }: { w: number; d: number; z0: number; alu: THREE.Material; t?: number; rear?: number; front?: number; edge?: number }) {
+  front = Math.min(front, w / 2)
+  // shape +y maps to world -z (the rear) after the rotation
+  const geo = useMemo(() => { const b = slab(rrect(w, d, [front, front, rear, rear]), t, edge, 4); b.rotateX(-Math.PI / 2); return b }, [w, d, t, rear, front, edge])
   useEffect(() => () => geo.dispose(), [geo])
+  // pads: pills 9% of the width, 3.5 mm in from the sides; each end sits as far out as it can while every point of its round
+  // cap stays 1 mm inside the flat underside (inside the edge roundover and clear of that end's corner radius)
+  const pr = w * 0.045, side = mm(3.5), cx = side + pr, gap = edge + mm(1)
+  const endIn = (R: number) => { if (cx >= R) return gap; const dx = R - cx, room = R - gap - pr; const dy = room > dx ? Math.sqrt(room * room - dx * dx) : 0; return Math.max(gap, R - dy - pr) }
+  const eF = endIn(front), eR = endIn(rear), L = d - eF - eR, zc = z0 - eF - L / 2
   return <group><mesh geometry={geo} position={[0, t / 2, z0 - d / 2]} castShadow receiveShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
-    {/* two long black rubber pads near the left and right edges: straight parallel pills 9% of the base width, 3 mm in from
-        the sides and 4 mm from the front and back, inside the flat of the underside (clear of the eased edge and corners) */}
-    {[-1, 1].map(sx => <mesh key={sx} geometry={padGeo(d, w * 0.09)} position={[sx * (w / 2 - mm(3) - w * 0.045), 0, z0 - d / 2]}><meshStandardMaterial color="#1c1c1e" roughness={0.85} /></mesh>)}</group>
+    {[-1, 1].map(sx => <mesh key={sx} geometry={padGeo(L, 2 * pr)} position={[sx * (w / 2 - cx), 0, zc]}><meshStandardMaterial color="#1c1c1e" roughness={0.85} /></mesh>)}</group>
 }
 /** Tilt stand: one wide aluminium sheet bent into an L. The flat foot runs back under the panel, bends up at its rear
  * end and the upright slants forward to the round hinge behind the panel (chrome caps on its ends). A round cable hole
@@ -113,14 +118,14 @@ function TiltStand({ f, alu, chrome }: { f: ReturnType<typeof sdFrame>; alu: THR
   const upright = useMemo(() => { const sh = rrect(w, L, all(mm(0.5))); sh.holes.push(slotShape(slotY)); return slab(sh, tu, mm(0.6), 3) }, [w, L, tu, slotY])
   useEffect(() => () => { upright.dispose(); fillet.dispose() }, [upright, fillet])
   return <group>
-    <Foot w={w} d={mm(t.base.d)} z0={mm(t.base.z0)} alu={alu} t={tb} rear={mm(14)} edge={mm(2)} />
+    <Foot w={w} d={mm(t.base.d)} z0={mm(t.base.z0)} alu={alu} t={tb} rear={mm(13)} front={mm(13)} edge={mm(2)} />
     <mesh geometry={fillet} castShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
     {/* upright: the sheet with the cable slot through it */}
     <group position={mid.toArray()} rotation={[ang, 0, 0]}>
       <mesh geometry={upright} castShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
     </group>
-    <mesh position={b.toArray()} rotation={[0, 0, Math.PI / 2]} castShadow><cylinderGeometry args={[mm(12), mm(12), w, 40]} /><primitive object={alu} attach="material" /></mesh>
-    {[-1, 1].map(sx => <mesh key={sx} position={[sx * (w / 2 + mm(1)), b.y, b.z]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[mm(11), mm(11), mm(2), 32]} /><primitive object={chrome} attach="material" /></mesh>)}
+    <mesh position={b.toArray()} rotation={[0, 0, Math.PI / 2]} castShadow><cylinderGeometry args={[mm(12), mm(12), w - mm(4), 40]} /><primitive object={alu} attach="material" /></mesh>
+    {[-1, 1].map(sx => <mesh key={sx} position={[sx * (w / 2 - mm(1)), b.y, b.z]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[mm(11), mm(11), mm(2), 32]} /><primitive object={chrome} attach="material" /></mesh>)}
   </group>
 }
 /** Black braided power cable: plugs into the round port on the panel back, runs back through the stand's slot and curves down to the floor. */
