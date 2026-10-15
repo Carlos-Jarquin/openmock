@@ -13,7 +13,8 @@ import { MBP, mbpKey } from './devices/MacBookPro'
 import { IMAC, imacFrame } from './devices/IMacG4'
 import { WATCH, WATCH_BANDS } from './devices/WatchUltra'
 import { REMOTE, REMOTE_HELD } from './devices/AppleTV'
-import { LID0, TILT0, RISE0, LID_RANGE, TILT_RANGE } from './devices/mech'
+import { LID0, TILT0, RISE0, LID_RANGE, TILT_RANGE, SD_TILT0, SD_RISE0, SD_TILT_RANGE } from './devices/mech'
+import { SD, sdFrame, type SdStand } from './devices/StudioDisplay'
 import { ErrorBoundary } from './ErrorBoundary'
 import { loadLogo, loadLocalLogo } from './localLogo'
 import { Env, retryEnvironment } from './Env'
@@ -39,7 +40,7 @@ import { GES_KEYS, XF0, devKf, quatPose, tlLive, type Frame, type KfState, type 
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 /** The animatable mechanism of a device for the timeline: MacBook lid angle, iMac G4 tilt and stand height. */
-const mechOf = (d: DeviceState): number[] | null => d.model === 'mbp16' ? [d.opts.lid ?? LID0] : d.model === 'imacg4' ? [d.opts.tilt ?? TILT0, d.opts.rise ?? RISE0] : null
+const mechOf = (d: DeviceState): number[] | null => d.model === 'mbp16' ? [d.opts.lid ?? LID0] : d.model === 'imacg4' ? [d.opts.tilt ?? TILT0, d.opts.rise ?? RISE0] : d.model === 'studio' ? [d.opts.tilt ?? SD_TILT0, d.opts.rise ?? SD_RISE0] : null
 const wrap = (v: number) => ((v + 540) % 360) - 180
 /** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
 /** One-click camera presets (beside Reset camera). Zoom and pan stay at the framed defaults; Flat lay uses a long lens. */
@@ -68,7 +69,7 @@ const DUO_OPEN: HandFit = { W: 2 * DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005
 const DUO_CLOSED: HandFit = { W: DUO_W, H: 1.178, T: 2 * DUO_T + DUO_GAP, R: 0.127, E: 0.005, SW: 1.136 * OUTER_PX.w / OUTER_PX.h, SH: 1.136, PW: Math.round(OUTER_PX.w / 3), PH: Math.round(OUTER_PX.h / 3), kind: 'phone' }
 const DUO_CLOSED_OFF: HandFit = { ...DUO_CLOSED, cx: DUO_W / 2, cz: DUO_T / 2 + DUO_GAP }
 // Desk machines are drawn at real size and scaled down as a whole (hands included) to sit in the same view as phones.
-const VIEW: Partial<Record<DeviceId, number>> = { mbp16: 0.6, imacg4: 0.3 }
+const VIEW: Partial<Record<DeviceId, number>> = { mbp16: 0.6, imacg4: 0.3, studio: 0.3 }
 // MacBook Pro: the hands work in the base's frame (turned flat, top face up), touching the trackpad or the keys.
 const MBP_FIT: HandFit = (() => { const W = MBP.w / 100, D = MBP.d / 100, T = MBP.tb / 100
   const home = [1, 2, 3, 4, 7, 8, 9, 10].map(c => { const k = mbpKey(2, c); return [k.x, k.y] as [number, number] }), sp = mbpKey(0, 4)
@@ -85,6 +86,15 @@ const watchFit = (build: number): HandFit => { let f = watchCache.get(build); if
 /** Siri Remote, held upright beside the Apple TV: the thumb's targets are on the clickpad (100 x 100 points). */
 const REMOTE_FIT: HandFit = { W: REMOTE.w / 100, H: REMOTE.h / 100, T: REMOTE.t / 100, R: REMOTE.r / 100, E: REMOTE.edge / 100, SW: REMOTE.pad.d / 100, SH: REMOTE.pad.d / 100, PW: 100, PH: 100,
   OY: (REMOTE.h / 2 - REMOTE.pad.y + 14) / 100, kind: 'remote', cx: REMOTE_HELD.x, cy: REMOTE_HELD.y, cz: REMOTE_HELD.z }
+/** Studio Display: the hands work in the panel's frame, wherever the stand holds it (portrait turns the screen). */
+const studioCache = new Map<string, HandFit>()
+const studioFit = (o: DeviceOptions): HandFit => { const st: SdStand = o.sdStand ?? 'tilt', por = st === 'vesa' && !!o.sdPortrait, t = o.tilt ?? SD_TILT0, r = o.rise ?? SD_RISE0
+  const key = `${st}|${por}|${t}|${r}`, hit = studioCache.get(key); if (hit) return hit
+  if (studioCache.size > 200) studioCache.clear()
+  const f = sdFrame(st, t, r), p = SD.panel, W = p.w / 100, H = p.h / 100, SW = SD.screen.w / 100, SH = SD.screen.h / 100
+  const v: HandFit = { W: por ? H : W, H: por ? W : H, T: p.t / 100, R: p.r / 100, E: p.edge / 100, SW: por ? SH : SW, SH: por ? SW : SH, PW: por ? 1440 : 2560, PH: por ? 2560 : 1440,
+    kind: 'desktop', cy: f.centre.y, cz: f.centre.z, rx: f.rx }
+  studioCache.set(key, v); return v }
 /** iMac G4: the hands work in the display's frame, wherever the stand holds it. */
 const imacCache = new Map<string, HandFit>()
 const imacFit = (o: DeviceOptions): HandFit => { const key = `${o.tilt ?? TILT0}|${o.rise ?? RISE0}`, hit = imacCache.get(key); if (hit) return hit
@@ -98,6 +108,7 @@ function fitFor(d: Pick<DeviceState, 'model' | 'opts' | 'foldFollow' | 'look'>):
   if (d.model === 'atv4k') return d.opts.remote === false ? null : REMOTE_FIT
   if (d.model === 'mbp16') return MBP_FIT
   if (d.model === 'imacg4') return imacFit(d.opts)
+  if (d.model === 'studio') return studioFit(d.opts)
   if (d.model !== 'duo') return HAND_FITS[d.model] ?? null
   return d.opts.fold >= 180 ? DUO_OPEN : d.opts.fold <= 0 ? (d.foldFollow ? DUO_CLOSED : DUO_CLOSED_OFF) : null
 }
@@ -209,8 +220,8 @@ const D2R = THREE.MathUtils.degToRad
 const nailWord = (l: number) => l < 0.08 ? 'Short' : l < 0.4 ? 'Medium' : l < 0.75 ? 'Long' : 'Extra long'
 /** Rough width of each model in scene units, for placing new devices and the layout presets. */
 /** Rough height of each model in scene units, for zoom-to-fit. */
-const HEIGHT: Partial<Record<DeviceId, number>> = { mbp16: 1.55, imacg4: 2.2, watchu: 2.7, atv4k: 0.6, ip18: 1.5, ip18max: 1.63, duo: 1.55, phone: 1.5, ipmini: 1.96, ippro11: 2.5, ippro13: 2.85, browser: 1.75 }
-const WIDTH: Partial<Record<DeviceId, number>> = { mbp16: 2.2, imacg4: 2.3, watchu: 0.7, atv4k: 1.9, ip18: 0.72, ip18max: 0.78, duo: 1.5, phone: 0.75, ipmini: 1.38, ippro11: 1.8, ippro13: 2.2, browser: 2.6 }
+const HEIGHT: Partial<Record<DeviceId, number>> = { mbp16: 1.55, imacg4: 2.2, studio: 1.9, watchu: 2.7, atv4k: 0.6, ip18: 1.5, ip18max: 1.63, duo: 1.55, phone: 1.5, ipmini: 1.96, ippro11: 2.5, ippro13: 2.85, browser: 1.75 }
+const WIDTH: Partial<Record<DeviceId, number>> = { mbp16: 2.2, imacg4: 2.3, studio: 2.1, watchu: 0.7, atv4k: 1.9, ip18: 0.72, ip18max: 0.78, duo: 1.5, phone: 0.75, ipmini: 1.38, ippro11: 1.8, ippro13: 2.2, browser: 2.6 }
 const widthOf = (d: DeviceState) => d.model === 'duo' && d.opts.fold < 90 ? 0.75 : WIDTH[d.model] ?? 0.8
 /** The hand fit each device's gesture was last scaled for, so switching model rescales only that device's gesture. */
 const fitOfDev = new Map<string, HandFit>()
@@ -251,7 +262,7 @@ const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, s
   return (
     <group ref={ref} position={pos} rotation={rot}
       onPointerDown={e => { if (e.button !== 0 || e.shiftKey || e.altKey || e.intersections.some(i => onGizmo(i.object))) return; e.stopPropagation(); sceneHit.current = true; onGrab(d.uid, e.nativeEvent) }}>
-      <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, opts.lid, opts.tilt, opts.rise, screenTex.texture, d.hands.pose]}><group scale={VIEW[device] ?? 1}>
+      <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, opts.lid, opts.tilt, opts.rise, opts.sdStand, opts.sdPortrait, screenTex.texture, d.hands.pose]}><group scale={VIEW[device] ?? 1}>
         <HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={fitFor(d)} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle} look={d.look}>
           <SketchStyle on={sketch} o={sk}><D uid={d.uid} texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
             {...(device === 'duo' ? { textureOuter: shownOuter?.texture ?? null, mediaAspectOuter: shownOuter?.aspect } : {})} /></SketchStyle>
@@ -418,7 +429,7 @@ export default function App() {
   const setXfAt = (uid: string, v: Xf) => S.devAt(uid, 'xf', o => (Object.keys(v) as (keyof Xf)[]).every(k => o[k] === v[k]) ? o : { ...v })
   const mechAt = (uid: string, model: DeviceId, m: number[] | null | undefined) => { if (!m) return
     if (model === 'mbp16') S.devAt(uid, 'opts', o => o.lid === m[0] ? o : { ...o, lid: m[0] })
-    else if (model === 'imacg4') S.devAt(uid, 'opts', o => o.tilt === m[0] && o.rise === m[1] ? o : { ...o, tilt: m[0], rise: m[1] }) }
+    else if (model === 'imacg4' || model === 'studio') S.devAt(uid, 'opts', o => o.tilt === m[0] && o.rise === m[1] ? o : { ...o, tilt: m[0], rise: m[1] }) }
   const foldAt = (uid: string, fold: number) => S.devAt(uid, 'opts', o => o.fold === fold && o.screen === (fold >= 90 ? 'inner' : 'outer') ? o : { ...o, fold, screen: fold >= 90 ? 'inner' : 'outer' })
   const tlApply = useCallback((k: KfState) => {
     setPose({ ...k.pose })
@@ -885,6 +896,16 @@ export default function App() {
         <p className="hint">Drawn onto the screen in iPhone points, so it shows in renders and exports. Auto picks dark or light text from the top of your image or video.</p>
       </>}
     </> : <p className="hint">Available for the iPhone 18 Pro and Pro Max. iPad status bars are coming later.</p> },
+    ...(device === 'studio' ? [{ id: 'sdstand', side: 'device' as const, title: 'Stand', icon: 'stand', settings: ['Stand', 'Tilt stand', 'Tilt and height stand', 'VESA mount adapter', 'Portrait', 'Display tilt', 'Stand height', 'Nano-texture glass'], render: () => { const st = opts.sdStand ?? 'tilt'; return <>
+      <label className="row"><span>Stand</span><select value={st} onChange={e => { const v = e.target.value as SdStand; setOpts(x => ({ ...x, sdStand: v })) }}>
+        <option value="tilt">Tilt stand</option><option value="height">Tilt and height stand</option><option value="vesa">VESA mount adapter</option></select></label>
+      {st === 'vesa' && <div className="seg" role="group" aria-label="Orientation"><button className={!opts.sdPortrait ? 'on' : ''} aria-pressed={!opts.sdPortrait} onClick={() => setOpts(x => ({ ...x, sdPortrait: false }))}>Landscape</button><button className={opts.sdPortrait ? 'on' : ''} aria-pressed={!!opts.sdPortrait} onClick={() => setOpts(x => ({ ...x, sdPortrait: true }))}>Portrait</button></div>}
+      {slider('Display tilt', Math.round(opts.tilt ?? SD_TILT0), SD_TILT_RANGE[0], SD_TILT_RANGE[1], 1, n => setOpts(x => ({ ...x, tilt: n })), '°')}
+      {st === 'height' && slider('Stand height', Math.round((opts.rise ?? SD_RISE0) * 100), 0, 100, 1, n => setOpts(x => ({ ...x, rise: n / 100 })), '%')}
+      <label className="check"><input type="checkbox" checked={!!opts.nano} onChange={e => { const on = e.target.checked; setOpts(x => ({ ...x, nano: on })) }} /> Nano-texture glass</label>
+      <p className="hint">Add keyframes at different tilts and heights to animate the stand. Nano-texture glass is matte and reflects less.</p>
+      <button className="ghost" onClick={() => setOpts(x => ({ ...x, tilt: SD_TILT0, rise: SD_RISE0 }))}>Reset stand</button>
+    </> } }] : []),
     ...(device === 'watchu' ? [{ id: 'band', side: 'device' as const, title: 'Band', icon: 'band', settings: ['Band colour', ...Object.values(WATCH_BANDS).map(b => b.label)], render: () => <>
       <div className="seg wrap" role="group" aria-label="Band colour">{Object.entries(WATCH_BANDS).map(([k, b]) => <button key={k} aria-pressed={(opts.band ?? 'orange') === k} className={(opts.band ?? 'orange') === k ? 'on' : ''} onClick={() => setOpts(x => ({ ...x, band: k }))}>{b.label}</button>)}</div>
       <p className="hint">With a hand pose on, the band wraps the wrist. With hands off, it lies open.</p>
@@ -982,6 +1003,10 @@ export default function App() {
     ...(sbSize ? [{ id: 'sb', group: 'device' as const, section: 'statusbar', label: 'Status bar › Show status bar', meta: 'TOGGLE' as const, run: () => setSbOn(v => !v) }] : []),
     ...(handOk ? poses.map(([k, l]) => ({ id: `pose-${k}`, group: 'device' as const, section: 'hand', label: `Hand › ${isGesture(k) ? 'Gesture' : 'Grip'} › ${l}`, meta: (hands.pose === k ? 'CURRENT' : 'APPLY') as Cmd['meta'], run: () => setHands(h => ({ ...h, pose: k })) })) : []),
     ...(handOk ? tones.map(([k, t]) => ({ id: `tone-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Skin tone › ${t.label}`, meta: 'APPLY' as const, run: () => setHands(h => ({ ...h, tone: k })) })) : []),
+    ...(device === 'studio' ? ([['tilt', 'Tilt stand'], ['height', 'Tilt and height stand'], ['vesa', 'VESA mount adapter']] as [SdStand, string][]).map(([k, l]) => ({ id: `sd-${k}`, group: 'device' as const, section: 'sdstand', label: `Stand › ${l}`, meta: (opts.sdStand ?? 'tilt') === k ? 'CURRENT' as const : 'APPLY' as const, run: () => setOpts(x => ({ ...x, sdStand: k })) })).concat([
+      { id: 'sd-portrait', group: 'device' as const, section: 'sdstand', label: opts.sdPortrait ? 'Stand › Landscape' : 'Stand › Portrait (VESA)', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, sdStand: 'vesa', sdPortrait: !x.sdPortrait })) },
+      { id: 'sd-nano', group: 'device' as const, section: 'sdstand', label: opts.nano ? 'Glass › Standard' : 'Glass › Nano-texture', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, nano: !x.nano })) },
+      { id: 'sd-reset', group: 'device' as const, section: 'sdstand', label: 'Stand › Reset', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, tilt: SD_TILT0, rise: SD_RISE0 })) }]) : []),
     ...(device === 'watchu' ? Object.entries(WATCH_BANDS).map(([k, b]) => ({ id: `band-${k}`, group: 'device' as const, section: 'band', label: `Band › ${b.label}`, meta: (opts.band ?? 'orange') === k ? 'CURRENT' as const : 'APPLY' as const, run: () => setOpts(x => ({ ...x, band: k })) })) : []),
     ...(device === 'atv4k' ? [{ id: 'remote-toggle', group: 'device' as const, section: 'remote', label: opts.remote === false ? 'Remote › Show' : 'Remote › Hide', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, remote: x.remote === false })) }] : []),
     ...(device === 'mbp16' ? [{ id: 'lid-close', group: 'device' as const, section: 'lid', label: 'Lid › Close', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, lid: 0 })) },
