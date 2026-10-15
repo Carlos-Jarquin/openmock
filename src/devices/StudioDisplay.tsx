@@ -9,19 +9,19 @@ import { mechLiveFor, SD_TILT0, SD_RISE0 } from './mech'
 // 623 mm wide, panel 362 mm tall; 31 mm deep with the VESA mount adapter (a 20 mm panel plus the 11 mm adapter).
 // 5120 x 2880 at 218 ppi gives a 596.5 x 335.5 mm active area inside a thin black border, camera centred in the top.
 // Tilt stand: 478 mm high, 168 mm deep, one aluminium arm with a hinge behind the panel, tilt -5 to 25 degrees.
-// Tilt and height stand: 479 to 583 mm high, 207 mm deep, a counterbalanced arm with two pivots and 105 mm of travel.
+// Tilt and height stand: 479 to 583 mm high, 207 mm deep, a counterbalanced arm (92 mm between pivots, swinging -35 to 35 degrees) with two pivots and 105 mm of travel.
 // VESA mount adapter: a 100 x 100 plate, the panel landscape or portrait. Stand part sizes are read off the drawings.
 // 1 unit = 100 mm, floor at y = 0, the screen faces +z.
 const mm = (v: number) => v / 100
 const all = (r: number) => [r, r, r, r]
 const E = 0.0006
 export type SdStand = 'tilt' | 'height' | 'vesa'
-export const SD = { panel: { w: 623, h: 362, t: 20, r: 9, edge: 3 }, screen: { w: 596.5, h: 335.5 }, px: { w: 5120, h: 2880 },
-  tilt: { base: { w: 151, d: 166, t: 7, z0: 18 }, hinge: { y: 220, z: 12 }, foot: 140, arm: { w: 151, t: 9 } },
-  height: { base: { w: 151, d: 205, t: 7, z0: 20 }, post: { z: -168, top: 345, t: 12 }, p1: 323.7, link: 114.6, a0: -35, a1: 20, attach: 40 },
+export const SD = { panel: { w: 623, h: 362, t: 20, r: 9, edge: 1.8 }, screen: { w: 596.5, h: 335.5 }, px: { w: 5120, h: 2880 },
+  tilt: { base: { w: 151, d: 160, t: 7, z0: 75 }, hinge: { y: 208, z: 12 }, foot: 152, arm: { w: 151, t: 9 } },
+  height: { base: { w: 151, d: 205, t: 7, z0: 20 }, post: { z: -168, top: 290, t: 12 }, p1: 276.8, link: 92, a0: -35, a1: 35, attach: 74 },
   vesa: { plate: 100, depth: 11, y: 300 }, bottom: 117 }
 export const SD_ASPECT = SD.px.w / SD.px.h
-export const SD_FINISHES: Record<string, { label: string; body: string }> = { silver: { label: 'Silver', body: '#d9dadc' } }
+export const SD_FINISHES: Record<string, { label: string; body: string }> = { silver: { label: 'Silver', body: '#e6e7e9' } }
 const PT = mm(SD.panel.t)
 /** Where the panel sits: its centre and tilt (turn about x), plus the stand parts' joints. */
 export function sdFrame(stand: SdStand, tilt: number, rise: number) {
@@ -37,7 +37,7 @@ export function sdFrame(stand: SdStand, tilt: number, rise: number) {
 }
 const geoCache = new Map<string, THREE.BufferGeometry>()
 const once = (k: string, f: () => THREE.BufferGeometry) => { let g = geoCache.get(k); if (!g) geoCache.set(k, g = f()); return g }
-/** A flat bar from a to b (y-z plane), w wide along x and t thick. */
+/** (unused) A flat bar from a to b (y-z plane), w wide along x and t thick. */
 function Bar({ a, b, w, t, mat, r = 0 }: { a: THREE.Vector3; b: THREE.Vector3; w: number; t: number; mat: THREE.Material; r?: number }) {
   const d = b.clone().sub(a), L = d.length(), ang = Math.atan2(d.z, d.y)
   return <mesh position={a.clone().add(b).multiplyScalar(0.5).toArray()} rotation={[ang, 0, 0]} castShadow userData={{ sketchHull: true }}>
@@ -47,22 +47,58 @@ function Pivot({ at, mat, r = mm(13), w = mm(160) }: { at: THREE.Vector3; mat: T
   return <mesh position={at.toArray()} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[r, r, w, 40]} /><primitive object={mat} attach="material" /></mesh>
 }
 
+/** Flat foot plate, its front end rounded (seen from above) and its edges eased. */
+function Foot({ w, d, z0, alu, t = mm(5) }: { w: number; d: number; z0: number; alu: THREE.Material; t?: number }) {
+  const geo = useMemo(() => { const r = Math.min(w / 2, mm(28)), b = slab(rrect(w, d, [mm(6), mm(6), r, r]), t, mm(1.6), 4); b.rotateX(-Math.PI / 2); return b }, [w, d, t])
+  useEffect(() => () => geo.dispose(), [geo])
+  return <mesh geometry={geo} position={[0, t / 2, z0 - d / 2]} castShadow receiveShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
+}
+/** Tilt stand: one wide aluminium sheet bent into an L. The flat foot runs back under the panel, bends up at its rear
+ * end and the upright slants forward to the round hinge behind the panel (chrome caps on its ends). A round cable hole
+ * with the black power plug sits in the upright just below the panel. */
+function TiltStand({ f, alu, chrome }: { f: ReturnType<typeof sdFrame>; alu: THREE.Material; chrome: THREE.Material }) {
+  const t = SD.tilt, w = mm(t.arm.w), th = mm(5), a = f.p1.clone().setY(th), b = f.j, d = b.clone().sub(a), L = d.length(), ang = Math.atan2(d.z, d.y)
+  const bend = mm(10)
+  const hole = a.clone().lerp(b, 0.66)
+  return <group>
+    <Foot w={w} d={mm(t.base.d)} z0={mm(t.base.z0)} alu={alu} t={th} />
+    {/* bend: a quarter round joining the foot's rear end to the upright */}
+    <mesh position={[0, bend, a.z + bend * Math.sin(ang)]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[bend, bend, w, 24, 1, false, Math.PI, Math.PI / 2 + ang]} /><primitive object={alu} attach="material" /></mesh>
+    <mesh position={a.clone().add(b).multiplyScalar(0.5).toArray()} rotation={[ang, 0, 0]} castShadow userData={{ sketchHull: true }}><boxGeometry args={[w, L, th]} /><primitive object={alu} attach="material" /></mesh>
+    {/* hinge: a round cylinder across the top with chrome end caps */}
+    <mesh position={b.toArray()} rotation={[0, 0, Math.PI / 2]} castShadow><cylinderGeometry args={[mm(12), mm(12), w, 40]} /><primitive object={alu} attach="material" /></mesh>
+    {[-1, 1].map(sx => <mesh key={sx} position={[sx * (w / 2 + mm(1)), b.y, b.z]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[mm(11), mm(11), mm(2), 32]} /><primitive object={chrome} attach="material" /></mesh>)}
+    {/* cable hole through the upright, the black plug in it */}
+    <group position={hole.toArray()} rotation={[ang + Math.PI / 2, 0, 0]}>
+      <mesh><cylinderGeometry args={[mm(19), mm(19), th + E * 4, 40, 1, true]} /><meshStandardMaterial color="#0c0c0d" side={THREE.DoubleSide} /></mesh>
+      {[-1, 1].map(k => <mesh key={k} position={[0, k * (th / 2 + E * 2), 0]} rotation={[-k * Math.PI / 2, 0, 0]}><ringGeometry args={[mm(12.5), mm(19), 40]} /><meshStandardMaterial color="#101012" roughness={0.6} /></mesh>)}
+      <mesh><cylinderGeometry args={[mm(12), mm(12), th + mm(1), 32]} /><meshStandardMaterial color="#2a2a2d" roughness={0.35} /></mesh>
+    </group>
+  </group>
+}
+
 function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
   const fin = SD_FINISHES.silver, stand: SdStand = opts.sdStand ?? 'tilt', portrait = stand === 'vesa' && !!opts.sdPortrait
   const pw = mm(SD.panel.w), ph = mm(SD.panel.h), sw = mm(SD.screen.w), sh = mm(SD.screen.h)
   const g = useMemo(() => ({
     body: once('body', () => slab(rrect(pw, ph, all(mm(SD.panel.r))), PT, mm(SD.panel.edge))),
-    glass: once('glass', () => new THREE.ShapeGeometry(rrect(pw - mm(1.2), ph - mm(1.2), all(mm(SD.panel.r - 0.6))), 16)),
+    // black glass inside the aluminium lip: inset by the bevel width, its corner concentric with the frame's (r minus the lip)
+    pill: once('pill', () => { const L = mm(SD.height.link), r = mm(19), sh = new THREE.Shape(); sh.absarc(-L / 2, 0, r, Math.PI / 2, Math.PI * 1.5, false); sh.absarc(L / 2, 0, r, -Math.PI / 2, Math.PI / 2, false)
+      const e = new THREE.ExtrudeGeometry(sh, { depth: mm(72) - mm(4), bevelEnabled: true, bevelThickness: mm(2), bevelSize: mm(2), bevelOffset: -mm(2), bevelSegments: 4, curveSegments: 32 }); e.translate(0, 0, -(mm(72) - mm(4)) / 2); return e }),
+    post: once('post', () => slab(rrect(mm(SD.height.base.w), mm(SD.height.post.top), [0, 0, mm(22), mm(22)]), mm(SD.height.post.t), mm(2), 4)),
+    boss: once('boss', () => slab(rrect(mm(SD.tilt.arm.w), mm(46), all(mm(10))), mm(8), mm(2.5), 6)),
+    glass: once('glass', () => new THREE.ShapeGeometry(rrect(pw - mm(2 * SD.panel.edge), ph - mm(2 * SD.panel.edge), all(mm(SD.panel.r - SD.panel.edge))), 32)),
   }), [pw, ph])
   useMemo(() => fitTexture(texture, mediaAspect, portrait ? 1 / SD_ASPECT : SD_ASPECT), [texture, mediaAspect, portrait])
-  const alu = useMemo(() => new THREE.MeshPhysicalMaterial({ color: fin.body, metalness: 0.9, roughness: 0.34, envMapIntensity: 1 }), [fin.body])
+  const alu = useMemo(() => new THREE.MeshPhysicalMaterial({ color: fin.body, metalness: 0.7, roughness: 0.36, envMapIntensity: 1 }), [fin.body])
   const nano = !!opts.nano
   // standard glass: a sharp reflection over the screen; nano-texture: the same reflection scattered and dimmed (matte).
   // Black base colour, so only the reflection shows and the screen keeps its contrast.
   const cover = useMemo(() => nano
     ? new THREE.MeshPhysicalMaterial({ color: '#000000', roughness: 0.85, transparent: true, opacity: 0.5, depthWrite: false, envMapIntensity: 0.35 })
     : new THREE.MeshPhysicalMaterial({ color: '#000000', roughness: 0.03, metalness: 0, transparent: true, opacity: 0.5, depthWrite: false, envMapIntensity: 1.6 }), [nano])
-  useEffect(() => () => { alu.dispose(); cover.dispose() }, [alu, cover])
+  const chrome = useMemo(() => new THREE.MeshPhysicalMaterial({ color: '#eceef0', metalness: 0.55, roughness: 0.18, clearcoat: 1, envMapIntensity: 1 }), [])
+  useEffect(() => () => { alu.dispose(); cover.dispose(); chrome.dispose() }, [alu, cover, chrome])
   const live = mechLiveFor(uid)
   const panel = useRef<THREE.Group>(null), link = useRef<THREE.Group>(null)
   const frame = (t?: number[] | null) => sdFrame(stand, t?.[0] ?? opts.tilt ?? SD_TILT0, t?.[1] ?? opts.rise ?? SD_RISE0)
@@ -81,20 +117,20 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
   const h = SD.height, tb = SD.tilt
   return (
     <group>
-      {stand === 'tilt' && <group>
-        <mesh position={[0, mm(tb.base.t) / 2, mm(tb.base.z0 - tb.base.d / 2)]} castShadow receiveShadow userData={{ sketchHull: true }}><boxGeometry args={[mm(tb.base.w), mm(tb.base.t), mm(tb.base.d)]} /><primitive object={alu} attach="material" /></mesh>
-        <Bar a={f0.p1} b={f0.j} w={mm(tb.arm.w)} t={mm(tb.arm.t)} mat={alu} />
-        <Pivot at={f0.j} mat={alu} w={mm(tb.arm.w - 4)} />
-        {/* cable hole through the arm */}
-        <mesh position={f0.p1.clone().lerp(f0.j, 0.55).add(new THREE.Vector3(0, 0, -mm(tb.arm.t) / 2 - E)).toArray()} rotation={[Math.atan2(f0.j.z - f0.p1.z, f0.j.y - f0.p1.y), Math.PI, 0]}><circleGeometry args={[mm(14), 32]} /><meshBasicMaterial color="#141416" /></mesh>
-      </group>}
+      {stand === 'tilt' && <TiltStand f={f0} alu={alu} chrome={chrome} />}
       {stand === 'height' && <group>
-        <mesh position={[0, mm(h.base.t) / 2, mm(h.base.z0 - h.base.d / 2)]} castShadow receiveShadow userData={{ sketchHull: true }}><boxGeometry args={[mm(h.base.w), mm(h.base.t), mm(h.base.d)]} /><primitive object={alu} attach="material" /></mesh>
-        <mesh position={[0, mm(h.post.top) / 2, mm(h.post.z)]} castShadow userData={{ sketchHull: true }}><boxGeometry args={[mm(h.base.w), mm(h.post.top), mm(h.post.t)]} /><primitive object={alu} attach="material" /></mesh>
-        {/* counterbalanced link: pivots on the post and behind the panel */}
+        <Foot w={mm(h.base.w)} d={mm(h.base.d)} z0={mm(h.base.z0)} alu={alu} />
+        {/* post: a flat plate with a rounded top and the cable hole near its foot */}
+        <mesh geometry={g.post} position={[0, mm(h.post.top) / 2, mm(h.post.z)]} castShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
+        <group position={[0, mm(160), mm(h.post.z)]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh><cylinderGeometry args={[mm(19), mm(19), mm(h.post.t) + E * 4, 40, 1, true]} /><meshStandardMaterial color="#0c0c0d" side={THREE.DoubleSide} /></mesh>
+          {[-1, 1].map(k => <mesh key={k} position={[0, k * (mm(h.post.t) / 2 + E * 2), 0]} rotation={[-k * Math.PI / 2, 0, 0]}><ringGeometry args={[mm(12.5), mm(19), 40]} /><meshStandardMaterial color="#101012" roughness={0.6} /></mesh>)}
+          <mesh><cylinderGeometry args={[mm(12), mm(12), mm(h.post.t) + mm(1), 32]} /><meshStandardMaterial color="#2a2a2d" roughness={0.35} /></mesh>
+        </group>
+        {/* counterbalanced arm: a flat pill, seen side on, with a round pivot at each end */}
         <group ref={link} position={f0.p1.toArray()} rotation={[-f0.a, 0, 0]}>
-          <mesh position={[0, 0, mm(h.link) / 2]} rotation={[Math.PI / 2, 0, 0]} castShadow><capsuleGeometry args={[mm(16), mm(h.link), 6, 24]} /><primitive object={alu} attach="material" /></mesh>
-          {[0, mm(h.link)].map(z => <mesh key={z} position={[mm(30), 0, z]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[mm(7), mm(7), mm(62), 24]} /><meshStandardMaterial color="#b9bbbf" metalness={0.8} roughness={0.3} /></mesh>)}
+          <mesh position={[0, 0, mm(h.link) / 2]} rotation={[0, Math.PI / 2, 0]} castShadow userData={{ sketchHull: true }}><primitive object={g.pill} attach="geometry" /><primitive object={alu} attach="material" /></mesh>
+          {[0, mm(h.link)].map(z => [-1, 1].map(sx => <mesh key={`${z}${sx}`} position={[sx * (mm(36) + E), 0, z]} rotation={[0, sx * Math.PI / 2, 0]}><circleGeometry args={[mm(11), 32]} /><primitive object={chrome} attach="material" /></mesh>))}
         </group>
       </group>}
       <group ref={panel} position={f0.centre.toArray()} rotation={[f0.rx, 0, 0]}>
@@ -109,12 +145,13 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
             <mesh position={[0, 0, -mm(SD.vesa.depth) / 2]} castShadow><boxGeometry args={[mm(SD.vesa.plate + 12), mm(SD.vesa.plate + 30), mm(SD.vesa.depth)]} /><primitive object={alu} attach="material" /></mesh>
             {[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y], i) => <mesh key={i} position={[x * mm(50), y * mm(50), -mm(SD.vesa.depth) - E]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(3.4), 20]} /><meshStandardMaterial color="#8d8f93" metalness={0.8} roughness={0.3} /></mesh>)}
           </group>}
+          {stand === 'tilt' && <mesh position={[0, mm(SD.tilt.hinge.y - SD.bottom - SD.panel.h / 2), -PT / 2 - mm(4)]} castShadow><primitive object={g.boss} attach="geometry" /><primitive object={alu} attach="material" /></mesh>}
           {stand === 'height' && <mesh position={[0, mm(-h.attach), -PT / 2 - mm(6)]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[mm(26), mm(30), mm(12), 32]} /><primitive object={alu} attach="material" /></mesh>}
         </group>
         <mesh position={[0, 0, PT / 2 + E * 3]} name="screen">
           <planeGeometry args={portrait ? [sh, sw] : [sw, sh]} />
           {texture ? <meshBasicMaterial key="tex" map={texture} toneMapped={false} /> : <meshBasicMaterial key="idle" color="#08090c" />}</mesh>
-        <mesh position={[0, 0, PT / 2 + E * 4]} renderOrder={2} userData={{ sketchHide: true }}><planeGeometry args={portrait ? [ph, pw] : [pw, ph]} /><primitive object={cover} attach="material" /></mesh>
+        <mesh position={[0, 0, PT / 2 + E * 4]} renderOrder={2} userData={{ sketchHide: true }}><shapeGeometry args={[portrait ? rrect(ph - mm(2 * SD.panel.edge), pw - mm(2 * SD.panel.edge), all(mm(SD.panel.r - SD.panel.edge))) : rrect(pw - mm(2 * SD.panel.edge), ph - mm(2 * SD.panel.edge), all(mm(SD.panel.r - SD.panel.edge))), 32]} /><primitive object={cover} attach="material" /></mesh>
       </group>
     </group>)
 }
