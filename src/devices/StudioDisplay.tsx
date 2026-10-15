@@ -19,9 +19,9 @@ export type SdStand = 'tilt' | 'height' | 'vesa'
 export const SD = { panel: { w: 623, h: 362, t: 20, r: 9, edge: 1.8 }, screen: { w: 596.5, h: 335.5 }, px: { w: 5120, h: 2880 },
   tilt: { base: { w: 151, d: 168, t: 7, z0: 71 }, hinge: { y: 208, z: 12 }, foot: 140, arm: { w: 151, t: 9 } },
   // measured on Apple's side profile (362 mm panel = 3.564 px/mm): column 9 mm thick, top cut flat 300 mm up, its front face 176 mm
-  // behind the base's front edge; one wide link 117 x 32 mm (stadium, pivots 85 mm apart, r 16), lower pivot 259 mm up (261.5 here: Apple's 479 and 583 mm heights), the
-  // upper pivot 90 mm below the panel centre and 18 mm behind its back. +/-38.1 deg gives Apple's 105 mm of height travel.
-  height: { base: { w: 151, d: 215, t: 7, z0: 20 }, post: { z: -160.5, top: 302, t: 9 }, p1: 261.5, link: 85, a0: -38.1, a1: 38.1, attach: 90, fwd: 20.5, gap: 18, armW: 146, armR: 16, capR: 8.8 },
+  // behind the base's front edge; one wide link 117 x 32 mm (stadium, pivots 85 mm apart, r 16), lower pivot 258 mm up (panel bottom 169 mm at mid, as in Apple's back and side views; the base and pads add 2 mm), the
+  // upper pivot 90 mm below the panel centre and 18 mm behind its back. +/-37.7 deg gives Apple's 479 and 583 mm heights (104 mm of travel).
+  height: { base: { w: 151, d: 215, t: 7.5, z0: 20 }, post: { z: -160.5, top: 302, t: 9 }, p1: 258, link: 85, a0: -37.7, a1: 37.7, attach: 90, fwd: 20.5, gap: 18, armW: 146, armR: 16, capR: 8.8 },
   vesa: { plate: 100, depth: 11, y: 300 }, bottom: 117 }
 export const SD_ASPECT = SD.px.w / SD.px.h
 export const SD_FINISHES: Record<string, { label: string; body: string }> = { silver: { label: 'Silver', body: '#e6e7e9' } }
@@ -198,7 +198,7 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
       {stand === 'tilt' && <TiltStand f={f0} alu={alu} chrome={chrome} />}
       {opts.sdCable && <Cable f={f0} />}
       {stand === 'height' && <group>
-        <Foot w={mm(h.base.w)} d={mm(h.base.d)} z0={mm(h.base.z0)} alu={alu} />
+        <Foot w={mm(h.base.w)} d={mm(h.base.d)} z0={mm(h.base.z0)} t={mm(h.base.t)} alu={alu} />
         {/* post: a flat plate with a rounded top and the cable hole near its foot */}
         <mesh geometry={g.post} position={[0, mm(h.post.top) / 2, mm(h.post.z)]} castShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
         {/* counterbalanced arm: a flat pill, seen side on, with a round pivot at each end */}
