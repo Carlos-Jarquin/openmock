@@ -17,8 +17,8 @@ const all = (r: number) => [r, r, r, r]
 const E = 0.0006
 export type SdStand = 'tilt' | 'height' | 'vesa'
 export const SD = { panel: { w: 623, h: 362, t: 20, r: 9, edge: 1.8 }, screen: { w: 596.5, h: 335.5 }, px: { w: 5120, h: 2880 },
-  tilt: { base: { w: 151, d: 172, t: 7, z0: 75 }, hinge: { y: 208, z: 12 }, foot: 140, arm: { w: 151, t: 9 } },
-  height: { base: { w: 151, d: 205, t: 7, z0: 20 }, post: { z: -168, top: 281, t: 12 }, p1: 261, link: 92, a0: -35, a1: 35, attach: 90, fwd: 17, gap: 17, side: 79.5, plate: 6 },
+  tilt: { base: { w: 151, d: 168, t: 7, z0: 71 }, hinge: { y: 208, z: 12 }, foot: 140, arm: { w: 151, t: 9 } },
+  height: { base: { w: 151, d: 215, t: 7, z0: 20 }, post: { z: -168, top: 293, t: 12 }, p1: 261, link: 92, a0: -35, a1: 35, attach: 90, fwd: 17, gap: 17, side: 79.5, plate: 6 },
   vesa: { plate: 100, depth: 11, y: 300 }, bottom: 117 }
 export const SD_ASPECT = SD.px.w / SD.px.h
 export const SD_FINISHES: Record<string, { label: string; body: string }> = { silver: { label: 'Silver', body: '#e6e7e9' } }
@@ -58,7 +58,7 @@ function slotShape(cy: number) { const w = mm(SLOT.w), h = mm(SLOT.h), r = w / 2
  * columns, columns alternating 3 and 2 holes over 5 rows 1.65 mm apart), the strip set toward the back face of the edge.
  * No CSG: instanced invisible caps mark the holes in the stencil buffer, the panel body skips those pixels and instanced
  * dark bores (seen from inside) show the depth. */
-export const GRILLE = { col: 0.95, row: 1.65, r: 0.7, rows: 5, zc: -3.6, depth: 1.6, margin: 14 }
+export const GRILLE = { col: 0.95, row: 1.65, r: 0.75, rows: 5, zc: -3.6, depth: 1.6, margin: 14 }
 function grilleHoles(pw: number, ph: number) {
   const G = GRILLE, n = Math.floor((pw / mm(1) - 2 * G.margin) / G.col), out: [number, number, number][] = []
   for (const sy of [-1, 1]) for (let i = 0; i < n; i++) for (let r = i % 2; r < G.rows; r += 2)
@@ -100,7 +100,7 @@ function Foot({ w, d, z0, alu, t = mm(5), rear = mm(6), front = mm(28), edge = m
  * end and the upright slants forward to the round hinge behind the panel (chrome caps on its ends). A round cable hole
  * with the black power plug sits in the upright just below the panel. */
 function TiltStand({ f, alu, chrome }: { f: ReturnType<typeof sdFrame>; alu: THREE.Material; chrome: THREE.Material }) {
-  const t = SD.tilt, w = mm(t.arm.w), tb = mm(13), tu = mm(9), rf = mm(22), rr = mm(12), b = f.j, a = f.p1.clone().setY(tb)
+  const t = SD.tilt, w = mm(t.arm.w), tb = mm(12), tu = mm(9), rf = mm(36), rr = mm(12), b = f.j, a = f.p1.clone().setY(tb)
   // thick flat base; the upright meets it through a concave fillet on its front and back faces (one solid, no seams)
   const u = new THREE.Vector2(b.z - a.z, b.y - a.y).normalize(), n = new THREE.Vector2(u.y, -u.x)
   const sTop = mm(70), L = Math.hypot(b.z - a.z, b.y - a.y) - sTop, ang = Math.atan2(u.x, u.y)
@@ -124,8 +124,8 @@ function TiltStand({ f, alu, chrome }: { f: ReturnType<typeof sdFrame>; alu: THR
     <group position={mid.toArray()} rotation={[ang, 0, 0]}>
       <mesh geometry={upright} castShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
     </group>
-    <mesh position={b.toArray()} rotation={[0, 0, Math.PI / 2]} castShadow><cylinderGeometry args={[mm(12), mm(12), w - mm(4), 40]} /><primitive object={alu} attach="material" /></mesh>
-    {[-1, 1].map(sx => <mesh key={sx} position={[sx * (w / 2 - mm(1)), b.y, b.z]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[mm(11), mm(11), mm(2), 32]} /><primitive object={chrome} attach="material" /></mesh>)}
+    <mesh position={b.toArray()} rotation={[0, 0, Math.PI / 2]} castShadow><cylinderGeometry args={[mm(8), mm(8), w - mm(4), 40]} /><primitive object={alu} attach="material" /></mesh>
+    {[-1, 1].map(sx => <mesh key={sx} position={[sx * (w / 2 - mm(1)), b.y, b.z]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[mm(7.5), mm(7.5), mm(2), 32]} /><primitive object={chrome} attach="material" /></mesh>)}
   </group>
 }
 /** Black braided power cable: plugs into the round port on the panel back, runs back through the stand's slot and curves down to the floor. */
@@ -133,7 +133,7 @@ function Cable({ f }: { f: ReturnType<typeof sdFrame> }) {
   const geo = useMemo(() => { const X = new THREE.Vector3(1, 0, 0), at = (y: number, z: number) => new THREE.Vector3(0, y, z).applyAxisAngle(X, f.rx).add(f.centre)
     const py = -mm(SD.panel.h) / 2 + mm(28), p0 = at(py, -PT / 2 - mm(14)), dir = at(py, -PT / 2 - 1).sub(at(py, -PT / 2)).normalize()
     const at2 = (k: number, y: number) => new THREE.Vector3(0, y, p0.z + dir.z * k)
-    const pts = [p0, p0.clone().addScaledVector(dir, mm(70)), at2(mm(130), p0.y - mm(8)), at2(mm(190), p0.y * 0.7), at2(mm(225), p0.y * 0.35), at2(mm(238), mm(10)), at2(mm(240), -mm(40))]
+    const pts = [p0, p0.clone().addScaledVector(dir, mm(70)), at2(mm(95), p0.y - mm(25)), at2(mm(125), p0.y * 0.55), at2(mm(140), p0.y * 0.25), at2(mm(146), mm(10)), at2(mm(147), -mm(40))]
     return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'centripetal'), 160, mm(3.5), 14, false) }, [f.rx, f.centre.y, f.centre.z])
   const mat = useMemo(() => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d')!; x.fillStyle = '#1a1a1c'; x.fillRect(0, 0, 64, 64)
     x.strokeStyle = '#2c2c30'; x.lineWidth = 3; for (let i = -64; i < 128; i += 8) { x.beginPath(); x.moveTo(i, 0); x.lineTo(i + 64, 64); x.stroke(); x.beginPath(); x.moveTo(i + 64, 0); x.lineTo(i, 64); x.stroke() }
@@ -153,7 +153,11 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
       const d = mm(SD.height.plate), b = mm(1.6), e = new THREE.ExtrudeGeometry(sh, { depth: d - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: b, bevelOffset: -b, bevelSegments: 4, curveSegments: 32 }); e.translate(0, 0, -(d - 2 * b) / 2); return e }),
     post: once('post', () => { const sh = rrect(mm(SD.height.base.w), mm(SD.height.post.top), [0, 0, mm(22), mm(22)]); sh.holes.push(slotShape(mm(POST_SLOT_Y - SD.height.post.top / 2))); return slab(sh, mm(SD.height.post.t), mm(2), 4) }),
     rail: once('rail', () => slab(rrect(mm(18), mm(150), all(mm(9))), mm(SD.vesa.depth), mm(2), 4)),
-    bridge: once('bridge', () => { const sh = rrect(mm(118), mm(26), all(mm(10))); return slab(sh, mm(SD.vesa.depth), mm(2), 4) }),
+    // lower bridge: 118 mm wide from 62 to 150 mm below centre, a semicircular notch over the round port (r 24, centre 153 below)
+    bridge: once('bridge', () => { const sh = new THREE.Shape(), W = mm(59), T = -mm(62), B = -mm(150), r = mm(10), pc = -mm(153), pr = mm(24), xi = Math.sqrt(pr * pr - (B - pc) ** 2), ai = Math.atan2(B - pc, xi)
+      sh.moveTo(-W + r, T); sh.absarc(-W + r, T - r, r, Math.PI / 2, Math.PI, false); sh.absarc(-W + r, B + r, r, Math.PI, Math.PI * 1.5, false)
+      sh.lineTo(-xi, B); sh.absarc(0, pc, pr, Math.PI - ai, ai, true); sh.absarc(W - r, B + r, r, -Math.PI / 2, 0, false); sh.absarc(W - r, T - r, r, 0, Math.PI / 2, false); sh.closePath()
+      return slab(sh, mm(SD.vesa.depth), mm(2), 4) }),
     boss: once('boss', () => slab(rrect(mm(SD.tilt.arm.w), mm(46), all(mm(10))), mm(8), mm(2.5), 6)),
     glass: once('glass', () => new THREE.ShapeGeometry(rrect(pw - mm(2 * SD.panel.edge), ph - mm(2 * SD.panel.edge), all(mm(SD.panel.r - SD.panel.edge))), 32)),
   }), [pw, ph])
@@ -180,7 +184,7 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
   const logo = opts.logo && <mesh position={[0, ph * 0.17, -PT / 2 - E * 2]} rotation={[0, Math.PI, 0]}><planeGeometry args={[0.36 + opts.logoSize * 1.4, (0.36 + opts.logoSize * 1.4) / opts.logo.aspect]} />
     <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : '#1a1a1c'} roughness={0.2} clearcoat={1} alphaMap={opts.logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} /></mesh>
   // ports on the back, lower left seen from behind: USB-C, USB-C, Thunderbolt 5, Thunderbolt 5 (upstream, with a dot)
-  const port = (i: number) => { const x = mm(-235 + i * 11), y = -ph / 2 + mm(52)
+  const port = (i: number) => { const x = mm(-217 + i * 15), y = -ph / 2 + mm(26)
     return <group key={i} position={[x, y, 0]}>
       <mesh><planeGeometry args={[mm(2.6), mm(8.4)]} /><meshBasicMaterial color="#121214" /></mesh>
       {i >= 2 && <mesh position={[0, mm(8.5), 0]} rotation={[0, 0, -0.5]}><planeGeometry args={[mm(0.7), mm(3.2)]} /><meshBasicMaterial color="#7a7c80" /></mesh>}
@@ -226,11 +230,11 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
             {/* VESA mount adapter: the 100 x 100 plate with its four bolts, on a bar to the cable entry */}
             {/* two rails carrying the 100 x 100 bolt pattern, joined by a bridge at the bottom */}
             {[-1, 1].map(x => <mesh key={x} position={[x * mm(50), -mm(8), -mm(SD.vesa.depth) / 2]} castShadow><primitive object={g.rail} attach="geometry" /><primitive object={alu} attach="material" /></mesh>)}
-            <mesh position={[0, -mm(74), -mm(SD.vesa.depth) / 2]} castShadow><primitive object={g.bridge} attach="geometry" /><primitive object={alu} attach="material" /></mesh>
+            <mesh position={[0, 0, -mm(SD.vesa.depth) / 2]} castShadow><primitive object={g.bridge} attach="geometry" /><primitive object={alu} attach="material" /></mesh>
             {[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y], i) => <mesh key={i} position={[x * mm(50), y * mm(50), -mm(SD.vesa.depth) - E]} rotation={[0, Math.PI, 0]}><circleGeometry args={[mm(3.4), 20]} /><meshStandardMaterial color="#8d8f93" metalness={0.8} roughness={0.3} /></mesh>)}
           </group>}
           {stand === 'tilt' && <mesh position={[0, mm(SD.tilt.hinge.y - SD.bottom - SD.panel.h / 2), -PT / 2 - mm(4)]} castShadow><primitive object={g.boss} attach="geometry" /><primitive object={alu} attach="material" /></mesh>}
-          {stand === 'height' && <mesh position={[0, mm(-h.attach), -PT / 2 - mm(h.gap + 6) / 2]} castShadow><boxGeometry args={[mm(2 * h.side - h.plate - 2), mm(48), mm(h.gap + 6)]} /><primitive object={alu} attach="material" /></mesh>}
+          {stand === 'height' && <mesh position={[0, mm(-h.attach), -PT / 2 - mm(h.gap + 6) / 2]} castShadow><boxGeometry args={[mm(2 * h.side - h.plate - 2), mm(26), mm(h.gap + 6)]} /><primitive object={alu} attach="material" /></mesh>}
         </group>
         <mesh position={[0, 0, PT / 2 + E * 3]} name="screen">
           <planeGeometry args={portrait ? [sh, sw] : [sw, sh]} />
