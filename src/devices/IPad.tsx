@@ -43,8 +43,8 @@ const btnGeo = (len: number, wz: number, prot: number) => geoOnce(`ipbtn${len}|$
 function IPad({ spec: s, texture, mediaAspect, opts }: DeviceProps & { spec: IPadSpec }) {
   const fin = (IPAD_FINISHES as Record<string, { frame: string; back: string }>)[opts.finish] ?? IPAD_FINISHES.silver
   const W = mm(s.body.w), H = mm(s.body.h), T = mm(s.body.t), CR = mm(s.body.cornerR), EDGE = mm(s.body.edge)
-  // The stage camera frames a phone; scale tablets down so they fit the same view (relative sizes are kept per device).
-  const view = Math.min(1, 1.75 / H)
+  // built at true size; the scene applies the tablet's view scale (or the shared true-scale factor), see deviceScale in App
+  const view = 1
   const ty = (y: number) => H / 2 - mm(y), bx = (x: number) => W / 2 - mm(x), fx = (x: number) => -W / 2 + mm(x)
   const zf = T / 2, zb = -T / 2
   const aspect = s.px.w / s.px.h

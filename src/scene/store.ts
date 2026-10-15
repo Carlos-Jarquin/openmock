@@ -60,6 +60,8 @@ export interface GlobalState {
   angle: number
   transparent: boolean
   scale: number
+  /** True scale: every device at its real size relative to the others, one shared factor. null = automatic (on with more than one device) */
+  trueScale: boolean | null
 }
 export interface SceneState { devices: DeviceState[]; selected: string; global: GlobalState }
 
@@ -74,12 +76,12 @@ export const newDevice = (model: DeviceId = 'ip18'): DeviceState => ({
   hands: { pose: 'off', tone: 'fair' }, spectral: SPECTRAL_DEFAULTS, gesture: GESTURE_DEFAULT, handRot: HAND_ROT0, idle: 'low',
   look: HAND_LOOK0, name: '', hidden: false, xf: XF0,
 })
-const GLOBAL0: GlobalState = { pose: POSE, light: LIGHT, fx: FX, style: 'photo', sk: SKETCH_DEFAULTS, bgMode: 'gradient', bg1: '#dfe7ff', bg2: '#f7d9e8', angle: 135, transparent: false, scale: 2 }
+const GLOBAL0: GlobalState = { pose: POSE, light: LIGHT, fx: FX, style: 'photo', sk: SKETCH_DEFAULTS, bgMode: 'gradient', bg1: '#dfe7ff', bg2: '#f7d9e8', angle: 135, transparent: false, scale: 2, trueScale: null }
 /** The device list and each device's settings persist (not screen media or the logo, which do not fit in storage). Device ids
  *  are kept, so per-device keyframes and screen clips still match after a reload. */
 const SKEY = 'om-scene-v1'
 const SAVE_SKIP = ['media', 'mediaOuter'] as const
-function loadDevices(): { devices: DeviceState[]; selected: string } | null {
+function loadDevices(): { devices: DeviceState[]; selected: string; trueScale: boolean | null } | null {
   try {
     const v = JSON.parse(localStorage.getItem(SKEY) || 'null'); if (!v || !Array.isArray(v.devices) || !v.devices.length) return null
     const devices: DeviceState[] = v.devices.filter((d: Partial<DeviceState>) => d && typeof d.uid === 'string' && typeof d.model === 'string').map((d: DeviceState) => {
@@ -88,13 +90,16 @@ function loadDevices(): { devices: DeviceState[]; selected: string } | null {
     if (!devices.length) return null
     // carry on numbering after the highest saved id
     n = Math.max(n, ...devices.map(d => +(d.uid.match(/(\d+)$/)?.[1] ?? 0)))
-    return { devices, selected: devices.some(d => d.uid === v.selected) ? v.selected : devices[0].uid }
+    // scenes saved before true scale keep their look: several devices were composed at the old per-device sizes, so true
+    // scale starts off for them (the toggle turns it on); newer scenes save the setting
+    const trueScale = 'trueScale' in v ? (typeof v.trueScale === 'boolean' ? v.trueScale : null) : devices.length > 1 ? false : null
+    return { devices, selected: devices.some(d => d.uid === v.selected) ? v.selected : devices[0].uid, trueScale }
   } catch { return null }
 }
 function saveDevices(s: SceneState) {
-  try { localStorage.setItem(SKEY, JSON.stringify({ selected: s.selected, devices: s.devices.map(d => { const o: Record<string, unknown> = { ...d }; for (const k of SAVE_SKIP) delete o[k]; o.opts = { ...d.opts, logo: null, trans: null }; return o }) })) } catch { /* storage full: this session only */ }
+  try { localStorage.setItem(SKEY, JSON.stringify({ selected: s.selected, trueScale: s.global.trueScale, devices: s.devices.map(d => { const o: Record<string, unknown> = { ...d }; for (const k of SAVE_SKIP) delete o[k]; o.opts = { ...d.opts, logo: null, trans: null }; return o }) })) } catch { /* storage full: this session only */ }
 }
-const init = (): SceneState => { const l = loadDevices(); if (l) return { ...l, global: GLOBAL0 }; const d = newDevice(); return { devices: [d], selected: d.uid, global: GLOBAL0 } }
+const init = (): SceneState => { const l = loadDevices(); if (l) return { devices: l.devices, selected: l.selected, global: { ...GLOBAL0, trueScale: l.trueScale } }; const d = newDevice(); return { devices: [d], selected: d.uid, global: GLOBAL0 } }
 
 type Setter<T> = (v: SetStateAction<T>) => void
 const resolve = <T,>(v: SetStateAction<T>, old: T) => typeof v === 'function' ? (v as (o: T) => T)(old) : v
@@ -105,7 +110,7 @@ export function useScene() {
   const [scene, setScene] = useState<SceneState>(init)
   const ref = useRef(scene); ref.current = scene
   // save the devices a moment after they change (not every frame of a drag)
-  useEffect(() => { const t = setTimeout(() => saveDevices(scene), 300); return () => clearTimeout(t) }, [scene.devices, scene.selected])
+  useEffect(() => { const t = setTimeout(() => saveDevices(scene), 300); return () => clearTimeout(t) }, [scene.devices, scene.selected, scene.global.trueScale])
   const api = useMemo(() => {
     const dev = <K extends keyof DeviceState>(k: K): Setter<DeviceState[K]> => v => setScene(s => {
       const i = s.devices.findIndex(d => d.uid === s.selected); if (i < 0) return s
@@ -123,7 +128,7 @@ export function useScene() {
       const devices = s.devices.slice(); devices[i] = { ...d, [k]: nv }; return { ...s, devices }
     })
     const devKeys = ['model', 'opts', 'media', 'mediaOuter', 'mediaTo', 'sbOn', 'sb', 'sbReset', 'foldFollow', 'foldSpeed', 'foldDark', 'hands', 'spectral', 'gesture', 'handRot', 'idle', 'name', 'hidden', 'xf', 'look'] as const
-    const gloKeys = ['pose', 'light', 'fx', 'style', 'sk', 'bgMode', 'bg1', 'bg2', 'angle', 'transparent', 'scale'] as const
+    const gloKeys = ['pose', 'light', 'fx', 'style', 'sk', 'bgMode', 'bg1', 'bg2', 'angle', 'transparent', 'scale', 'trueScale'] as const
     return {
       dev: Object.fromEntries(devKeys.map(k => [k, dev(k)])) as { [K in typeof devKeys[number]]: Setter<DeviceState[K]> },
       glo: Object.fromEntries(gloKeys.map(k => [k, glo(k)])) as { [K in typeof gloKeys[number]]: Setter<GlobalState[K]> },

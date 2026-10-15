@@ -101,6 +101,14 @@ const DUO_CLOSED: HandFit = { W: DUO_W, H: 1.178, T: 2 * DUO_T + DUO_GAP, R: 0.1
 const DUO_CLOSED_OFF: HandFit = { ...DUO_CLOSED, cx: DUO_W / 2, cz: DUO_T / 2 + DUO_GAP }
 // Desk machines are drawn at real size and scaled down as a whole (hands included) to sit in the same view as phones.
 const VIEW: Partial<Record<DeviceId, number>> = { mbp16: 0.6, imacg4: 0.3, studio: 0.3 }
+/** One device alone: the size it has always been shown at (large devices and tablets scaled to sit in a phone-sized view). */
+const IPAD_VIEW: Partial<Record<DeviceId, number>> = Object.fromEntries([IPAD_MINI, IPAD_PRO_11, IPAD_PRO_129].map(s => [s.id, Math.min(1, 1.75 / (s.body.h / 100))]))
+/** Camera limits: pan reach and the widest zoom-out, wide enough for a true-scale lineup. */
+const PAN = 6, ZMIN = 0.08
+const soloScale = (m: DeviceId) => VIEW[m] ?? IPAD_VIEW[m] ?? 1
+/** True scale: one factor for the whole scene, the smallest solo scale among the visible devices, so the largest device keeps
+ *  its usual size and everything else is shown at real size next to it (1 unit = 100 mm times this factor). */
+export const sceneFactor = (ds: DeviceState[]) => { const v = ds.filter(d => !d.hidden); return v.length ? Math.min(...v.map(d => soloScale(d.model))) : 1 }
 // MacBook Pro: the hands work in the base's frame (turned flat, top face up), touching the trackpad or the keys.
 const MBP_FIT: HandFit = (() => { const W = MBP.w / 100, D = MBP.d / 100, T = MBP.tb / 100
   const home = [1, 2, 3, 4, 7, 8, 9, 10].map(c => { const k = mbpKey(2, c); return [k.x, k.y] as [number, number] }), sp = mbpKey(0, 4)
@@ -264,8 +272,8 @@ export function devNames(devs: DeviceState[]) {
 }
 
 /** One device in the scene: its own screen composite, screen-track mixers, fold state, hand and placement. */
-const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, screenGen, onGesture, onGrab, reg }: {
-  d: DeviceState; active: boolean; sketch: boolean; sk: typeof SKETCH_DEFAULTS; islandLook: ReturnType<typeof islandSketch> | undefined; screenGen: number
+const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, screenGen, onGesture, onGrab, reg, scale }: {
+  scale: number; d: DeviceState; active: boolean; sketch: boolean; sk: typeof SKETCH_DEFAULTS; islandLook: ReturnType<typeof islandSketch> | undefined; screenGen: number
   onGesture: (g: DeviceState['gesture']) => void; onGrab: (uid: string, e: PointerEvent) => void; reg: (uid: string, g: THREE.Group | null) => void
 }) {
   const def = DEVICES.find(x => x.id === d.model)!, D = def.Component, opts = d.opts, device = d.model
@@ -293,7 +301,7 @@ const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, s
   return (
     <group ref={ref} position={pos} rotation={rot}
       onPointerDown={e => { if (e.button !== 0 || e.shiftKey || e.altKey || e.intersections.some(i => onGizmo(i.object))) return; e.stopPropagation(); sceneHit.current = true; onGrab(d.uid, e.nativeEvent) }}>
-      <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, opts.lid, opts.tilt, opts.rise, opts.sdStand, opts.sdPortrait, screenTex.texture, d.hands.pose]}><group scale={VIEW[device] ?? 1}>
+      <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, opts.lid, opts.tilt, opts.rise, opts.sdStand, opts.sdPortrait, screenTex.texture, d.hands.pose]}><group scale={scale}>
         <HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={fitFor(d)} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle} look={d.look}>
           <SketchStyle on={sketch} o={sk}><D uid={d.uid} texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
             {...(device === 'duo' ? { textureOuter: shownOuter?.texture ?? null, mediaAspectOuter: shownOuter?.aspect } : {})} /></SketchStyle>
@@ -418,16 +426,16 @@ export default function App() {
     // perspective fit: the camera sits D = 4.2 / zoom from the turntable (in units where the view shows 2.25 / zoom of
     // height at its centre); a point at depth z projects scaled by D / (D - z). Iterate pan and zoom on the projected box.
     const view = 2.25, r3 = (x: number) => Math.round(x * 1000) / 1000
-    let zoom = clamp(Math.min(view * 0.68 / wy, view * asp * 0.72 / wx), 0.3, 2.5), px = 0, py = 0
+    let zoom = clamp(Math.min(view * 0.68 / wy, view * asp * 0.72 / wx), 0.08, 2.5), px = 0, py = 0
     if (fitPts) for (let it = 0; it < 6; it++) {
       const D = 4.2 / zoom; let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9
       for (const v of fitPts) { const k = D / Math.max(D * 0.2, D - v.z), X = (v.x + px) * k, Y = (v.y + py) * k; x0 = Math.min(x0, X); x1 = Math.max(x1, X); y0 = Math.min(y0, Y); y1 = Math.max(y1, Y) }
       px -= (x0 + x1) / 2; py -= (y0 + y1) / 2
       const W = (x1 - x0) * 1.04, H = (y1 - y0) * 1.04
-      zoom = clamp(zoom * Math.min(view * 0.68 / zoom / H, view * asp * 0.72 / zoom / W), 0.3, 2.5)
+      zoom = clamp(zoom * Math.min(view * 0.68 / zoom / H, view * asp * 0.72 / zoom / W), 0.08, 2.5)
     }
     if (!Number.isFinite(zoom + px + py)) { zoom = 1; px = 0; py = 0 }
-    return { ...base, zoom: r3(zoom), panX: r3(clamp(px, -1.5, 1.5)), panY: r3(clamp(py, -1.5, 1.5)) } }, [])
+    return { ...base, zoom: r3(zoom), panX: r3(clamp(px, -PAN, PAN)), panY: r3(clamp(py, -PAN, PAN)) } }, [])
   // presets are relative to the model's framed default: same angles, zoom scaled by the fit zoom
   const goPreset = useCallback((p: Pose) => { const f = defaultPose(device, p); goView({ ...f, zoom: Math.round(p.zoom * f.zoom * 1000) / 1000 }) }, [goView, defaultPose, device])
   const resetView = useCallback(() => { const p = defaultPose(device); useRefLast.current = p; goView(p) }, [goView, defaultPose, device])
@@ -572,6 +580,22 @@ export default function App() {
   const fpsEl = useRef<HTMLDivElement>(null)
   const moved = (Object.keys(XF0) as (keyof Xf)[]).some(k => D0.xf[k] !== 0)
   const devices = S.scene.devices, multi = devices.length > 1, names = devNames(devices)
+  // true scale: explicit setting, or automatic (on as soon as two or more devices are visible)
+  const visN = devices.filter(d => !d.hidden).length, trueOn = G.trueScale ?? visN > 1, sceneK = sceneFactor(devices)
+  const devScale = useCallback((m: DeviceId) => trueOn ? sceneK : soloScale(m), [trueOn, sceneK])
+  /** shown width and height of a device in scene units (the size tables hold the solo-view sizes) */
+  const wOf = (d: DeviceState) => widthOf(d) * devScale(d.model) / soloScale(d.model)
+  const hOf = (m: DeviceId) => (HEIGHT[m] ?? 1.6) * devScale(m) / soloScale(m)
+  // keep the composition when the scale changes: the shared factor changing (a bigger device added or removed) scales every
+  // position with it; true scale switching on or off lines the devices up again, since their sizes change unevenly
+  const scaleRef = useRef({ on: trueOn, k: sceneK })
+  useEffect(() => { const was = scaleRef.current; scaleRef.current = { on: trueOn, k: sceneK }
+    if (was.on === trueOn && Math.abs(was.k - sceneK) < 1e-6) return
+    const ds = S.get().devices; if (ds.length < 2) return
+    if (was.on && trueOn) { const f = sceneK / was.k; ds.forEach(d => S.devAt(d.uid, 'xf', o => ({ ...o, x: Math.round(o.x * f * 1000) / 1000, y: Math.round(o.y * f * 1000) / 1000, z: Math.round(o.z * f * 1000) / 1000 }))); setTimeout(() => resetView(), 120) }
+    else { setTimeout(() => layoutRef.current('row'), 0) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trueOn, sceneK])
   const [renaming, setRenaming] = useState<{ uid: string; text: string } | null>(null)
   const [addModel, setAddModel] = useState<DeviceId>('ip18')
   tlLive.devs = screenLive.devs = devices.map(d => d.uid)
@@ -596,30 +620,32 @@ export default function App() {
   }, [])
   /** Where a new device goes: to the right of the rightmost one, level with it. */
   const nextXf = (w: number): Xf => { const ds = S.get().devices; let best = ds[0]
-    for (const d of ds) if (d.xf.x + widthOf(d) / 2 > best.xf.x + widthOf(best) / 2) best = d
-    return { ...XF0, x: Math.round((best.xf.x + widthOf(best) / 2 + 0.12 + w / 2) * 100) / 100, y: best.xf.y, z: best.xf.z } }
-  const addDevice = (model: DeviceId) => { S.add(model, nextXf(WIDTH[model] ?? 0.8)); flash(`${DEVICES.find(d => d.id === model)!.label} added. Drag it in the view to move it.`) }
-  const dupDevice = (d: DeviceState) => { const uid = S.add(d.model, nextXf(widthOf(d)), d); const f = fitOfDev.get(d.uid); if (f) fitOfDev.set(uid, f); flash('Device duplicated.') }
+    for (const d of ds) if (d.xf.x + wOf(d) / 2 > best.xf.x + wOf(best) / 2) best = d
+    return { ...XF0, x: Math.round((best.xf.x + wOf(best) / 2 + 0.12 + w / 2) * 100) / 100, y: best.xf.y, z: best.xf.z } }
+  const addDevice = (model: DeviceId) => { S.add(model, nextXf((WIDTH[model] ?? 0.8) * devScale(model) / soloScale(model))); flash(`${DEVICES.find(d => d.id === model)!.label} added. Drag it in the view to move it.`) }
+  const dupDevice = (d: DeviceState) => { const uid = S.add(d.model, nextXf(wOf(d)), d); const f = fitOfDev.get(d.uid); if (f) fitOfDev.set(uid, f); flash('Device duplicated.') }
+  const layoutRef = useRef<(k: 'row' | 'fan' | 'grid') => void>(() => {})
   /** Layout presets: place every visible device side by side, fanned out or in a grid, centred on the view. */
   const layout = (kind: 'row' | 'fan' | 'grid') => {
     const ds = S.get().devices.filter(d => !d.hidden), n = ds.length; if (!n) return
-    const ws = ds.map(widthOf), gap = 0.12, r2 = (x: number) => Math.round(x * 1000) / 1000
+    const ws = ds.map(wOf), gap = 0.12, r2 = (x: number) => Math.round(x * 1000) / 1000
     let out: Xf[]
     if (kind === 'row') { const tot = ws.reduce((a, b) => a + b, 0) + gap * (n - 1); let x = -tot / 2
       out = ws.map(w => { const c = x + w / 2; x += w + gap; return { ...XF0, x: r2(c) } }) }
     else if (kind === 'fan') { const step = Math.max(...ws) * 0.55, mid = (n - 1) / 2
       out = ds.map((_, i) => { const k = i - mid; return { ...XF0, x: r2(k * step), y: r2(-Math.abs(k) * 0.06), z: r2(-Math.abs(k) * 0.12), ry: r2(k * -14), rz: r2(k * -6) } }) }
-    else { const cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols), cw = Math.max(...ws) + gap, ch = 1.75
+    else { const cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols), cw = Math.max(...ws) + gap, ch = Math.max(...ds.map(d => hOf(d.model))) + gap
       out = ds.map((_, i) => ({ ...XF0, x: r2((i % cols - (cols - 1) / 2) * cw), y: r2(((rows - 1) / 2 - Math.floor(i / cols)) * ch) })) }
     ds.forEach((d, i) => S.devAt(d.uid, 'xf', out[i]))
     // zoom to fit: the layout's extent against the view (4.2 units away at 30 degrees shows about 2.25 units of height)
     let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9
-    ds.forEach((d, i) => { const w = ws[i] / 2, h = (HEIGHT[d.model] ?? 1.6) / 2; x0 = Math.min(x0, out[i].x - w); x1 = Math.max(x1, out[i].x + w); y0 = Math.min(y0, out[i].y - h); y1 = Math.max(y1, out[i].y + h) })
+    ds.forEach((d, i) => { const w = ws[i] / 2, h = hOf(d.model) / 2; x0 = Math.min(x0, out[i].x - w); x1 = Math.max(x1, out[i].x + w); y0 = Math.min(y0, out[i].y - h); y1 = Math.max(y1, out[i].y + h) })
     const st = document.querySelector('main.stage') as HTMLElement | null, asp = st ? st.clientWidth / Math.max(1, st.clientHeight) : 1.6
-    const viewH = 2.25 * 0.7, zoom = clamp(Math.min(viewH / (y1 - y0), viewH * asp / (x1 - x0)), 0.3, 1.6)
+    const viewH = 2.25 * 0.7, zoom = clamp(Math.min(viewH / (y1 - y0), viewH * asp / (x1 - x0)), ZMIN, 1.6)
     goView({ ...poseRef.current, zoom: Math.round(zoom * 1000) / 1000, panX: 0, panY: 0 })
     flash(kind === 'row' ? 'Devices side by side.' : kind === 'fan' ? 'Devices fanned out.' : 'Devices in a grid.')
   }
+  layoutRef.current = layout
 
   /** SVG markup: rasterised at 3x the Pro Max screen width (1320 px) for the screen texture; the markup is kept for SVG export. */
   const loadSvg = useCallback((text: string, name: string, done?: string, to: 'inner' | 'outer' = 'inner') => {
@@ -817,7 +843,7 @@ export default function App() {
 
   const sections: Section[] = [
     // SCENE rail
-    { id: 'devices', side: 'scene', title: 'Devices', icon: 'devices', settings: ['Selected device', 'Add device', 'Duplicate', 'Rename', 'Hide', 'Delete', 'Side by side', 'Fanned', 'Grid'], render: () => <>
+    { id: 'devices', side: 'scene', title: 'Devices', icon: 'devices', settings: ['Selected device', 'Add device', 'Duplicate', 'Rename', 'Hide', 'Delete', 'Side by side', 'Fanned', 'Grid', 'True scale'], render: () => <>
       <div className="om-devlist" role="list" aria-label="Devices in the scene">
         {devices.map((d, i) => { const on = d.uid === D0.uid, dd = DEVICES.find(x => x.id === d.model)!
           return <div key={d.uid} role="listitem" className={`om-devitem ${on ? 'on' : ''} ${d.hidden ? 'off' : ''}`}>
@@ -847,6 +873,9 @@ export default function App() {
         <div className="seg"><button onClick={() => layout('row')}>Side by side</button><button onClick={() => layout('fan')}>Fanned</button><button onClick={() => layout('grid')}>Grid</button></div>
         <p className="hint">Click a device in the view or the list to select it. Drag a device to move it; drag empty space, or hold Alt, to orbit.</p>
       </> : <p className="hint">Add a second device to show several in one scene.</p>}
+      <label className="row"><span>True scale</span><input type="checkbox" checked={trueOn} onChange={e => S.glo.trueScale(e.target.checked)} /></label>
+      <p className="hint">{trueOn ? 'Every device is shown at its real size next to the others.' : 'Each device is sized to fill the view on its own, so sizes do not match between devices.'}{G.trueScale == null ? ' Automatic: on when the scene has more than one device.' : ''}</p>
+      {G.trueScale != null && <button className="ghost" onClick={() => S.glo.trueScale(null)}>Use automatic true scale</button>}
     </> },
     { id: 'preset', side: 'scene', title: 'Preset', icon: 'preset', settings: ['Violet silhouette'], render: () => <>
       <button onClick={violetScene}>Violet silhouette</button>
@@ -879,10 +908,10 @@ export default function App() {
       <AngleRow label="Tilt X" v={pose.tiltX} set={n => setPose(p => ({ ...p, tiltX: n }))} />
       <AngleRow label="Tilt Y" v={pose.tiltY} set={n => setPose(p => ({ ...p, tiltY: n }))} />
       <AngleRow label="Rotate" v={pose.rotZ} set={n => setPose(p => ({ ...p, rotZ: n }))} />
-      {slider('Zoom', pose.zoom, 0.5, 2.5, 0.01, n => setPose({ ...pose, zoom: n }))}
+      {slider('Zoom', pose.zoom, ZMIN, 2.5, 0.01, n => setPose({ ...pose, zoom: n }))}
       {slider('Field of view', pose.fov, 8, 60, 1, n => setPose({ ...pose, fov: n }), '°')}
-      {slider('Pan X', pose.panX, -1.5, 1.5, 0.01, n => setPose({ ...pose, panX: n }))}
-      {slider('Pan Y', pose.panY, -1.5, 1.5, 0.01, n => setPose({ ...pose, panY: n }))}
+      {slider('Pan X', pose.panX, -PAN, PAN, 0.01, n => setPose({ ...pose, panX: n }))}
+      {slider('Pan Y', pose.panY, -PAN, PAN, 0.01, n => setPose({ ...pose, panY: n }))}
       <h3>View presets</h3>
       <div className="seg wrap" aria-label="View presets">{VIEW_PRESETS.map(([n, p]) => <button key={n} onClick={() => goPreset(p)}>{n}</button>)}</div>
       <div className="om-tiles"><button className="ghost" onClick={() => setPose(APPLE_HERO)}>Apple hero angle</button><button className="ghost" onClick={resetView}>Reset camera</button></div>
@@ -1148,6 +1177,7 @@ export default function App() {
     { id: 'tl', group: 'view', label: 'Timeline › Expand or minimise (T)', meta: 'TOGGLE', run: toggleTimeline },
     { id: 'orbit', group: 'view', label: 'View › Orbit tool', meta: 'APPLY', run: () => setNavMode('orbit') },
     { id: 'pan', group: 'view', label: 'View › Pan tool', meta: 'APPLY', run: () => setNavMode('pan') },
+    { id: 'truescale', group: 'scene', section: 'devices', label: trueOn ? 'Scene › True scale off' : 'Scene › True scale on', meta: 'APPLY', run: () => S.glo.trueScale(!trueOn) },
     { id: 'clearcanvas', group: 'scene', label: 'Scene › Clear canvas', meta: 'APPLY', run: clearCanvas },
     { id: 'resetview', group: 'view', label: 'View › Reset view', meta: 'APPLY', run: resetView, keys: RESET_KEYS },
   ]
@@ -1198,7 +1228,7 @@ export default function App() {
           const d = drag.current; if (!d) return
           const dx = e.clientX - d.x, dy = e.clientY - d.y; d.x = e.clientX; d.y = e.clientY
           setPose(p => d.pan
-            ? { ...p, panX: clamp(p.panX + dx * 0.004 / p.zoom, -1.5, 1.5), panY: clamp(p.panY - dy * 0.004 / p.zoom, -1.5, 1.5) }
+            ? { ...p, panX: clamp(p.panX + dx * 0.004 / p.zoom, -PAN, PAN), panY: clamp(p.panY - dy * 0.004 / p.zoom, -PAN, PAN) }
             : orbitBy(p, dx * 0.4, dy * 0.4))
         }}
         onPointerUp={e => {
@@ -1207,7 +1237,7 @@ export default function App() {
           const t = tap.current; tap.current = null
           if (t && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 4) chromeApi.current?.closeFloating()
         }}
-        onWheel={e => { const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)); setPose(p => ({ ...p, zoom: clamp(p.zoom * k, 0.5, 2.5) })) }}>
+        onWheel={e => { const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)); setPose(p => ({ ...p, zoom: clamp(p.zoom * k, ZMIN, 2.5) })) }}>
         <div className="om-floor" aria-hidden="true" />
         <ErrorBoundary label="3D preview" onRetry={retryEnvironment}>
         <Canvas shadows gl={{ alpha: true, preserveDrawingBuffer: true, antialias: true, stencil: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1 }} camera={{ fov: 30, position: [0, 0, 4.2] }}
@@ -1241,7 +1271,7 @@ export default function App() {
             <rectAreaLight args={['#f4f6ff', 0.6 * light.intensity, 3, 1.2]} position={[0, 3, -1.5]} onUpdate={l => l.lookAt(0, 0, 0)} />
           </>}
           <group ref={devGroup} position={devPos} rotation={devRot}>
-            {devices.map(d => <DeviceRig key={d.uid} d={d} active={d.uid === D0.uid} sketch={sketch} sk={sk} islandLook={islandLook} screenGen={screenGen}
+            {devices.map(d => <DeviceRig key={d.uid} scale={devScale(d.model)} d={d} active={d.uid === D0.uid} sketch={sketch} sk={sk} islandLook={islandLook} screenGen={screenGen}
               onGesture={setGesture} onGrab={onGrab} reg={reg} />)}
           </group>
           {fpsOn && <FpsMeter el={fpsEl} />}
@@ -1253,8 +1283,8 @@ export default function App() {
             const d = 0.95, k = (0.8 + light.floor / 10) / 0.95
             const base = sketch ? { color: SKETCH_SHADOW, opacity: light.shadow * 0.6, blur: 3 } : { color: '#000000', opacity: light.shadow, blur: 2.6 }
             // several devices: the floor sits under the lowest one and spreads under all of them, so it never cuts through a device
-            const vis = devices.filter(x => !x.hidden), low = Math.min(0, ...vis.map(x => x.xf.y - ((HEIGHT[x.model] ?? 1.5) - 1.5) / 2))
-            const spread = vis.length > 1 ? Math.max(...vis.map(x => Math.abs(x.xf.x) + widthOf(x) / 2)) * 2 : 0
+            const vis = devices.filter(x => !x.hidden), low = Math.min(0, ...vis.map(x => x.xf.y - (hOf(x.model) - 1.5) / 2))
+            const spread = vis.length > 1 ? Math.max(...vis.map(x => Math.abs(x.xf.x) + wOf(x) / 2)) * 2 : 0
             const sc = Math.max(6, spread + 2)
             return <ContactShadows key={vis.length > 1 ? 'multi' : 'one'} position={[pose.panX, pose.panY - d + low, 0]} color={base.color} opacity={base.opacity / k}
               scale={sc * (1 + (k - 1) * 0.6)} blur={base.blur * Math.pow(k, 1.2)} far={2.5} resolution={1024} frames={Infinity} />
