@@ -54,20 +54,29 @@ export const SLOT = { w: 46, h: 74, plug: 19 }
 function slotShape(cy: number) { const w = mm(SLOT.w), h = mm(SLOT.h), r = w / 2, p = new THREE.Path()
   // clockwise (a hole must wind against the outline, or the bevel offset pinches it into a teardrop)
   p.absarc(0, cy - h / 2 + r, r, 0, Math.PI, true); p.absarc(0, cy + h / 2 - r, r, Math.PI, 0, true); p.closePath(); return p }
-/** Speaker grille: a strip of fine perforations (dark holes on aluminium), drawn once. */
+/** Speaker grille: a dense hex grid of fine holes (1.4 mm pitch, 0.9 mm holes, 5 staggered rows in a 6.5 mm strip).
+ * One column-pair tile, drawn at high resolution and repeated along the edge, mipmapped with full anisotropy so it stays crisp. */
+export const GRILLE = { pitch: 1.4, rows: 5, row: 1.25, hole: 0.45, h: 6.5, margin: 14 }
 let grilleTex: THREE.CanvasTexture | null = null
 function grille() { if (grilleTex) return grilleTex
-  const c = document.createElement('canvas'); c.width = 2048; c.height = 32; const x = c.getContext('2d')!
-  x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height); x.fillStyle = '#2a2b2e'
-  for (let row = 0; row < 4; row++) for (let i = 0; i < 512; i++) { x.beginPath(); x.arc(i * 4 + (row % 2) * 2 + 1, row * 8 + 4, 1.3, 0, Math.PI * 2); x.fill() }
-  grilleTex = new THREE.CanvasTexture(c); grilleTex.colorSpace = THREE.SRGBColorSpace; grilleTex.anisotropy = 8; return grilleTex }
+  const G = GRILLE, c = document.createElement('canvas'); c.width = 64; c.height = 256; const x = c.getContext('2d')!
+  const kx = c.width / G.pitch, ky = c.height / G.h, y0 = (G.h - (G.rows - 1) * G.row) / 2
+  x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height); x.fillStyle = '#141416'
+  for (let r = 0; r < G.rows; r++) for (const cx of r % 2 ? [0, G.pitch] : [G.pitch / 2]) { x.beginPath(); x.ellipse(cx * kx, (y0 + r * G.row) * ky, G.hole * kx, G.hole * ky, 0, 0, Math.PI * 2); x.fill() }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.anisotropy = 16
+  t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true
+  t.repeat.set((SD.panel.w - 2 * G.margin) / G.pitch, 1); return grilleTex = t }
+const padCache = new Map<number, THREE.BufferGeometry>()
+function padGeo(d: number) { let g = padCache.get(d); if (g) return g
+  const r = mm(7.5), L = d - mm(20), sh = new THREE.Shape(); sh.absarc(0, -L / 2 + r, r, Math.PI, 0, false); sh.absarc(0, L / 2 - r, r, 0, Math.PI, false); sh.closePath()
+  g = new THREE.ExtrudeGeometry(sh, { depth: mm(0.4), bevelEnabled: false, curveSegments: 24 }); g.rotateX(Math.PI / 2); g.translate(0, mm(0.05), 0); padCache.set(d, g); return g }
 /** Flat foot plate, its front end rounded (seen from above) and its edges eased. */
 function Foot({ w, d, z0, alu, t = mm(5), rear = mm(6), edge = mm(1.6) }: { w: number; d: number; z0: number; alu: THREE.Material; t?: number; rear?: number; edge?: number }) {
   const geo = useMemo(() => { const r = Math.min(w / 2, mm(28)), b = slab(rrect(w, d, [rear, rear, r, r]), t, edge, 4); b.rotateX(-Math.PI / 2); return b }, [w, d, t, rear, edge])
   useEffect(() => () => geo.dispose(), [geo])
   return <group><mesh geometry={geo} position={[0, t / 2, z0 - d / 2]} castShadow receiveShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
-    {/* two long black rubber pads under the left and right edges */}
-    {[-1, 1].map(sx => <mesh key={sx} position={[sx * (w / 2 - mm(9)), -E, z0 - d / 2]} rotation={[Math.PI / 2, 0, 0]}><planeGeometry args={[mm(8), d - mm(24)]} /><meshStandardMaterial color="#111113" roughness={0.9} side={THREE.DoubleSide} /></mesh>)}</group>
+    {/* two long black rubber pads near the left and right edges: stadiums 15 mm wide, 4 mm in from the edge, 10 mm short of each end, flush on the underside */}
+    {[-1, 1].map(sx => <mesh key={sx} geometry={padGeo(d)} position={[sx * (w / 2 - mm(4 + 7.5)), 0, z0 - d / 2]}><meshStandardMaterial color="#1c1c1e" roughness={0.85} /></mesh>)}</group>
 }
 /** Tilt stand: one wide aluminium sheet bent into an L. The flat foot runs back under the panel, bends up at its rear
  * end and the upright slants forward to the round hinge behind the panel (chrome caps on its ends). A round cable hole
@@ -191,7 +200,7 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
           {/* plug in the port: a short black barrel, flush on the panel back */}
           {opts.sdCable && <mesh position={[0, -ph / 2 + mm(28), -PT / 2 - mm(7)]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[mm(10), mm(10.5), mm(14), 32]} /><meshStandardMaterial color="#141416" roughness={0.6} /></mesh>}
           {/* speaker grilles: fine perforated strips along the full width of the bottom and top edges */}
-          {[-1, 1].map(sy => <mesh key={sy} position={[0, sy * (ph / 2 + E), 0]} rotation={[sy * -Math.PI / 2, 0, 0]}><planeGeometry args={[pw - mm(2 * SD.panel.r + 6), mm(8)]} />
+          {[-1, 1].map(sy => <mesh key={sy} position={[0, sy * (ph / 2 + E), 0]} rotation={[sy * -Math.PI / 2, 0, 0]}><planeGeometry args={[pw - mm(2 * GRILLE.margin), mm(GRILLE.h)]} />
             <meshStandardMaterial map={grille()} color={fin.body} metalness={0.5} roughness={0.5} polygonOffset polygonOffsetFactor={-2} /></mesh>)}
           {stand !== 'tilt' && stand !== 'height' && <group position={[0, 0, -PT / 2]}>
             {/* VESA mount adapter: the 100 x 100 plate with its four bolts, on a bar to the cable entry */}
