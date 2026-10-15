@@ -54,18 +54,30 @@ export const SLOT = { w: 46, h: 74, plug: 19 }
 function slotShape(cy: number) { const w = mm(SLOT.w), h = mm(SLOT.h), r = w / 2, p = new THREE.Path()
   // clockwise (a hole must wind against the outline, or the bevel offset pinches it into a teardrop)
   p.absarc(0, cy - h / 2 + r, r, 0, Math.PI, true); p.absarc(0, cy + h / 2 - r, r, Math.PI, 0, true); p.closePath(); return p }
-/** Speaker grille: a dense hex grid of fine holes (1.4 mm pitch, 0.9 mm holes, 5 staggered rows in a 6.5 mm strip).
- * One column-pair tile, drawn at high resolution and repeated along the edge, mipmapped with full anisotropy so it stays crisp. */
-export const GRILLE = { pitch: 1.4, rows: 5, row: 1.25, hole: 0.45, h: 6.5, margin: 14 }
-let grilleTex: THREE.CanvasTexture | null = null
-function grille() { if (grilleTex) return grilleTex
-  const G = GRILLE, c = document.createElement('canvas'); c.width = 64; c.height = 256; const x = c.getContext('2d')!
-  const kx = c.width / G.pitch, ky = c.height / G.h, y0 = (G.h - (G.rows - 1) * G.row) / 2
-  x.fillStyle = '#ffffff'; x.fillRect(0, 0, c.width, c.height); x.fillStyle = '#141416'
-  for (let r = 0; r < G.rows; r++) for (const cx of r % 2 ? [0, G.pitch] : [G.pitch / 2]) { x.beginPath(); x.ellipse(cx * kx, (y0 + r * G.row) * ky, G.hole * kx, G.hole * ky, 0, 0, Math.PI * 2); x.fill() }
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.anisotropy = 16
-  t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true
-  t.repeat.set((SD.panel.w - 2 * G.margin) / G.pitch, 1); return grilleTex = t }
+/** Speaker grilles: real holes along the top and bottom edges, a staggered hex grid of 1.4 mm round holes (0.95 mm between
+ * columns, columns alternating 3 and 2 holes over 5 rows 1.65 mm apart), the strip set toward the back face of the edge.
+ * No CSG: instanced invisible caps mark the holes in the stencil buffer, the panel body skips those pixels and instanced
+ * dark bores (seen from inside) show the depth. */
+export const GRILLE = { col: 0.95, row: 1.65, r: 0.7, rows: 5, zc: -3.6, depth: 1.6, margin: 14 }
+function grilleHoles(pw: number, ph: number) {
+  const G = GRILLE, n = Math.floor((pw / mm(1) - 2 * G.margin) / G.col), out: [number, number, number][] = []
+  for (const sy of [-1, 1]) for (let i = 0; i < n; i++) for (let r = i % 2; r < G.rows; r += 2)
+    out.push([mm((i - (n - 1) / 2) * G.col), sy, mm(G.zc + (r - (G.rows - 1) / 2) * G.row)])
+  return { out, y: ph / 2 }
+}
+function Grilles({ pw, ph }: { pw: number; ph: number }) {
+  const { caps, bores } = useMemo(() => { const { out, y } = grilleHoles(pw, ph), G = GRILLE, r = mm(G.r), dp = mm(G.depth)
+    const capM = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, stencilWrite: true, stencilRef: 1, stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp })
+    const boreM = new THREE.MeshStandardMaterial({ color: '#151517', roughness: 0.8, metalness: 0.1, side: THREE.BackSide, stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc })
+    const caps = new THREE.InstancedMesh(new THREE.CircleGeometry(r, 16), capM, out.length), bores = new THREE.InstancedMesh(new THREE.CylinderGeometry(r, r, dp, 16, 1, false), boreM, out.length)
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), X = new THREE.Vector3(1, 0, 0), one = new THREE.Vector3(1, 1, 1)
+    out.forEach(([x, sy, z], k) => { q.setFromAxisAngle(X, -sy * Math.PI / 2)
+      caps.setMatrixAt(k, m.compose(new THREE.Vector3(x, sy * (y + E), z), q, one)); bores.setMatrixAt(k, m.compose(new THREE.Vector3(x, sy * (y - dp / 2 + E / 2), z), q, one)) })
+    caps.renderOrder = -1; caps.frustumCulled = bores.frustumCulled = false; caps.userData.sketchHide = bores.userData.sketchHide = true
+    return { caps, bores } }, [pw, ph])
+  useEffect(() => () => { for (const o of [caps, bores]) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); o.dispose() } }, [caps, bores])
+  return <><primitive object={caps} /><primitive object={bores} /></>
+}
 const padCache = new Map<number, THREE.BufferGeometry>()
 function padGeo(d: number) { let g = padCache.get(d); if (g) return g
   const r = mm(7.5), L = d - mm(20), sh = new THREE.Shape(); sh.absarc(0, -L / 2 + r, r, Math.PI, 0, false); sh.absarc(0, L / 2 - r, r, 0, Math.PI, false); sh.closePath()
@@ -141,6 +153,9 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
   }), [pw, ph])
   useMemo(() => fitTexture(texture, mediaAspect, portrait ? 1 / SD_ASPECT : SD_ASPECT), [texture, mediaAspect, portrait])
   const alu = useMemo(() => new THREE.MeshPhysicalMaterial({ color: fin.body, metalness: 0.7, roughness: 0.36, envMapIntensity: 1 }), [fin.body])
+  // the panel body skips the grille holes marked in the stencil (see Grilles)
+  const bodyAlu = useMemo(() => { const m = alu.clone(); m.stencilWrite = true; m.stencilRef = 1; m.stencilFunc = THREE.NotEqualStencilFunc; return m }, [alu])
+  useEffect(() => () => bodyAlu.dispose(), [bodyAlu])
   const nano = !!opts.nano
   // standard glass: a sharp reflection over the screen; nano-texture: the same reflection scattered and dimmed (matte).
   // Black base colour, so only the reflection shows and the screen keeps its contrast.
@@ -187,7 +202,7 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
       </group>}
       <group ref={panel} position={f0.centre.toArray()} rotation={[f0.rx, 0, 0]}>
         <group rotation={[0, 0, portrait ? -Math.PI / 2 : 0]}>
-          <mesh geometry={g.body} castShadow name="sd-panel" userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
+          <mesh geometry={g.body} castShadow name="sd-panel" userData={{ sketchHull: true }}><primitive object={bodyAlu} attach="material" /></mesh>
           <mesh geometry={g.glass} position={[0, 0, PT / 2 + E]}><meshBasicMaterial color="#050506" /></mesh>
           <mesh position={[0, ph / 2 - mm(6.6), PT / 2 + E * 2]}><circleGeometry args={[mm(1.6), 20]} /><meshStandardMaterial color="#1a1c22" roughness={0.1} /></mesh>
           <group position={[0, 0, -PT / 2 - E]} rotation={[0, Math.PI, 0]}>{[0, 1, 2, 3].map(port)}</group>
@@ -199,9 +214,8 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
           {logo}
           {/* plug in the port: a short black barrel, flush on the panel back */}
           {opts.sdCable && <mesh position={[0, -ph / 2 + mm(28), -PT / 2 - mm(7)]} rotation={[Math.PI / 2, 0, 0]}><cylinderGeometry args={[mm(10), mm(10.5), mm(14), 32]} /><meshStandardMaterial color="#141416" roughness={0.6} /></mesh>}
-          {/* speaker grilles: fine perforated strips along the full width of the bottom and top edges */}
-          {[-1, 1].map(sy => <mesh key={sy} position={[0, sy * (ph / 2 + E), 0]} rotation={[sy * -Math.PI / 2, 0, 0]}><planeGeometry args={[pw - mm(2 * GRILLE.margin), mm(GRILLE.h)]} />
-            <meshStandardMaterial map={grille()} color={fin.body} metalness={0.5} roughness={0.5} polygonOffset polygonOffsetFactor={-2} /></mesh>)}
+          {/* speaker grilles: real holes along the top and bottom edges, toward the back face */}
+          <Grilles pw={pw} ph={ph} />
           {stand !== 'tilt' && stand !== 'height' && <group position={[0, 0, -PT / 2]}>
             {/* VESA mount adapter: the 100 x 100 plate with its four bolts, on a bar to the cable entry */}
             {/* two rails carrying the 100 x 100 bolt pattern, joined by a bridge at the bottom */}

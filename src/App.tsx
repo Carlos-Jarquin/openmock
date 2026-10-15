@@ -1105,7 +1105,7 @@ export default function App() {
         onWheel={e => { const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)); setPose(p => ({ ...p, zoom: clamp(p.zoom * k, 0.5, 2.5) })) }}>
         <div className="om-floor" aria-hidden="true" />
         <ErrorBoundary label="3D preview" onRetry={retryEnvironment}>
-        <Canvas shadows gl={{ alpha: true, preserveDrawingBuffer: true, antialias: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1 }} camera={{ fov: 30, position: [0, 0, 4.2] }}
+        <Canvas shadows gl={{ alpha: true, preserveDrawingBuffer: true, antialias: true, stencil: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1 }} camera={{ fov: 30, position: [0, 0, 4.2] }}
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
           <Rig zoom={pose.zoom} fov={pose.fov} />
@@ -1156,7 +1156,7 @@ export default function App() {
           })()}
           {!transparent && <SceneBg mode={bgMode} c1={bg1} c2={bg2} angle={angle} />}
           {(fx.dof || fx.bloom || fx.grain || !transparent) && (
-            <EffectComposer multisampling={4}>
+            <EffectComposer multisampling={4} stencilBuffer>
               {/* Ambient occlusion at part junctions (lens rings, buttons, plateau). Radius in scene units, 0.025 = 2.5 mm. */}
               <>{/* off with Spectral hands: their depth (needed for the outline) made the AO paint faceted dark patches through the clear hand */}
               {!transparent && !sketch && !(hands.pose !== 'off' && hands.tone === 'spectral') && <N8AO halfRes aoRadius={0.025} distanceFalloff={0.3} intensity={2.2} color="#000" />}</>
