@@ -387,6 +387,8 @@ export default function App() {
   const pose = G.pose, setPose = S.glo.pose
   const poseRef = useRef(pose); poseRef.current = pose
   const histDev = useRef<unknown>(null)
+  const commitSwapRef = useRef<(s: { url: string; w: number; h: number } | null) => void>(() => {})
+  const histDev2 = useRef<{ until: number; down: boolean }>({ until: 0, down: false })
   // AI hand swap: the generated hand as a layer over the live scene; while it is in, camera, devices and hand are locked
   const [swap, setSwap] = useState<{ url: string; w: number; h: number } | null>(() => { try { const v = JSON.parse(localStorage.getItem(SWAP_KEY) || 'null'); return v && typeof v.url === 'string' ? v : null } catch { return null } })
   useEffect(() => { try { localStorage.removeItem('om-aihand-v1'); if (swap) localStorage.setItem(SWAP_KEY, JSON.stringify(swap)); else localStorage.removeItem(SWAP_KEY) } catch { /* too big for storage: this session only */ } }, [swap])
@@ -413,7 +415,7 @@ export default function App() {
   lockRef.current = swap ? lockRun : null
   useEffect(() => { setSceneGuard(swap ? lockRun : null); return () => setSceneGuard(null) }, [swap, lockRun])
   /** back to the 3D hand (unlocks), then optionally the action that asked */
-  const restoreHand = useCallback((then?: () => void) => { lockRef.current = null; setSceneGuard(null); setSwap(null); askRef.current = false; setLockAsk(null); then?.() }, [])
+  const restoreHand = useCallback((then?: () => void) => { if (!then) commitSwapRef.current(null); else { histDev2.current.until = 0; histDev2.current.down = false } lockRef.current = null; setSceneGuard(null); setSwap(null); askRef.current = false; setLockAsk(null); then?.() }, [])
   const lockContinue = useCallback(() => { const run = lockAsk; restoreHand(run ?? undefined) }, [lockAsk, restoreHand])
   const viewAnim = useRef(0)
   /** Ease to a preset over 0.6 s (shortest way round for the spin); jumps straight there when reduced motion is on. */
@@ -825,7 +827,7 @@ export default function App() {
       const res: AiResult = test ? { full: test, layer: test } : await runComfy(passes, { guide: ai.guide, seed: runSeed, onStatus: m => say(m, 'busy'), signal: ctl!.signal })
       const { layer, mask } = handLayer(passes, res, { silhouette: hands.tone === 'silhouette' })
       if (import.meta.env.DEV) (window as unknown as { __omSwapMask: string }).__omSwapMask = mask.toDataURL('image/png')
-      setSwap({ url: layer.toDataURL('image/png'), w: passes.w, h: passes.h })
+      const next = { url: layer.toDataURL('image/png'), w: passes.w, h: passes.h }; commitSwapRef.current(next); setSwap(next)
       setAi(a => ({ ...a, busy: false }))
       say('AI hand swapped in. The camera, devices and hand are locked until you restore the 3D hand.', 'done')
     } catch (e) {
@@ -1207,42 +1209,48 @@ export default function App() {
 
   // Palette commands that apply straight away
   // ── Scene undo and redo (⌘Z, ⌘⇧Z; Ctrl elsewhere). Every change to the scene is recorded; a run of changes with no gap
-  // longer than BURST ms (or while a pointer is held: drags, scrubs, camera moves) is one step. AI hands made at a scene state
-  // come back, locked, when undo or redo lands on that exact state.
-  type HistE = { scene: SceneState; tl?: TlSaved | null }
+  // longer than BURST ms (or while a pointer is held: drags, scrubs, camera moves) is one step. Each entry also carries the
+  // AI hand that was in at that state, so the swap is a step of its own and undo or redo brings it back by entry, not by
+  // comparing scenes (a matcher broke on any tiny change that landed between generating and undoing).
+  type SwapL = { url: string; w: number; h: number }
+  type HistE = { scene: SceneState; swap: SwapL | null; tl?: TlSaved | null }
   const HIST_MAX = 100, BURST = 500
-  const hist = useRef<{ past: HistE[]; future: HistE[]; base: SceneState; until: number; down: boolean; applying: number; tl: TlSaved | null | undefined }>({ past: [], future: [], base: S.scene, until: 0, down: false, applying: performance.now() + 2500, tl: undefined })
+  const hist = useRef<{ past: HistE[]; future: HistE[]; base: SceneState; until: number; down: boolean; applying: number; tl: TlSaved | null | undefined; swap: SwapL | null }>({ swap, past: [], future: [], base: S.scene, until: 0, down: false, applying: performance.now() + 2500, tl: undefined })
   const [histN, setHistN] = useState({ u: 0, r: 0 })
-  const sceneKey = (sc: SceneState) => JSON.stringify([sc.global.pose, sc.global.trueScale, sc.devices.map(d => [d.model, d.xf, d.hands, d.gesture, d.handRot, d.hidden, d.look, d.opts])])
-  const aiAt = useRef(new Map<string, { url: string; w: number; h: number }>())
-  useEffect(() => { if (swap) { const m = aiAt.current; m.delete(sceneKey(S.get())); m.set(sceneKey(S.get()), swap); while (m.size > 12) m.delete(m.keys().next().value!) } }, [swap]) // eslint-disable-line react-hooks/exhaustive-deps
+  const swapRef = useRef(swap); swapRef.current = swap
+  /** Swap in AI hand / Restore 3D hand as their own undo step */
+  const commitSwap = useCallback((next: SwapL | null) => { const h = hist.current
+    h.past.push({ scene: h.base, swap: h.swap }); if (h.past.length > HIST_MAX) h.past.shift()
+    h.future = []; h.swap = next; h.until = 0; setHistN({ u: h.past.length, r: 0 }) }, [])
   useEffect(() => { const h = hist.current
     const dn = () => { h.down = true }, up = () => { h.down = false; h.until = Math.max(h.until, performance.now() + BURST) }
     window.addEventListener('pointerdown', dn, true); window.addEventListener('pointerup', up, true); window.addEventListener('pointercancel', up, true)
     return () => { window.removeEventListener('pointerdown', dn, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', up, true) } }, [])
   useEffect(() => { const h = hist.current, sc = S.scene, now = performance.now()
     if (sc === h.base) return
-    const same = sceneKey(sc) === sceneKey(h.base) && sc.selected === h.base.selected && JSON.stringify(sc) === JSON.stringify(h.base)
+    const same = JSON.stringify(sc) === JSON.stringify(h.base)
     if (now < h.applying || same) { h.base = sc; return }
     if (!(h.down || now < h.until) || h.tl !== undefined) {
-      h.past.push({ scene: h.base, tl: h.tl }); if (h.past.length > HIST_MAX) h.past.shift(); h.tl = undefined }
-    else if (!h.past.length) h.past.push({ scene: h.base })
+      h.past.push({ scene: h.base, swap: h.swap, tl: h.tl }); if (h.past.length > HIST_MAX) h.past.shift(); h.tl = undefined }
+    else if (!h.past.length) h.past.push({ scene: h.base, swap: h.swap })
+    // after Continue the move and the switch back to the 3D hand are this one step: the entry above holds the AI hand
+    h.swap = swapRef.current
     h.future = []; h.base = sc; h.until = now + BURST; setHistN({ u: h.past.length, r: 0 }) }, [S.scene])
   const histGo = useCallback((dir: -1 | 1) => { const h = hist.current, from = dir < 0 ? h.past : h.future, to = dir < 0 ? h.future : h.past
     const e = from.pop(); if (!e) { flash(dir < 0 ? 'Nothing to undo.' : 'Nothing to redo.'); return }
-    to.push({ scene: h.base, tl: e.tl })
+    to.push({ scene: h.base, swap: swapRef.current, tl: e.tl })
     // a Clear canvas step also wipes and brings back the timeline
     if (e.tl) { if (dir < 0) tlApi.current?.unwipe(e.tl); else tlApi.current?.wipe() }
     h.applying = performance.now() + 700; h.until = 0; h.base = e.scene
-    // undo is the user's choice: no lock modal; the AI hand made at the landing state comes back, otherwise the 3D hand shows
+    // undo is the user's choice: no lock modal; the entry's AI hand (if it had one) comes back locked, otherwise the 3D hand
     lockRef.current = null; setSceneGuard(null); askRef.current = false; setLockAsk(null)
-    const ai = aiAt.current.get(sceneKey(e.scene)) ?? null
-    setSwap(ai); if (ai) { lockRef.current = lockRun; setSceneGuard(lockRun) }
+    const ai = e.swap
+    h.swap = ai; swapRef.current = ai; setSwap(ai); if (ai) { lockRef.current = lockRun; setSceneGuard(lockRun) }
     S.restoreAll(e.scene); poseRef.current = e.scene.global.pose
     setHistN({ u: h.past.length, r: h.future.length })
     flash(dir < 0 ? (ai ? 'Undone. AI hand restored.' : 'Undone.') : (ai ? 'Redone. AI hand restored.' : 'Redone.')) }, [S, flash, lockRun])
   const undo = useCallback(() => histGo(-1), [histGo]), redo = useCallback(() => histGo(1), [histGo])
-  histDev.current = { undo, redo, hist: hist.current }
+  histDev.current = { undo, redo, hist: hist.current }; commitSwapRef.current = commitSwap; histDev2.current = hist.current
   useEffect(() => { const on = (e: KeyboardEvent) => {
       if (!(IS_MAC ? e.metaKey : e.ctrlKey) || e.altKey) return
       const z = e.code === 'KeyZ' || e.key.toLowerCase() === 'z', y = !IS_MAC && !e.shiftKey && (e.code === 'KeyY' || e.key.toLowerCase() === 'y')
@@ -1257,7 +1265,7 @@ export default function App() {
     if (lockRef.current && !lockRef.current(() => clearCanvas())) return
     tlApi.current?.wipe(); S.clearAll()
     // a hard boundary: no undo past a reset, and the AI hands made before it are gone too
-    { const h = hist.current; h.past = []; h.future = []; h.tl = undefined; h.until = 0; h.applying = performance.now() + 1500; aiAt.current.clear(); setHistN({ u: 0, r: 0 }) }
+    { const h = hist.current; h.past = []; h.future = []; h.tl = undefined; h.until = 0; h.applying = performance.now() + 1500; h.swap = null; setHistN({ u: 0, r: 0 }) }
     setTimeout(() => { const p = defaultPose(S.get().devices[0]?.model ?? 'ip18'); useRefLast.current = p; hist.current.applying = performance.now() + 600; hist.current.past = []; setPose(p) }, 400) }, [S, defaultPose, setPose])
   useEffect(() => { if (!clrAsk) return; const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setClrAsk(false) }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k) }, [clrAsk])
   const commands: Cmd[] = [
