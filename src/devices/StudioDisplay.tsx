@@ -17,7 +17,7 @@ const all = (r: number) => [r, r, r, r]
 const E = 0.0006
 export type SdStand = 'tilt' | 'height' | 'vesa'
 export const SD = { panel: { w: 623, h: 362, t: 20, r: 9, edge: 1.8 }, screen: { w: 596.5, h: 335.5 }, px: { w: 5120, h: 2880 },
-  tilt: { base: { w: 151, d: 160, t: 7, z0: 75 }, hinge: { y: 208, z: 12 }, foot: 152, arm: { w: 151, t: 9 } },
+  tilt: { base: { w: 151, d: 172, t: 7, z0: 75 }, hinge: { y: 208, z: 12 }, foot: 140, arm: { w: 151, t: 9 } },
   height: { base: { w: 151, d: 205, t: 7, z0: 20 }, post: { z: -168, top: 281, t: 12 }, p1: 261, link: 92, a0: -35, a1: 35, attach: 90, fwd: 17, gap: 17, side: 79.5, plate: 6 },
   vesa: { plate: 100, depth: 11, y: 300 }, bottom: 117 }
 export const SD_ASPECT = SD.px.w / SD.px.h
@@ -79,40 +79,41 @@ function Grilles({ pw, ph }: { pw: number; ph: number }) {
   return <><primitive object={caps} /><primitive object={bores} /></>
 }
 const padCache = new Map<number, THREE.BufferGeometry>()
-function padGeo(d: number) { let g = padCache.get(d); if (g) return g
-  const r = mm(7.5), L = d - mm(20), sh = new THREE.Shape(); sh.absarc(0, -L / 2 + r, r, Math.PI, 0, false); sh.absarc(0, L / 2 - r, r, 0, Math.PI, false); sh.closePath()
-  g = new THREE.ExtrudeGeometry(sh, { depth: mm(0.4), bevelEnabled: false, curveSegments: 24 }); g.rotateX(Math.PI / 2); g.translate(0, mm(0.05), 0); padCache.set(d, g); return g }
+function padGeo(d: number, pw: number) { const k = d * 1000 + pw; let g = padCache.get(k); if (g) return g
+  const r = pw / 2, L = d - mm(8), sh = new THREE.Shape(); sh.absarc(0, -L / 2 + r, r, Math.PI, 0, false); sh.absarc(0, L / 2 - r, r, 0, Math.PI, false); sh.closePath()
+  g = new THREE.ExtrudeGeometry(sh, { depth: mm(0.4), bevelEnabled: false, curveSegments: 24 }); g.rotateX(Math.PI / 2); g.translate(0, mm(0.05), 0); padCache.set(k, g); return g }
 /** Flat foot plate, its front end rounded (seen from above) and its edges eased. */
 function Foot({ w, d, z0, alu, t = mm(5), rear = mm(6), edge = mm(1.6) }: { w: number; d: number; z0: number; alu: THREE.Material; t?: number; rear?: number; edge?: number }) {
   const geo = useMemo(() => { const r = Math.min(w / 2, mm(28)), b = slab(rrect(w, d, [rear, rear, r, r]), t, edge, 4); b.rotateX(-Math.PI / 2); return b }, [w, d, t, rear, edge])
   useEffect(() => () => geo.dispose(), [geo])
   return <group><mesh geometry={geo} position={[0, t / 2, z0 - d / 2]} castShadow receiveShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
-    {/* two long black rubber pads near the left and right edges: stadiums 15 mm wide, 4 mm in from the edge, 10 mm short of each end, flush on the underside */}
-    {[-1, 1].map(sx => <mesh key={sx} geometry={padGeo(d)} position={[sx * (w / 2 - mm(4 + 7.5)), 0, z0 - d / 2]}><meshStandardMaterial color="#1c1c1e" roughness={0.85} /></mesh>)}</group>
+    {/* two long black rubber pads near the left and right edges: straight parallel pills 9% of the base width, 3 mm in from
+        the sides and 4 mm from the front and back, inside the flat of the underside (clear of the eased edge and corners) */}
+    {[-1, 1].map(sx => <mesh key={sx} geometry={padGeo(d, w * 0.09)} position={[sx * (w / 2 - mm(3) - w * 0.045), 0, z0 - d / 2]}><meshStandardMaterial color="#1c1c1e" roughness={0.85} /></mesh>)}</group>
 }
 /** Tilt stand: one wide aluminium sheet bent into an L. The flat foot runs back under the panel, bends up at its rear
  * end and the upright slants forward to the round hinge behind the panel (chrome caps on its ends). A round cable hole
  * with the black power plug sits in the upright just below the panel. */
 function TiltStand({ f, alu, chrome }: { f: ReturnType<typeof sdFrame>; alu: THREE.Material; chrome: THREE.Material }) {
-  const t = SD.tilt, w = mm(t.arm.w), tb = mm(13), tu = mm(9), rf = mm(22), b = f.j, a = f.p1.clone().setY(tb)
+  const t = SD.tilt, w = mm(t.arm.w), tb = mm(13), tu = mm(9), rf = mm(22), rr = mm(12), b = f.j, a = f.p1.clone().setY(tb)
   // thick flat base; the upright meets it through a concave fillet on its front and back faces (one solid, no seams)
   const u = new THREE.Vector2(b.z - a.z, b.y - a.y).normalize(), n = new THREE.Vector2(u.y, -u.x)
   const sTop = mm(70), L = Math.hypot(b.z - a.z, b.y - a.y) - sTop, ang = Math.atan2(u.x, u.y)
   const mid = new THREE.Vector3(0, a.y + u.y * (sTop + L / 2), a.z + u.x * (sTop + L / 2))
   const slotY = (0.63 - 0.5) * (L + sTop) - sTop / 2 + mm(0)
   const fillet = useMemo(() => { const P = (s: number, side: number) => new THREE.Vector2(a.z + u.x * s + n.x * side * tu / 2, a.y + u.y * s + n.y * side * tu / 2)
-    const centre = (side: number) => { const q = P(0, side), nn = n.clone().multiplyScalar(side); return new THREE.Vector2(q.x + (rf - (tb + rf - q.y) * nn.y) / nn.x, tb + rf) }
-    const Cf = centre(1), Cr = centre(-1), sh = new THREE.Shape(), lo = tb - mm(2)
+    const centre = (side: number, R: number) => { const q = P(0, side), nn = n.clone().multiplyScalar(side); return new THREE.Vector2(q.x + (R - (tb + R - q.y) * nn.y) / nn.x, tb + R) }
+    const Cf = centre(1, rf), Cr = centre(-1, rr), sh = new THREE.Shape(), lo = tb - mm(2)
     sh.moveTo(Cr.x, lo); sh.lineTo(Cr.x, tb)
-    let r0 = -Math.PI / 2, r1 = Math.atan2(n.y, n.x); if (r1 < r0) r1 += Math.PI * 2; sh.absarc(Cr.x, Cr.y, rf, r0, r1, false)
+    let r0 = -Math.PI / 2, r1 = Math.atan2(n.y, n.x); if (r1 < r0) r1 += Math.PI * 2; sh.absarc(Cr.x, Cr.y, rr, r0, r1, false)
     const Sr = P(sTop, -1), Sf = P(sTop, 1); sh.lineTo(Sr.x, Sr.y); sh.lineTo(Sf.x, Sf.y)
     let f0 = Math.atan2(-n.y, -n.x), f1 = -Math.PI / 2; if (f1 < f0) f1 += Math.PI * 2; sh.absarc(Cf.x, Cf.y, rf, f0, f1, false)
     sh.lineTo(Cf.x, lo); sh.closePath()
-    const g = new THREE.ExtrudeGeometry(sh, { depth: w, bevelEnabled: false, curveSegments: 32 }); g.translate(0, 0, -w / 2); g.rotateY(-Math.PI / 2); return g }, [w, a.y, a.z, u.x, u.y, n.x, n.y, tu, tb, rf, sTop])
+    const fw = w - mm(1.2), g = new THREE.ExtrudeGeometry(sh, { depth: fw, bevelEnabled: false, curveSegments: 32 }); g.translate(0, 0, -fw / 2); g.rotateY(-Math.PI / 2); return g }, [w, a.y, a.z, u.x, u.y, n.x, n.y, tu, tb, rf, rr, sTop])
   const upright = useMemo(() => { const sh = rrect(w, L, all(mm(0.5))); sh.holes.push(slotShape(slotY)); return slab(sh, tu, mm(0.6), 3) }, [w, L, tu, slotY])
   useEffect(() => () => { upright.dispose(); fillet.dispose() }, [upright, fillet])
   return <group>
-    <Foot w={w} d={mm(t.base.d)} z0={mm(t.base.z0)} alu={alu} t={tb} rear={mm(14)} edge={mm(3)} />
+    <Foot w={w} d={mm(t.base.d)} z0={mm(t.base.z0)} alu={alu} t={tb} rear={mm(14)} edge={mm(2)} />
     <mesh geometry={fillet} castShadow userData={{ sketchHull: true }}><primitive object={alu} attach="material" /></mesh>
     {/* upright: the sheet with the cable slot through it */}
     <group position={mid.toArray()} rotation={[ang, 0, 0]}>
