@@ -62,7 +62,8 @@ const uid = () => Math.random().toString(36).slice(2, 9)
 export interface TlDev { uid: string; name: string; duo: boolean; duoScreen: 'inner' | 'outer'; current: (t: 'inner' | 'outer') => { texture: THREE.Texture; kind: 'image' | 'video'; name: string } | null }
 
 /** What the Export menu needs from the timeline: video settings and the record action. */
-export interface TlApi { record: () => void; add: () => void; setFps: (f: 30 | 60) => void; setFmtOut: (f: 'webm' | 'mp4') => void }
+export interface TlSaved { keys: Keyframe[]; clips: ScreenClip[]; gap: number }
+export interface TlApi { wipe: () => TlSaved; unwipe: (s: TlSaved) => void; record: () => void; add: () => void; setFps: (f: 30 | 60) => void; setFmtOut: (f: 'webm' | 'mp4') => void }
 export interface TlInfo { fps: 30 | 60; fmtOut: 'webm' | 'mp4'; mp4ok: boolean; rec: boolean; keys: number }
 
 export function Timeline({ snapshot, apply, canvas, transparent, flash, devs, open, setOpen, api, onInfo }: {
@@ -197,7 +198,10 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, devs, op
     tlLive.onEnd = () => { setPlaying(false); setTimeout(() => r.stop(), 150); tlLive.onEnd = end }
     r.start(250); tlLive.disc = null; tlLive.last = performance.now(); tlLive.active = true; tlLive.playing = true; setPlaying(true)
   }
-  api.current = { record, add, setFps, setFmtOut }
+  // clear canvas: every keyframe and clip goes (the rows go with their devices); unwipe puts them back
+  const wipe = (): TlSaved => { if (playing) pause(); const s = { keys, clips, gap }; setKeys([]); setClips([]); setSel(null); setEpoch(e => e + 1); tlLive.active = false; tlLive.pending = false; showHead(0, []); return s }
+  const unwipe = (s: TlSaved) => { setKeys(s.keys); setClips(s.clips); setGap(s.gap); setSel(null); setEpoch(e => e + 1); showHead(0, s.keys) }
+  api.current = { wipe, unwipe, record, add, setFps, setFmtOut }
   useEffect(() => { onInfo({ fps, fmtOut, mp4ok, rec, keys: keys.length }) }, [fps, fmtOut, mp4ok, rec, keys.length, onInfo])
   if (import.meta.env.DEV) (window as unknown as { __omTl: unknown }).__omTl = { add, play, pause, seek, record, setKeys, tlLive, setFps, setFmtOut, jump }
 

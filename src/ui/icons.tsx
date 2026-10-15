@@ -31,6 +31,7 @@ const P: Record<string, string> = {
   pause: 'M6.5 4v10M11.5 4v10',
   plus: 'M9 4v10M4 9h10',
   copy: 'M6.5 6.5h8v8h-8zM3.5 11.5v-8h8',
+  clearcanvas: 'M2.5 3.5h13v9h-13zM6 15.5h6M9 12.5v3M6.8 6l4.4 4M11.2 6l-4.4 4',
   trash: 'M3.5 5h11M7 5V3.5h4V5M5 5l.7 9.5h6.6L13 5',
   pencil: 'M3.5 14.5l.7-3 8-8 2.3 2.3-8 8zM10.8 4.9l2.3 2.3',
   eyeoff: 'M1.8 9S4.5 4 9 4s7.2 5 7.2 5-2.7 5-7.2 5S1.8 9 1.8 9ZM9 7a2 2 0 1 0 0 4a2 2 0 1 0 0-4M2.5 2.5l13 13',

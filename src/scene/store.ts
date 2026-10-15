@@ -136,6 +136,9 @@ export function useScene() {
         const i = s.devices.findIndex(d => d.uid === uid); if (i < 0) return s
         const devices = s.devices.filter(d => d.uid !== uid)
         return { ...s, devices, selected: s.selected === uid ? devices[Math.max(0, i - 1)].uid : s.selected } }),
+      /** clear canvas: back to a fresh scene (one new default device, default look); returns what was there for Undo */
+      clearAll: (): SceneState => { const prev = ref.current, d = newDevice(); setScene({ devices: [d], selected: d.uid, global: GLOBAL0 }); return prev },
+      restoreAll: (s: SceneState) => setScene(s),
       /** move a device up or down the list */
       reorder: (uid: string, by: number) => setScene(s => { const i = s.devices.findIndex(d => d.uid === uid), j = i + by
         if (i < 0 || j < 0 || j >= s.devices.length) return s; const devices = s.devices.slice(); [devices[i], devices[j]] = [devices[j], devices[i]]; return { ...s, devices } }),

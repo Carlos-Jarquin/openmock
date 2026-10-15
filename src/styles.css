@@ -115,3 +115,8 @@ button.ghost { background: #fff; color: #1d1d22; }
 section.timeline { position: relative; }
 
 .om-opt-k { font: inherit; font-size: 10px; letter-spacing: .04em; padding: 2px 6px; margin-right: 8px; border-radius: 6px; border: 1px solid rgba(0,0,0,.12); color: #5b5f66; background: rgba(0,0,0,.03); flex: none }
+.om-clrwrap { position: relative; display: inline-flex; }
+.om-clrpop { position: absolute; top: calc(100% + 10px); left: 50%; transform: translateX(-50%); width: 240px; padding: 12px; border-radius: 10px; background: #fff; box-shadow: 0 8px 28px rgba(0,0,0,.16); z-index: 40; font-size: 12px; line-height: 1.45; color: #1d1d22; white-space: normal; text-align: left; }
+.om-clrpop p { margin: 0 0 10px; }
+.om-clrbtns { display: flex; justify-content: flex-end; gap: 8px; }
+.om-clrundo { position: fixed; left: 50%; right: auto; top: 72px; bottom: auto; transform: translateX(-50%); z-index: 60; }

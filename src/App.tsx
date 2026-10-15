@@ -31,11 +31,11 @@ import { SB_DEFAULT } from './statusbar/config'
 import { StatusBarControls } from './statusbar/Panel'
 import { useStatusComposite } from './statusbar/composite'
 import { islandSketch } from './statusbar/StatusBar'
-import { Timeline, TimelineDriver, type TlApi, type TlInfo } from './timeline/Timeline'
+import { Timeline, TimelineDriver, type TlApi, type TlInfo, type TlSaved } from './timeline/Timeline'
 import { Chrome, type ChromeApi, type Cmd, type Section } from './ui/Chrome'
 import { Icon } from './ui/icons'
 import { mixersFor, screenLive } from './timeline/screenTrack'
-import { useScene, POSE, type Media, type Pose, type BgMode, type DeviceState } from './scene/store'
+import { useScene, POSE, type Media, type Pose, type BgMode, type DeviceState, type SceneState } from './scene/store'
 import { GES_KEYS, XF0, devKf, quatPose, tlLive, type Frame, type KfState, type Xf } from './timeline/tlCore'
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
@@ -366,7 +366,14 @@ export default function App() {
    * The device is centred by its bounding box (Centred); the zoom fits its height and width into the stage. */
   const defaultPose = useCallback((model: DeviceId, at?: Pose): Pose => {
     const st = document.querySelector('main.stage') as HTMLElement | null, asp = st ? st.clientWidth / Math.max(1, st.clientHeight) : 1.6
-    const base = at ?? BASE_POSE[model] ?? POSE
+    const base0 = at ?? BASE_POSE[model] ?? POSE
+    // face the selected device's own front: undo its saved placement rotation (xf) in the camera turn, so a device turned
+    // with the gizmo still resets to a level, head-on view
+    const sel = S.get().devices.find(d => d.uid === S.get().selected) ?? S.get().devices[0]
+    const qb = new THREE.Quaternion().setFromEuler(new THREE.Euler(D2R(base0.tiltX), D2R(base0.tiltY), D2R(base0.rotZ)))
+    if (sel?.xf && (sel.xf.rx || sel.xf.ry || sel.xf.rz)) qb.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(D2R(sel.xf.rx), D2R(sel.xf.ry), D2R(sel.xf.rz))).invert())
+    const eb = new THREE.Euler().setFromQuaternion(qb), r1 = (x: number) => Math.round(x * 1000) / 1000
+    const base = { ...base0, tiltX: r1(THREE.MathUtils.radToDeg(eb.x)), tiltY: r1(THREE.MathUtils.radToDeg(eb.y)), rotZ: r1(THREE.MathUtils.radToDeg(eb.z)) }
     // measured fit: the visible devices' boxes (in the turntable's frame), turned to the default angle, against the view
     // (4.2 units away at 30 degrees shows 2.25 units of height at zoom 1); falls back to the rough size table
     const wx = WIDTH[model] ?? 0.8, wy = HEIGHT[model] ?? 1.6; let fitPts: THREE.Vector3[] | null = null
@@ -406,12 +413,13 @@ export default function App() {
     window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on) }, [resetView])
   // switching model (or first load) moves the camera to the new model's default view unless it has been changed by hand
   const lastModel = useRef<DeviceId | null>(null), useRefLast = useRef<Pose | null>(null)
+  const standKey = device === 'studio' ? (opts.sdStand ?? 'tilt') + (opts.sdPortrait ? 'p' : '') : ''
   useEffect(() => { const prev = lastModel.current; lastModel.current = device
     const cur = poseRef.current, same = (a: Pose, b: Pose) => (Object.keys(a) as (keyof Pose)[]).every(k => Math.abs(a[k] - b[k]) < 1e-3)
     const lastDefault = useRefLast.current; const untouched = prev === null ? same(cur, POSE) : !!lastDefault && same(cur, lastDefault)
     if (!untouched) return
     // wait a few frames so the new model is mounted and centred before measuring it
-    const t = setTimeout(() => { const p = defaultPose(device); useRefLast.current = p; setPose(p) }, 350); return () => clearTimeout(t) }, [device, defaultPose, setPose])
+    const t = setTimeout(() => { const p = defaultPose(device); useRefLast.current = p; setPose(p) }, 350); return () => clearTimeout(t) }, [device, standKey, defaultPose, setPose])
   const speedRef = useRef(foldSpeed); speedRef.current = foldSpeed
   /** Stops the Play loop; finish also ends a running transition at its target (for the Fold slider). */
   const stopFold = useCallback((finish = true) => {
@@ -1050,6 +1058,14 @@ export default function App() {
   ]
 
   // Palette commands that apply straight away
+  // Clear canvas: every device, its settings, timeline rows and the saved list go; one fresh default device remains. Undo for 6 s
+  const [clrAsk, setClrAsk] = useState(false), [clrUndo, setClrUndo] = useState<{ scene: SceneState; tl: TlSaved | null } | null>(null), clrTimer = useRef(0)
+  const clearCanvas = useCallback(() => { setClrAsk(false)
+    const tl = tlApi.current?.wipe() ?? null, scene = S.clearAll()
+    setClrUndo({ scene, tl }); clearTimeout(clrTimer.current); clrTimer.current = window.setTimeout(() => setClrUndo(null), 6000)
+    setTimeout(() => { const p = defaultPose(S.get().devices[0]?.model ?? 'ip18'); useRefLast.current = p; setPose(p) }, 400) }, [S, defaultPose, setPose])
+  const undoClear = useCallback(() => { if (!clrUndo) return; clearTimeout(clrTimer.current); S.restoreAll(clrUndo.scene); if (clrUndo.tl) tlApi.current?.unwipe(clrUndo.tl); setClrUndo(null); flash('Canvas restored.') }, [S, clrUndo, flash])
+  useEffect(() => { if (!clrAsk) return; const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setClrAsk(false) }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k) }, [clrAsk])
   const commands: Cmd[] = [
     ...DEVICES.map(d => ({ id: `model-${d.id}`, group: 'device' as const, section: 'model', label: `Model › ${d.label}`, meta: (d.id === device ? 'CURRENT' : 'APPLY') as Cmd['meta'],
       run: () => { setDevice(d.id); if (d.defaultFinish && !(d.finishes && opts.finish in d.finishes)) setOpts(o => ({ ...o, finish: d.defaultFinish! })) } })),
@@ -1105,6 +1121,7 @@ export default function App() {
     { id: 'tl', group: 'view', label: 'Timeline › Expand or minimise (T)', meta: 'TOGGLE', run: toggleTimeline },
     { id: 'orbit', group: 'view', label: 'View › Orbit tool', meta: 'APPLY', run: () => setNavMode('orbit') },
     { id: 'pan', group: 'view', label: 'View › Pan tool', meta: 'APPLY', run: () => setNavMode('pan') },
+    { id: 'clearcanvas', group: 'scene', label: 'Scene › Clear canvas', meta: 'APPLY', run: clearCanvas },
     { id: 'resetview', group: 'view', label: 'View › Reset view', meta: 'APPLY', run: resetView, keys: RESET_KEYS },
   ]
 
@@ -1112,6 +1129,13 @@ export default function App() {
     <button className={`om-ibtn ${navMode === 'orbit' ? 'on' : ''}`} aria-label="Orbit" aria-pressed={navMode === 'orbit'} title="Orbit: drag to turn the device" onClick={() => setNavMode('orbit')}><Icon name="orbit" size={16} /></button>
     <button className={`om-ibtn ${navMode === 'pan' ? 'on' : ''}`} aria-label="Pan" aria-pressed={navMode === 'pan'} title="Pan: drag to move the device (or right-drag, or Shift-drag)" onClick={() => setNavMode('pan')}><Icon name="pan" size={16} /></button>
     <button className="om-ibtn" aria-label="Reset view" title={`Reset view (${RESET_KEYS})`} onClick={resetView}><Icon name="reset" size={16} /></button>
+    <span className="om-clrwrap">
+      <button className={`om-ibtn ${clrAsk ? 'on' : ''}`} aria-label="Clear canvas" aria-haspopup="dialog" aria-expanded={clrAsk} title="Clear canvas: remove every device" onClick={() => setClrAsk(a => !a)}><Icon name="clearcanvas" size={16} /></button>
+      {clrAsk && <div className="om-clrpop" role="dialog" aria-label="Clear canvas">
+        <p>Clear the canvas? Every device, its settings and its timeline rows are removed. You can undo this.</p>
+        <div className="om-clrbtns"><button className="ghost" onClick={() => setClrAsk(false)}>Cancel</button><button className="om-primary" autoFocus onClick={clearCanvas}>Clear</button></div>
+      </div>}
+    </span>
   </div>
   const exportMenu = (close: () => void) => <>
     <h3>Image</h3>
@@ -1224,6 +1248,7 @@ export default function App() {
         {multi && <div ref={selBox} className="om-selbox" aria-hidden="true" />}
         {ai.url && <img className="ai-overlay" src={ai.url} alt="" />}
         {dragging && <div className="dropnote">Drop to use as the screen</div>}
+        {clrUndo && <div className="tl-undo om-clrundo" role="status">Canvas cleared. <button onClick={undoClear}>Undo</button></div>}
         {toast && <div className="toast" role="status" style={{ position: 'absolute', left: '50%', bottom: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8,
           background: toast.error ? 'rgba(192,57,43,0.92)' : 'rgba(29,29,31,0.85)', color: '#fff', font: '13px -apple-system, system-ui, sans-serif', pointerEvents: 'none', maxWidth: 420, textAlign: 'center' }}>{toast.text}</div>}
       </main>
