@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { ContactShadows } from '@react-three/drei'
@@ -192,12 +193,28 @@ function paintBg(ctx: CanvasRenderingContext2D, w: number, h: number, mode: BgMo
 
 type Grab = { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera; setDpr: (n: number) => void; dpr: number }
 /** AI hand swap: keeps the 3D hand hidden while the generated hand layer is shown (the passes render handles its own). */
+/** The AI hand lock question. Lives on document.body (a portal), not inside the stage: the stage captures the pointer on
+ *  pointer-down for orbiting, which would steal the buttons' clicks. Escape cancels, Enter continues. */
+function LockModal({ onCancel, onContinue }: { onCancel: () => void; onContinue: () => void }) {
+  const cont = useRef<HTMLButtonElement>(null)
+  useEffect(() => { cont.current?.focus()
+    const on = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); onCancel() }
+      else if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); onContinue() }
+      else if (e.metaKey || e.ctrlKey) { e.stopImmediatePropagation() } }   // no shortcuts behind the question
+    window.addEventListener('keydown', on, true); return () => window.removeEventListener('keydown', on, true) }, [onCancel, onContinue])
+  return createPortal(<div className="om-lock-back" onPointerDown={e => { e.stopPropagation(); if (e.target === e.currentTarget) onCancel() }}>
+    <div className="om om-lock" role="alertdialog" aria-modal="true" aria-labelledby="om-lock-t">
+      <p id="om-lock-t">Moving this will switch back to the 3D hand. You will need to generate the AI hand again.</p>
+      <div className="om-clrbtns"><button className="ghost" onClick={onCancel}>Cancel</button>
+        <button ref={cont} className="om-primary" onClick={onContinue}>Continue</button></div></div></div>, document.body)
+}
 function HideHands({ on }: { on: boolean }) {
   const was = useRef(false)
   useFrame(({ scene }) => { if (!on && !was.current) return; scene.traverse(o => { if (o.userData.hand) o.visible = !on }); was.current = on })
   return null
 }
-const SWAP_KEY = 'om-aihand-v1'
+// v2: layers cut by the old mask-shaped cutout (before 012bccc) are dropped, not restored
+const SWAP_KEY = 'om-aihand-v2'
 function GLGrab({ onReady }: { onReady: (s: Grab) => void }) {
   const { gl, scene, camera, setDpr, viewport } = useThree()
   useEffect(() => onReady({ gl, scene, camera, setDpr, dpr: viewport.dpr }), [gl, scene, camera, setDpr, viewport.dpr, onReady])
@@ -372,16 +389,32 @@ export default function App() {
   const histDev = useRef<unknown>(null)
   // AI hand swap: the generated hand as a layer over the live scene; while it is in, camera, devices and hand are locked
   const [swap, setSwap] = useState<{ url: string; w: number; h: number } | null>(() => { try { const v = JSON.parse(localStorage.getItem(SWAP_KEY) || 'null'); return v && typeof v.url === 'string' ? v : null } catch { return null } })
-  useEffect(() => { try { if (swap) localStorage.setItem(SWAP_KEY, JSON.stringify(swap)); else localStorage.removeItem(SWAP_KEY) } catch { /* too big for storage: this session only */ } }, [swap])
+  useEffect(() => { try { localStorage.removeItem('om-aihand-v1'); if (swap) localStorage.setItem(SWAP_KEY, JSON.stringify(swap)); else localStorage.removeItem(SWAP_KEY) } catch { /* too big for storage: this session only */ } }, [swap])
   const [lockAsk, setLockAsk] = useState<null | (() => void)>(null)
   const askRef = useRef(false)
   /** the lock: hold the change and ask; returns false so the caller does nothing yet */
-  const lockRun = useCallback((run: () => void) => { if (!askRef.current) { askRef.current = true; setLockAsk(() => run) } return false }, [])
+  const livePointers = useRef(new Set<number>())
+  useEffect(() => { const dn = (e: PointerEvent) => livePointers.current.add(e.pointerId), up = (e: PointerEvent) => livePointers.current.delete(e.pointerId)
+    window.addEventListener('pointerdown', dn, true); window.addEventListener('pointerup', up, true); window.addEventListener('pointercancel', up, true)
+    return () => { window.removeEventListener('pointerdown', dn, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', up, true) } }, [])
+  const releaseAll = useCallback(() => {
+    drag.current = null; tap.current = null
+    const els = [document.querySelector('main.stage'), three.current?.gl.domElement].filter(Boolean) as HTMLElement[]
+    for (const id of livePointers.current) for (const el of els) {
+      if (el.hasPointerCapture?.(id)) { el.releasePointerCapture(id) }
+      // R3F ends a handle drag (gesture target, gizmo) on pointerup; send one so nothing keeps dragging behind the question
+      if (el.tagName === 'CANVAS') el.dispatchEvent(new PointerEvent('pointerup', { pointerId: id, bubbles: true, clientX: -1, clientY: -1 })) }
+    livePointers.current.clear()
+    const a = document.activeElement as HTMLElement | null; if (a && a.tagName === 'INPUT') a.blur()
+  }, [])
+  const lockRun = useCallback((run: () => void) => { if (!askRef.current) { askRef.current = true; releaseAll(); setLockAsk(() => run) } return false }, [releaseAll])
+  const lockCancel = useCallback(() => { askRef.current = false; setLockAsk(null) }, [])
   const lockRef = useRef<((run: () => void) => boolean) | null>(null)
   lockRef.current = swap ? lockRun : null
   useEffect(() => { setSceneGuard(swap ? lockRun : null); return () => setSceneGuard(null) }, [swap, lockRun])
   /** back to the 3D hand (unlocks), then optionally the action that asked */
   const restoreHand = useCallback((then?: () => void) => { lockRef.current = null; setSceneGuard(null); setSwap(null); askRef.current = false; setLockAsk(null); then?.() }, [])
+  const lockContinue = useCallback(() => { const run = lockAsk; restoreHand(run ?? undefined) }, [lockAsk, restoreHand])
   const viewAnim = useRef(0)
   /** Ease to a preset over 0.6 s (shortest way round for the spin); jumps straight there when reduced motion is on. */
   const goView = useCallback((to: Pose) => {
@@ -1413,10 +1446,7 @@ export default function App() {
         {multi && <div ref={selBox} className="om-selbox" aria-hidden="true" />}
         {ai.url && <img className="ai-overlay" src={ai.url} alt="" />}
         {swap && <img className="ai-overlay ai-swap" src={swap.url} alt="" />}
-        {lockAsk && <div className="om-lock-back"><div className="om-lock" role="alertdialog" aria-modal="true" aria-labelledby="om-lock-t">
-          <p id="om-lock-t">Moving this will switch back to the 3D hand. You will need to generate the AI hand again.</p>
-          <div className="om-clrbtns"><button className="ghost" autoFocus onClick={() => { askRef.current = false; setLockAsk(null) }}>Cancel</button>
-            <button className="om-primary" onClick={() => restoreHand(lockAsk)}>Continue</button></div></div></div>}
+        {lockAsk && <LockModal onCancel={lockCancel} onContinue={lockContinue} />}
         {dragging && <div className="dropnote">Drop to use as the screen</div>}
         {toast && <div className="toast" role="status" style={{ position: 'absolute', left: '50%', bottom: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8,
           background: toast.error ? 'rgba(192,57,43,0.92)' : 'rgba(29,29,31,0.85)', color: '#fff', font: '13px -apple-system, system-ui, sans-serif', pointerEvents: 'none', maxWidth: 420, textAlign: 'center' }}>{toast.text}</div>}
