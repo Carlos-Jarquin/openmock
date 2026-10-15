@@ -123,3 +123,6 @@ section.timeline { position: relative; }
 .om-angle .om-scrub { cursor: ew-resize; user-select: none; touch-action: none; }
 .om-angle .om-angle-n { width: 52px; font: inherit; font-size: 11px; text-align: right; padding: 2px 4px; border: 1px solid rgba(0,0,0,.12); border-radius: 6px; background: transparent; }
 .om-angle output { min-width: 0; }
+.om-lock-back { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(20,20,26,.28); }
+.om-lock { width: 320px; padding: 16px; border-radius: 12px; background: #fff; box-shadow: 0 12px 40px rgba(0,0,0,.22); font-size: 13px; line-height: 1.45; color: #1d1d22; }
+.om-lock p { margin: 0 0 14px; }

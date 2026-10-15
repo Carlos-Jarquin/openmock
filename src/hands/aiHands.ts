@@ -306,3 +306,36 @@ export function composite(p: Passes, ai: AiResult, opts: { shadows: boolean; sil
   o.putImageData(B, 0, 0)
   return out
 }
+
+/** AI hand swap: only the generated hand, as a transparent layer the size of the canvas, to sit over the live render with
+ *  the 3D hand hidden. Alpha is Openmock's own visible-hand mask (hand pixels the device does not cover, so a finger over
+ *  the screen stays in front of it), grown a little and feathered; over the device only real new skin passes (as in
+ *  composite), so the AI can never repaint the screen. Returns the layer and the mask used, for checking. */
+export function handLayer(p: Passes, ai: AiResult, opts: { silhouette?: boolean } = {}) {
+  const { w, h } = p
+  const gen = canvas(w, h), g = gen.getContext('2d')!; g.imageSmoothingQuality = 'high'; g.drawImage(ai.full, 0, 0, w, h)
+  const G = g.getImageData(0, 0, w, h), C = p.clean.getContext('2d')!.getImageData(0, 0, w, h).data
+  const P = p.phone.getContext('2d')!.getImageData(0, 0, w, h).data, O = p.occlusion.getContext('2d')!.getImageData(0, 0, w, h).data
+  // grow the hand mask about 0.3% of the width (blur, then lift), then feather it
+  const grow = canvas(w, h), gx = grow.getContext('2d')!; gx.filter = `blur(${Math.max(1.5, w / 350).toFixed(1)}px)`; gx.drawImage(p.mask, 0, 0)
+  const Gm = gx.getImageData(0, 0, w, h); for (let i = 0; i < Gm.data.length; i += 4) Gm.data[i] = Gm.data[i + 1] = Gm.data[i + 2] = Math.min(255, Gm.data[i] * 3)
+  gx.filter = 'none'; gx.putImageData(Gm, 0, 0)
+  const fea = canvas(w, h), fx = fea.getContext('2d')!; fx.filter = `blur(${Math.max(1, w / 700).toFixed(1)}px)`; fx.drawImage(grow, 0, 0)
+  const M = fx.getImageData(0, 0, w, h).data
+  const mask = canvas(w, h), mx = mask.getContext('2d')!, MK = mx.createImageData(w, h)
+  const out = canvas(w, h), ox = out.getContext('2d')!, L = ox.createImageData(w, h)
+  for (let i = 0; i < L.data.length; i += 4) {
+    const r = G.data[i], gg = G.data[i + 1], b = G.data[i + 2]
+    const d = (Math.abs(r - C[i]) + Math.abs(gg - C[i + 1]) + Math.abs(b - C[i + 2])) / 3
+    const cb = 128 - 0.1687 * r - 0.3313 * gg + 0.5 * b, cr = 128 + 0.5 * r - 0.4187 * gg - 0.0813 * b
+    const band = (v: number, lo: number, hi: number, s: number) => Math.max(0, Math.min(1, (v - lo + s) / s, (hi + s - v) / s))
+    const onPhone = P[i] / 255, skin = band(cr, 132, 185, 8) * band(cb, 70, 130, 8)
+    const keep = (1 - onPhone) + onPhone * Math.max(0, Math.min(1, (d - 12) / 24)) * skin
+    const a = (M[i] / 255) * (1 - O[i] / 255) * keep
+    L.data[i] = r; L.data[i + 1] = gg; L.data[i + 2] = b; L.data[i + 3] = Math.round(a * 255)
+    MK.data[i] = MK.data[i + 1] = MK.data[i + 2] = Math.round(a * 255); MK.data[i + 3] = 255
+  }
+  if (opts.silhouette) grade(L.data)
+  ox.putImageData(L, 0, 0); mx.putImageData(MK, 0, 0)
+  return { layer: out, mask }
+}

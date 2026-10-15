@@ -102,6 +102,20 @@ function saveDevices(s: SceneState) {
 const init = (): SceneState => { const l = loadDevices(); if (l) return { devices: l.devices, selected: l.selected, global: { ...GLOBAL0, trueScale: l.trueScale } }; const d = newDevice(); return { devices: [d], selected: d.uid, global: GLOBAL0 } }
 
 type Setter<T> = (v: SetStateAction<T>) => void
+/** Lock while the AI hand is swapped in: a change that would move the camera, a device or the hand goes to this guard
+ *  first. It returns true to let the change through now; false holds it (the guard can run it later, after restoring). */
+type Guard = (run: () => void) => boolean
+let guard: Guard | null = null
+export const setSceneGuard = (g: Guard | null) => { guard = g }
+const MOVING_DEV = new Set(['model', 'xf', 'hands', 'gesture', 'handRot', 'hidden', 'look'])
+const MOVING_OPTS = ['fold', 'lid', 'tilt', 'rise', 'sdStand', 'sdPortrait', 'screen'] as const
+const moves = (k: string, nv: unknown, old: unknown) => {
+  if (Object.is(nv, old)) return false
+  if (k === 'opts') { const a = old as Record<string, unknown>, b = nv as Record<string, unknown>; return MOVING_OPTS.some(m => !Object.is(a?.[m], b?.[m])) }
+  return MOVING_DEV.has(k) || k === 'pose'
+}
+/** true when the change may go ahead now */
+const pass = (k: string, nv: unknown, old: unknown, run: () => void) => !guard || !moves(k, nv, old) || guard(run)
 const resolve = <T,>(v: SetStateAction<T>, old: T) => typeof v === 'function' ? (v as (o: T) => T)(old) : v
 
 /** The scene plus stable, useState-style setters for each field of the selected device and of the global settings.
@@ -111,22 +125,26 @@ export function useScene() {
   const ref = useRef(scene); ref.current = scene
   // save the devices a moment after they change (not every frame of a drag)
   useEffect(() => { const t = setTimeout(() => saveDevices(scene), 300); return () => clearTimeout(t) }, [scene.devices, scene.selected, scene.global.trueScale])
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const self = useRef<any>(null)
   const api = useMemo(() => {
-    const dev = <K extends keyof DeviceState>(k: K): Setter<DeviceState[K]> => v => setScene(s => {
+    const dev = <K extends keyof DeviceState>(k: K): Setter<DeviceState[K]> => v => { const s0 = ref.current, d0 = s0.devices.find(d => d.uid === s0.selected)
+      if (d0 && !pass(k, resolve(v, d0[k]), d0[k], () => dev(k)(v))) return; setScene(s => {
       const i = s.devices.findIndex(d => d.uid === s.selected); if (i < 0) return s
       const d = s.devices[i], nv = resolve(v, d[k]); if (Object.is(nv, d[k])) return s
       const devices = s.devices.slice(); devices[i] = { ...d, [k]: nv }; return { ...s, devices }
-    })
-    const glo = <K extends keyof GlobalState>(k: K): Setter<GlobalState[K]> => v => setScene(s => {
+    }) }
+    const glo = <K extends keyof GlobalState>(k: K): Setter<GlobalState[K]> => v => { if (!pass(k, resolve(v, ref.current.global[k]), ref.current.global[k], () => glo(k)(v))) return; setScene(s => {
       const nv = resolve(v, s.global[k]); if (Object.is(nv, s.global[k])) return s
       return { ...s, global: { ...s.global, [k]: nv } }
-    })
+    }) }
     /** a setter for one field of any device, by uid */
-    const devAt = <K extends keyof DeviceState>(uid: string, k: K, v: SetStateAction<DeviceState[K]>) => setScene(s => {
+    const devAt = <K extends keyof DeviceState>(uid: string, k: K, v: SetStateAction<DeviceState[K]>): void => { const d0 = ref.current.devices.find(d => d.uid === uid)
+      if (d0 && !pass(k, resolve(v, d0[k]), d0[k], () => devAt(uid, k, v))) return; setScene(s => {
       const i = s.devices.findIndex(d => d.uid === uid); if (i < 0) return s
       const d = s.devices[i], nv = resolve(v, d[k]); if (Object.is(nv, d[k])) return s
       const devices = s.devices.slice(); devices[i] = { ...d, [k]: nv }; return { ...s, devices }
-    })
+    }) }
     const devKeys = ['model', 'opts', 'media', 'mediaOuter', 'mediaTo', 'sbOn', 'sb', 'sbReset', 'foldFollow', 'foldSpeed', 'foldDark', 'hands', 'spectral', 'gesture', 'handRot', 'idle', 'name', 'hidden', 'xf', 'look'] as const
     const gloKeys = ['pose', 'light', 'fx', 'style', 'sk', 'bgMode', 'bg1', 'bg2', 'angle', 'transparent', 'scale', 'trueScale'] as const
     return {
@@ -136,12 +154,13 @@ export function useScene() {
       get: () => ref.current,
       devAt,
       /** add a device (placed by the caller), select it and return its uid */
-      add: (model: DeviceId, xf: Xf, from?: DeviceState) => { const d = from ? { ...from, uid: newDevice().uid, name: from.name ? `${from.name} copy` : '', hidden: false, xf } : { ...newDevice(model), xf }
+      add: (model: DeviceId, xf: Xf, from?: DeviceState): string => { if (guard && !guard(() => self.current.add(model, xf, from))) return ''
+        const d = from ? { ...from, uid: newDevice().uid, name: from.name ? `${from.name} copy` : '', hidden: false, xf } : { ...newDevice(model), xf }
         setScene(s => ({ ...s, devices: [...s.devices, d], selected: d.uid })); return d.uid },
-      remove: (uid: string) => setScene(s => { if (s.devices.length < 2) return s
+      remove: (uid: string): void => { if (guard && !guard(() => self.current.remove(uid))) return; setScene(s => { if (s.devices.length < 2) return s
         const i = s.devices.findIndex(d => d.uid === uid); if (i < 0) return s
         const devices = s.devices.filter(d => d.uid !== uid)
-        return { ...s, devices, selected: s.selected === uid ? devices[Math.max(0, i - 1)].uid : s.selected } }),
+        return { ...s, devices, selected: s.selected === uid ? devices[Math.max(0, i - 1)].uid : s.selected } }) },
       /** clear canvas: back to a fresh scene (one new default device, default look); returns what was there for Undo */
       clearAll: (): SceneState => { const prev = ref.current, d = newDevice(); setScene({ devices: [d], selected: d.uid, global: GLOBAL0 }); return prev },
       restoreAll: (s: SceneState) => setScene(s),
@@ -150,6 +169,7 @@ export function useScene() {
         if (i < 0 || j < 0 || j >= s.devices.length) return s; const devices = s.devices.slice(); [devices[i], devices[j]] = [devices[j], devices[i]]; return { ...s, devices } }),
     }
   }, [])
+  self.current = api
   const selected = scene.devices.find(d => d.uid === scene.selected) ?? scene.devices[0]
   return { scene, selected, ...api }
 }

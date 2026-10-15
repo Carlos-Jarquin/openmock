@@ -66,7 +66,9 @@ export interface TlSaved { keys: Keyframe[]; clips: ScreenClip[]; gap: number }
 export interface TlApi { wipe: () => TlSaved; unwipe: (s: TlSaved) => void; record: () => void; add: () => void; setFps: (f: 30 | 60) => void; setFmtOut: (f: 'webm' | 'mp4') => void }
 export interface TlInfo { fps: 30 | 60; fmtOut: 'webm' | 'mp4'; mp4ok: boolean; rec: boolean; keys: number }
 
-export function Timeline({ snapshot, apply, canvas, transparent, flash, devs, open, setOpen, api, onInfo }: {
+export function Timeline({ snapshot, apply, canvas, transparent, flash, devs, open, setOpen, api, onInfo, guard }: {
+  /** AI hand lock: playback moves the scene, so it asks first (false: held until the user decides) */
+  guard?: (run: () => void) => boolean
   open: boolean; setOpen: (o: boolean) => void; api: React.MutableRefObject<TlApi | null>; onInfo: (i: TlInfo) => void
   snapshot: () => KfState; apply: (s: KfState) => void; canvas: () => HTMLCanvasElement | null; transparent: boolean; flash: (t: string, err?: boolean) => void
   /** the devices in the scene, for their rows and screen lanes */
@@ -93,6 +95,7 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, devs, op
   const T = total(keys), st = starts(keys)
 
   const play = () => {
+    if (guard && !guard(() => play())) return
     if (keys.length < 2) { flash('Add at least two keyframes to play.', true); return }
     // from the last keyframe (where Add leaves the playhead) or the end, start again from 0
     if (tlLive.t >= T - 1e-6) tlLive.t = 0
@@ -181,6 +184,7 @@ export function Timeline({ snapshot, apply, canvas, transparent, flash, devs, op
 
   /** Plays the timeline once from the start and records the canvas in real time. */
   const record = () => {
+    if (guard && !guard(() => record())) return
     const cv = canvas(); if (!cv || keys.length < 2) { flash('Add at least two keyframes to export a video.', true); return }
     const types = fmtOut === 'mp4' ? ['video/mp4;codecs=avc1', 'video/mp4'] : transparent ? ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'] : ['video/webm;codecs=vp9', 'video/webm']
     const mime = types.find(t => MediaRecorder.isTypeSupported(t)); if (!mime) { flash('This browser cannot record that format.', true); return }

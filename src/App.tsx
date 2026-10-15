@@ -18,7 +18,7 @@ import { SD, sdFrame, type SdStand } from './devices/StudioDisplay'
 import { ErrorBoundary } from './ErrorBoundary'
 import { loadLogo, loadLocalLogo } from './localLogo'
 import { Env, retryEnvironment } from './Env'
-import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type Guide } from './hands/aiHands'
+import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, handLayer, type Guide, type AiResult } from './hands/aiHands'
 import { IDLE_LEVELS } from './hands/motion'
 import { HandRig, HAND_POSES, SKIN_TONES, posesFor, poseOk, wristSection, type HandFit, type HandPose } from './hands/Hands'
 import { SPECTRAL_DEFAULTS } from './hands/spectral'
@@ -35,6 +35,7 @@ import { Timeline, TimelineDriver, type TlApi, type TlInfo, type TlSaved } from 
 import { Chrome, type ChromeApi, type Cmd, type Section } from './ui/Chrome'
 import { Icon } from './ui/icons'
 import { mixersFor, screenLive } from './timeline/screenTrack'
+import { setSceneGuard } from './scene/store'
 import { useScene, POSE, type Media, type Pose, type BgMode, type DeviceState, type SceneState } from './scene/store'
 import { GES_KEYS, XF0, devKf, quatPose, tlLive, type Frame, type KfState, type Xf } from './timeline/tlCore'
 
@@ -190,6 +191,13 @@ function paintBg(ctx: CanvasRenderingContext2D, w: number, h: number, mode: BgMo
 
 
 type Grab = { gl: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.Camera; setDpr: (n: number) => void; dpr: number }
+/** AI hand swap: keeps the 3D hand hidden while the generated hand layer is shown (the passes render handles its own). */
+function HideHands({ on }: { on: boolean }) {
+  const was = useRef(false)
+  useFrame(({ scene }) => { if (!on && !was.current) return; scene.traverse(o => { if (o.userData.hand) o.visible = !on }); was.current = on })
+  return null
+}
+const SWAP_KEY = 'om-aihand-v1'
 function GLGrab({ onReady }: { onReady: (s: Grab) => void }) {
   const { gl, scene, camera, setDpr, viewport } = useThree()
   useEffect(() => onReady({ gl, scene, camera, setDpr, dpr: viewport.dpr }), [gl, scene, camera, setDpr, viewport.dpr, onReady])
@@ -361,9 +369,22 @@ export default function App() {
   const sbReset = D0.sbReset, setSbReset = S.dev.sbReset
   const pose = G.pose, setPose = S.glo.pose
   const poseRef = useRef(pose); poseRef.current = pose
+  // AI hand swap: the generated hand as a layer over the live scene; while it is in, camera, devices and hand are locked
+  const [swap, setSwap] = useState<{ url: string; w: number; h: number } | null>(() => { try { const v = JSON.parse(localStorage.getItem(SWAP_KEY) || 'null'); return v && typeof v.url === 'string' ? v : null } catch { return null } })
+  useEffect(() => { try { if (swap) localStorage.setItem(SWAP_KEY, JSON.stringify(swap)); else localStorage.removeItem(SWAP_KEY) } catch { /* too big for storage: this session only */ } }, [swap])
+  const [lockAsk, setLockAsk] = useState<null | (() => void)>(null)
+  const askRef = useRef(false)
+  /** the lock: hold the change and ask; returns false so the caller does nothing yet */
+  const lockRun = useCallback((run: () => void) => { if (!askRef.current) { askRef.current = true; setLockAsk(() => run) } return false }, [])
+  const lockRef = useRef<((run: () => void) => boolean) | null>(null)
+  lockRef.current = swap ? lockRun : null
+  useEffect(() => { setSceneGuard(swap ? lockRun : null); return () => setSceneGuard(null) }, [swap, lockRun])
+  /** back to the 3D hand (unlocks), then optionally the action that asked */
+  const restoreHand = useCallback((then?: () => void) => { lockRef.current = null; setSceneGuard(null); setSwap(null); askRef.current = false; setLockAsk(null); then?.() }, [])
   const viewAnim = useRef(0)
   /** Ease to a preset over 0.6 s (shortest way round for the spin); jumps straight there when reduced motion is on. */
   const goView = useCallback((to: Pose) => {
+    if (lockRef.current && !lockRef.current(() => goView(to))) return
     cancelAnimationFrame(viewAnim.current)
     const from = { ...poseRef.current }, sd = (a: number, b: number) => ((b - a) % 360 + 540) % 360 - 180, dy = sd(from.tiltY, to.tiltY), dX = sd(from.tiltX, to.tiltX), dZ = sd(from.rotZ, to.rotZ)
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { setPose(to); return }
@@ -627,6 +648,7 @@ export default function App() {
   const layoutRef = useRef<(k: 'row' | 'fan' | 'grid') => void>(() => {})
   /** Layout presets: place every visible device side by side, fanned out or in a grid, centred on the view. */
   const layout = (kind: 'row' | 'fan' | 'grid') => {
+    if (lockRef.current && !lockRef.current(() => layoutRef.current(kind))) return
     const ds = S.get().devices.filter(d => !d.hidden), n = ds.length; if (!n) return
     const ws = ds.map(wOf), gap = 0.12, r2 = (x: number) => Math.round(x * 1000) / 1000
     let out: Xf[]
@@ -751,6 +773,36 @@ export default function App() {
       say(/Failed to fetch|NetworkError|Load failed/i.test(m) ? 'ComfyUI isn\'t running or stopped responding. Start it (port 8188), then try again.' : m || 'Something went wrong with ComfyUI.', 'error')
     }
   }
+  /** Swap in AI hand: guide passes from this exact frame, ComfyUI paints the hand (or a given picture, for testing), then only
+   *  the generated hand is kept, cut by the app's own hand mask, as a layer over the live scene with the 3D hand hidden. */
+  const swapInAiHand = async (test?: HTMLImageElement) => {
+    const t = three.current
+    if (ai.busy || swap) return
+    if (!t) { say('The 3D view isn\'t ready yet. Wait a moment, then try again.', 'error'); return }
+    if (hands.pose === 'off') { say('Turn on a hand first: the AI hand replaces the 3D one.', 'error'); return }
+    let ctl: AbortController | null = null
+    if (!test) { say('Checking ComfyUI…', 'busy'); if (!(await comfyReachable())) { say('ComfyUI isn\'t running. Start it (port 8188), then try again.', 'error'); return }
+      ctl = new AbortController(); aiAbort.current = ctl }
+    const runSeed = seedLock ? seed : Math.floor(Math.random() * 1e9); setSeed(runSeed)
+    setAi(a => ({ ...a, busy: true }))
+    try {
+      await new Promise(r => requestAnimationFrame(r))
+      const passes = await renderPasses(t, hands.tone)
+      const res: AiResult = test ? { full: test, layer: test } : await runComfy(passes, { guide: ai.guide, seed: runSeed, onStatus: m => say(m, 'busy'), signal: ctl!.signal })
+      const { layer, mask } = handLayer(passes, res, { silhouette: hands.tone === 'silhouette' })
+      if (import.meta.env.DEV) (window as unknown as { __omSwapMask: string }).__omSwapMask = mask.toDataURL('image/png')
+      setSwap({ url: layer.toDataURL('image/png'), w: passes.w, h: passes.h })
+      setAi(a => ({ ...a, busy: false }))
+      say('AI hand swapped in. The camera, devices and hand are locked until you restore the 3D hand.', 'done')
+    } catch (e) {
+      setAi(a => ({ ...a, busy: false }))
+      const m = e instanceof Error ? e.message : String(e)
+      say(/Failed to fetch|NetworkError|Load failed/i.test(m) ? 'ComfyUI isn\'t running or stopped responding. Start it (port 8188), then try again.' : m || 'Something went wrong with ComfyUI.', 'error')
+    }
+  }
+  /** stills: the AI hand layer drawn over the render at the export size */
+  const drawSwap = async (ctx: CanvasRenderingContext2D, w: number, h: number) => { if (!swap) return
+    const i = await new Promise<HTMLImageElement>(r => { const im = new Image(); im.onload = () => r(im); im.src = swap.url }); ctx.drawImage(i, 0, 0, w, h) }
   const exportAiPasses = async () => {
     const t = three.current; if (!t) return
     await new Promise(r => requestAnimationFrame(r))
@@ -773,6 +825,7 @@ export default function App() {
     const ctx = out.getContext('2d')!
     if (!transparent) paintBg(ctx, w, h, bgMode, bg1, bg2, angle)
     ctx.drawImage(gl.domElement, 0, 0)
+    await drawSwap(ctx, w, h)
     t.setDpr(prev)
     const a = document.createElement('a'); a.download = `openmock-${w}x${h}.png`; a.href = out.toDataURL('image/png'); a.click()
     setStatus(`Exported ${w} × ${h} PNG.`)
@@ -789,6 +842,7 @@ export default function App() {
     const ctx = out.getContext('2d')!
     if (!transparent) paintBg(ctx, w, h, bgMode, bg1, bg2, angle)
     ctx.drawImage(ai.url ? await new Promise<HTMLImageElement>(r => { const i = new Image(); i.onload = () => r(i); i.src = ai.url! }) : gl.domElement, 0, 0, w, h)
+    if (!ai.url) await drawSwap(ctx, w, h)
     t.setDpr(prev)
     const png = out.toDataURL('image/png')
     const design = media?.svg ? `\n  <g id="screen-design-vector" display="none"><!-- the pasted screen design, as vector -->\n${media.svg.replace(/^<\?xml[^>]*>\s*/, '')}\n  </g>` : ''
@@ -807,7 +861,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { rigs, devGroup, defaultPose, resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { swapInAiHand, restoreHand, rigs, devGroup, defaultPose, resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -954,6 +1008,10 @@ export default function App() {
       {aiMsg && <p className={`ai-msg ${aiMsg.kind}`} role="status" style={{ margin: '4px 0' }}>{aiMsg.kind === 'busy' ? 'Working: ' : ''}{aiMsg.text}</p>}
       {ai.url && <button onClick={() => { const a = document.createElement('a'); a.download = 'openmock-ai-hands.png'; a.href = ai.url!; a.click() }}>Download</button>}
       {ai.url && <button className="ghost" onClick={() => setAi(a => { URL.revokeObjectURL(a.url!); return { ...a, url: null } })}>Back to 3D hands</button>}
+      <span className="om-sub-h">AI hand swap</span>
+      {swap ? <button onClick={() => restoreHand()}>Restore 3D hand</button>
+        : <button onClick={() => swapInAiHand()} disabled={ai.busy || (hands.pose as string) === 'off'}>Swap in AI hand</button>}
+      <p className="hint">{swap ? 'The AI hand is a still picture over the live scene, so the camera, devices and hand are locked. The screen stays live. Video shows the 3D scene without it.' : 'Paints a realistic hand from this exact view and puts only the hand back over the live scene.'}</p>
       <button className="ghost" onClick={exportAiPasses}>Export for AI hands</button>
       <p className="hint">Uses ComfyUI on this Mac to repaint only the hands. The phone stays exactly as rendered.</p>
     </> : <p className="hint">Turn on a hand under Device › Hand first. {handOk ? '' : device === 'duo' ? 'Hands hold the iPhone Duo fully open or closed. Finish the fold to see them.' : 'Hands are available for the iPhones and iPads, and the iPhone Duo open or closed.'}</p> },
@@ -1117,6 +1175,7 @@ export default function App() {
   // Clear canvas: every device, its settings, timeline rows and the saved list go; one fresh default device remains. Undo for 6 s
   const [clrAsk, setClrAsk] = useState(false), [clrUndo, setClrUndo] = useState<{ scene: SceneState; tl: TlSaved | null } | null>(null), clrTimer = useRef(0)
   const clearCanvas = useCallback(() => { setClrAsk(false)
+    if (lockRef.current && !lockRef.current(() => clearCanvas())) return
     const tl = tlApi.current?.wipe() ?? null, scene = S.clearAll()
     setClrUndo({ scene, tl }); clearTimeout(clrTimer.current); clrTimer.current = window.setTimeout(() => setClrUndo(null), 6000)
     setTimeout(() => { const p = defaultPose(S.get().devices[0]?.model ?? 'ip18'); useRefLast.current = p; setPose(p) }, 400) }, [S, defaultPose, setPose])
@@ -1242,6 +1301,7 @@ export default function App() {
         <ErrorBoundary label="3D preview" onRetry={retryEnvironment}>
         <Canvas shadows gl={{ alpha: true, preserveDrawingBuffer: true, antialias: true, stencil: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1 }} camera={{ fov: 30, position: [0, 0, 4.2] }}
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
+          <HideHands on={!!swap} />
           <GLGrab onReady={useCallback(s => { three.current = s }, [])} />
           <Rig zoom={pose.zoom} fov={pose.fov} />
           <TimelineDriver group={devGroup} onCommit={tlCommit} onSide={tlSide} />
@@ -1304,6 +1364,11 @@ export default function App() {
         {fpsOn && <div ref={fpsEl} className="om-fps" role="status" aria-label="Frame rate">…</div>}
         {multi && <div ref={selBox} className="om-selbox" aria-hidden="true" />}
         {ai.url && <img className="ai-overlay" src={ai.url} alt="" />}
+        {swap && <img className="ai-overlay ai-swap" src={swap.url} alt="" />}
+        {lockAsk && <div className="om-lock-back"><div className="om-lock" role="alertdialog" aria-modal="true" aria-labelledby="om-lock-t">
+          <p id="om-lock-t">Moving this will switch back to the 3D hand. You will need to generate the AI hand again.</p>
+          <div className="om-clrbtns"><button className="ghost" autoFocus onClick={() => { askRef.current = false; setLockAsk(null) }}>Cancel</button>
+            <button className="om-primary" onClick={() => restoreHand(lockAsk)}>Continue</button></div></div></div>}
         {dragging && <div className="dropnote">Drop to use as the screen</div>}
         {clrUndo && <div className="tl-undo om-clrundo" role="status">Canvas cleared. <button onClick={undoClear}>Undo</button></div>}
         {toast && <div className="toast" role="status" style={{ position: 'absolute', left: '50%', bottom: 24, transform: 'translateX(-50%)', padding: '8px 14px', borderRadius: 8,
@@ -1312,7 +1377,7 @@ export default function App() {
       <Chrome apiRef={chromeApi} sections={sections} commands={commands} deviceName={selName} tools={tools} exportMenu={exportMenu} onInsets={onInsets} toggleTimeline={toggleTimeline}
         timeline={<Timeline snapshot={tlSnapshot} apply={tlApply} canvas={() => document.querySelector('.stage canvas')} transparent={transparent} flash={flash}
           devs={tlDevs}
-          open={tlOpen} setOpen={setTlOpen} api={tlApi} onInfo={setTlInfo} />} />
+          open={tlOpen} setOpen={setTlOpen} api={tlApi} onInfo={setTlInfo} guard={swap ? lockRun : undefined} />} />
     </div>
   )
 }
