@@ -11,13 +11,15 @@ import { INNER_PX, OUTER_PX, foldLiveFor, FOLD_MS } from './devices/Duo'
 import { sceneHit } from './devices/shared'
 import { MBP, mbpKey } from './devices/MacBookPro'
 import { IMAC, imacFrame } from './devices/IMacG4'
+import { WATCH, WATCH_BANDS } from './devices/WatchUltra'
+import { REMOTE, REMOTE_HELD } from './devices/AppleTV'
 import { LID0, TILT0, RISE0, LID_RANGE, TILT_RANGE } from './devices/mech'
 import { ErrorBoundary } from './ErrorBoundary'
 import { loadLogo, loadLocalLogo } from './localLogo'
 import { Env, retryEnvironment } from './Env'
 import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, type Guide } from './hands/aiHands'
 import { IDLE_LEVELS } from './hands/motion'
-import { HandRig, HAND_POSES, SKIN_TONES, posesFor, poseOk, type HandFit, type HandPose } from './hands/Hands'
+import { HandRig, HAND_POSES, SKIN_TONES, posesFor, poseOk, wristSection, type HandFit, type HandPose } from './hands/Hands'
 import { SPECTRAL_DEFAULTS } from './hands/spectral'
 import { HAND_LOOK0, NAIL_SHAPES, NAIL_SWATCHES } from './hands/nails'
 import { GestureControls, HAND_ROT0, isGesture, rescale, screenOf } from './hands/gestures'
@@ -73,6 +75,16 @@ const MBP_FIT: HandFit = (() => { const W = MBP.w / 100, D = MBP.d / 100, T = MB
   return { W, H: D, T, R: MBP.r / 100, E: MBP.edge / 100, SW: MBP.pad.w / 100, SH: MBP.pad.h / 100, PW: Math.round(MBP.pad.w * 4), PH: Math.round(MBP.pad.h * 4),
     OX: 0, OY: -D / 2 + (MBP.pad.front + MBP.pad.h / 2) / 100, kind: 'laptop', cy: T / 2, rx: -Math.PI / 2,
     keys: { home, space: [sp.x, sp.y], pitch: MBP.kb.pitch / 100, top: 0.016 } } })()
+/** Apple Watch Ultra: the case is the body; the right hand taps its display, the left wears it. */
+const handBuild = (l: { build?: number }) => Math.max(0.75, Math.min(1.3, l.build ?? 1))
+const watchCache = new Map<number, HandFit>()
+const watchFit = (build: number): HandFit => { let f = watchCache.get(build); if (f) return f
+  f = { W: WATCH.w / 100, H: WATCH.h / 100, T: WATCH.t / 100, R: WATCH.r / 100, E: WATCH.edge / 100, SW: WATCH.screen.w / 100, SH: WATCH.screen.h / 100, PW: WATCH.px.w, PH: WATCH.px.h,
+    kind: 'watch', back: WATCH.back / 100, crown: { x: (WATCH.guard.out - 0.3 + WATCH.crown.l / 2) / 100, y: WATCH.crown.y / 100, r: WATCH.crown.d / 200 }, build }
+  watchCache.set(build, f); return f }
+/** Siri Remote, held upright beside the Apple TV: the thumb's targets are on the clickpad (100 x 100 points). */
+const REMOTE_FIT: HandFit = { W: REMOTE.w / 100, H: REMOTE.h / 100, T: REMOTE.t / 100, R: REMOTE.r / 100, E: REMOTE.edge / 100, SW: REMOTE.pad.d / 100, SH: REMOTE.pad.d / 100, PW: 100, PH: 100,
+  OY: (REMOTE.h / 2 - REMOTE.pad.y + 14) / 100, kind: 'remote', cx: REMOTE_HELD.x, cy: REMOTE_HELD.y, cz: REMOTE_HELD.z }
 /** iMac G4: the hands work in the display's frame, wherever the stand holds it. */
 const imacCache = new Map<string, HandFit>()
 const imacFit = (o: DeviceOptions): HandFit => { const key = `${o.tilt ?? TILT0}|${o.rise ?? RISE0}`, hit = imacCache.get(key); if (hit) return hit
@@ -81,7 +93,9 @@ const imacFit0 = (o: DeviceOptions): HandFit => { const f = imacFrame(o.tilt ?? 
   return { W: p.w / 100, H: p.h / 100, T: p.t / 100, R: p.r / 100, E: p.edge / 100, SW: IMAC.screen.w / 100, SH: IMAC.screen.h / 100, PW: IMAC.px.w, PH: IMAC.px.h,
     OY: IMAC.screen.y / 100, kind: 'desktop', cy: f.centre.y, cz: f.centre.z, rx: f.rx } }
 /** The body the hands grip, or null: the Duo only while it rests fully open or closed (not mid-fold). */
-function fitFor(d: Pick<DeviceState, 'model' | 'opts' | 'foldFollow'>): HandFit | null {
+function fitFor(d: Pick<DeviceState, 'model' | 'opts' | 'foldFollow' | 'look'>): HandFit | null {
+  if (d.model === 'watchu') return watchFit(handBuild(d.look))
+  if (d.model === 'atv4k') return d.opts.remote === false ? null : REMOTE_FIT
   if (d.model === 'mbp16') return MBP_FIT
   if (d.model === 'imacg4') return imacFit(d.opts)
   if (d.model !== 'duo') return HAND_FITS[d.model] ?? null
@@ -195,8 +209,8 @@ const D2R = THREE.MathUtils.degToRad
 const nailWord = (l: number) => l < 0.08 ? 'Short' : l < 0.4 ? 'Medium' : l < 0.75 ? 'Long' : 'Extra long'
 /** Rough width of each model in scene units, for placing new devices and the layout presets. */
 /** Rough height of each model in scene units, for zoom-to-fit. */
-const HEIGHT: Partial<Record<DeviceId, number>> = { mbp16: 1.55, imacg4: 2.2, ip18: 1.5, ip18max: 1.63, duo: 1.55, phone: 1.5, ipmini: 1.96, ippro11: 2.5, ippro13: 2.85, browser: 1.75 }
-const WIDTH: Partial<Record<DeviceId, number>> = { mbp16: 2.2, imacg4: 2.3, ip18: 0.72, ip18max: 0.78, duo: 1.5, phone: 0.75, ipmini: 1.38, ippro11: 1.8, ippro13: 2.2, browser: 2.6 }
+const HEIGHT: Partial<Record<DeviceId, number>> = { mbp16: 1.55, imacg4: 2.2, watchu: 2.7, atv4k: 0.6, ip18: 1.5, ip18max: 1.63, duo: 1.55, phone: 1.5, ipmini: 1.96, ippro11: 2.5, ippro13: 2.85, browser: 1.75 }
+const WIDTH: Partial<Record<DeviceId, number>> = { mbp16: 2.2, imacg4: 2.3, watchu: 0.7, atv4k: 1.9, ip18: 0.72, ip18max: 0.78, duo: 1.5, phone: 0.75, ipmini: 1.38, ippro11: 1.8, ippro13: 2.2, browser: 2.6 }
 const widthOf = (d: DeviceState) => d.model === 'duo' && d.opts.fold < 90 ? 0.75 : WIDTH[d.model] ?? 0.8
 /** The hand fit each device's gesture was last scaled for, so switching model rescales only that device's gesture. */
 const fitOfDev = new Map<string, HandFit>()
@@ -223,7 +237,11 @@ const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, s
   const shownInner = mixIn ?? d.media, shownOuter = mixOut ?? d.mediaOuter
   const screenTex = useStatusComposite(shownInner, d.sbOn, d.sb, sbSize, islandLook)
   // status bar on: its island is the single island, so the 3D island mesh and front lens are hidden
-  const devOpts = useMemo(() => d.sbOn && sbSize ? { ...opts, hideIsland: true } : opts, [opts, d.sbOn, !!sbSize])
+  // watch: the band wraps the wearer's wrist while a hand pose is on; Apple TV: the remote stands in the hand
+  const handOn = d.hands.pose !== 'off' && poseOk(fitFor(d), d.hands.pose), wb = handBuild(d.look)
+  const worn = useMemo(() => { if (device !== 'watchu' || !handOn) return null; const w = wristSection(d.look.size, wb); return { ...w, zc: -WATCH.t / 200 - WATCH.back / 100 - w.rz } }, [device, handOn, d.look.size, wb])
+  const devOpts = useMemo(() => { const o = d.sbOn && sbSize ? { ...opts, hideIsland: true } : opts
+    return device === 'watchu' ? { ...o, worn } : device === 'atv4k' ? { ...o, held: handOn } : o }, [opts, d.sbOn, !!sbSize, device, worn, handOn])
   const fl = foldLiveFor(d.uid); fl.follow = d.foldFollow && active; fl.dark = d.foldDark
   const xf = d.xf
   const pos = useMemo(() => [xf.x, xf.y, xf.z] as [number, number, number], [xf.x, xf.y, xf.z])
@@ -867,6 +885,14 @@ export default function App() {
         <p className="hint">Drawn onto the screen in iPhone points, so it shows in renders and exports. Auto picks dark or light text from the top of your image or video.</p>
       </>}
     </> : <p className="hint">Available for the iPhone 18 Pro and Pro Max. iPad status bars are coming later.</p> },
+    ...(device === 'watchu' ? [{ id: 'band', side: 'device' as const, title: 'Band', icon: 'band', settings: ['Band colour', ...Object.values(WATCH_BANDS).map(b => b.label)], render: () => <>
+      <div className="seg wrap" role="group" aria-label="Band colour">{Object.entries(WATCH_BANDS).map(([k, b]) => <button key={k} aria-pressed={(opts.band ?? 'orange') === k} className={(opts.band ?? 'orange') === k ? 'on' : ''} onClick={() => setOpts(x => ({ ...x, band: k }))}>{b.label}</button>)}</div>
+      <p className="hint">With a hand pose on, the band wraps the wrist. With hands off, it lies open.</p>
+    </> }] : []),
+    ...(device === 'atv4k' ? [{ id: 'remote', side: 'device' as const, title: 'Remote', icon: 'remote', settings: ['Show remote', 'Siri Remote'], render: () => <>
+      <label className="check"><input type="checkbox" checked={opts.remote !== false} onChange={e => { const on = e.target.checked; setOpts(x => ({ ...x, remote: on })) }} /> Show the Siri Remote</label>
+      <p className="hint">Apple TV has no screen of its own. Pick a hand grip to hold the remote, or Thumb tap to press the clickpad.</p>
+    </> }] : []),
     ...(device === 'mbp16' ? [{ id: 'lid', side: 'device' as const, title: 'Lid', icon: 'lid', settings: ['Lid angle', 'Close lid', 'Open lid'], render: () => <>
       {slider('Lid angle', Math.round(opts.lid ?? LID0), LID_RANGE[0], LID_RANGE[1], 1, n => setOpts(x => ({ ...x, lid: n })), '°')}
       <p className="hint">0 is closed, 90 is upright. Add keyframes at different angles to animate the lid.</p>
@@ -956,6 +982,8 @@ export default function App() {
     ...(sbSize ? [{ id: 'sb', group: 'device' as const, section: 'statusbar', label: 'Status bar › Show status bar', meta: 'TOGGLE' as const, run: () => setSbOn(v => !v) }] : []),
     ...(handOk ? poses.map(([k, l]) => ({ id: `pose-${k}`, group: 'device' as const, section: 'hand', label: `Hand › ${isGesture(k) ? 'Gesture' : 'Grip'} › ${l}`, meta: (hands.pose === k ? 'CURRENT' : 'APPLY') as Cmd['meta'], run: () => setHands(h => ({ ...h, pose: k })) })) : []),
     ...(handOk ? tones.map(([k, t]) => ({ id: `tone-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Skin tone › ${t.label}`, meta: 'APPLY' as const, run: () => setHands(h => ({ ...h, tone: k })) })) : []),
+    ...(device === 'watchu' ? Object.entries(WATCH_BANDS).map(([k, b]) => ({ id: `band-${k}`, group: 'device' as const, section: 'band', label: `Band › ${b.label}`, meta: (opts.band ?? 'orange') === k ? 'CURRENT' as const : 'APPLY' as const, run: () => setOpts(x => ({ ...x, band: k })) })) : []),
+    ...(device === 'atv4k' ? [{ id: 'remote-toggle', group: 'device' as const, section: 'remote', label: opts.remote === false ? 'Remote › Show' : 'Remote › Hide', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, remote: x.remote === false })) }] : []),
     ...(device === 'mbp16' ? [{ id: 'lid-close', group: 'device' as const, section: 'lid', label: 'Lid › Close', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, lid: 0 })) },
       { id: 'lid-open', group: 'device' as const, section: 'lid', label: 'Lid › Open', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, lid: LID0 })) }] : []),
     ...(device === 'imacg4' ? [{ id: 'stand-low', group: 'device' as const, section: 'stand', label: 'Stand › Lowest', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, rise: 0 })) },

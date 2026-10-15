@@ -16,9 +16,9 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { HandMotion, type IdleLevel } from './motion'
 import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, HAND_ROT0, REACH_EVENT, type Gesture, type HandRot } from './gestures'
 
-export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap' | 'flat' | 'twohand' | 'rest' | 'keys'
+export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap' | 'flat' | 'twohand' | 'rest' | 'keys' | 'wear' | 'crown'
 export const HAND_POSES: [HandPose, string][] = [['off', 'Off'], ['right', 'Right hand'], ['left', 'Left hand'], ['landscape', 'Two hands'], ['pinch', 'Present'], ['hold', 'Hold up'],
-  ['tap', 'Tap'], ['swipe', 'Swipe'], ['zoom', 'Pinch to zoom'], ['thumb', 'Thumb tap'], ['thumbswipe', 'Thumb scroll'], ['type', 'Two-thumb typing'], ['hover', 'Point / hover'], ['holdtap', 'Hold and tap'], ['flat', 'Flat in palm'], ['twohand', 'Two hands upright'], ['rest', 'On a surface'], ['keys', 'Typing on keys']]
+  ['tap', 'Tap'], ['swipe', 'Swipe'], ['zoom', 'Pinch to zoom'], ['thumb', 'Thumb tap'], ['thumbswipe', 'Thumb scroll'], ['type', 'Two-thumb typing'], ['hover', 'Point / hover'], ['holdtap', 'Hold and tap'], ['flat', 'Flat in palm'], ['twohand', 'Two hands upright'], ['rest', 'On a surface'], ['keys', 'Typing on keys'], ['wear', 'On the wrist'], ['crown', 'Turning the crown']]
 export const SKIN_TONES: Record<string, { label: string; color: string; sheen: string }> = {
   light: { label: 'Light', color: '#f0c8ae', sheen: '#ffd9cf' },
   fair: { label: 'Fair', color: '#dfa98a', sheen: '#ffcbb8' },
@@ -32,19 +32,26 @@ export const SKIN_TONES: Record<string, { label: string; color: string; sheen: s
 /** Device body in model units (1 = 100 mm): width, height, thickness, corner radius, edge fillet. */
 /** kind: tablets (and the open Duo) get their own grips; cx, cz: where the body's centre sits in the device's frame
  *  when the model is not centred on it (the closed Duo with the fold camera off). */
-export interface HandFit { W: number; H: number; T: number; R: number; E: number; SW?: number; SH?: number; PW?: number; PH?: number; kind?: 'phone' | 'tablet' | 'laptop' | 'desktop'; cx?: number; cz?: number
+export interface HandFit { W: number; H: number; T: number; R: number; E: number; SW?: number; SH?: number; PW?: number; PH?: number; kind?: 'phone' | 'tablet' | 'laptop' | 'desktop' | 'watch' | 'remote'; cx?: number; cz?: number
   /** where the hands' frame sits in the device (laptop: the base, turned flat; desktop: the display, tilted) */
   cy?: number; rx?: number
   /** touch surface centre in the frame when it is not the body centre (laptop: the trackpad) */
   OX?: number; OY?: number
   /** laptop keyboard: home row key centres (frame units) for the typing hands, left to right A S D F and J K L ;, the space bar and key pitch */
-  keys?: { home: [number, number][]; space: [number, number]; pitch: number; top: number } }
+  keys?: { home: [number, number][]; space: [number, number]; pitch: number; top: number }
+  /** watch: back crystal depth below the case, and the crown (x past the side, y, radius) */
+  back?: number; crown?: { x: number; y: number; r: number }; build?: number }
 const PHONE_ONLY: HandPose[] = ['right', 'left', 'hold', 'pinch', 'thumb', 'thumbswipe', 'type']
 /** The grips and gestures that make sense for a device: a tablet is too wide for one-handed wraps and thumb reaches,
  *  and a phone does not need the upright two-handed hold. */
 const LAPTOP: HandPose[] = ['off', 'keys', 'tap', 'swipe', 'hover'], DESKTOP: HandPose[] = ['off', 'tap', 'swipe', 'hover']
+// Watch: worn on the left wrist, alone or with the right hand tapping, swiping, pointing or turning the crown.
+// Siri Remote: held in one hand, the thumb on the clickpad.
+// 'crown' (turning the crown) is planned but not yet convincing, so it is not offered
+export const WATCH_POSES: HandPose[] = ['off', 'wear', 'tap', 'swipe', 'hover'], REMOTE_POSES: HandPose[] = ['off', 'right', 'left', 'thumb', 'thumbswipe']
+const ONLY_HERE: HandPose[] = ['keys', 'wear', 'crown']
 export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] => !f ? [] : HAND_POSES.filter(([k]) =>
-  f.kind === 'laptop' ? LAPTOP.includes(k) : f.kind === 'desktop' ? DESKTOP.includes(k) : k === 'keys' ? false : f.kind === 'tablet' ? !PHONE_ONLY.includes(k) : k !== 'twohand')
+  f.kind === 'laptop' ? LAPTOP.includes(k) : f.kind === 'desktop' ? DESKTOP.includes(k) : f.kind === 'watch' ? WATCH_POSES.includes(k) : f.kind === 'remote' ? REMOTE_POSES.includes(k) : ONLY_HERE.includes(k) ? false : f.kind === 'tablet' ? !PHONE_ONLY.includes(k) : k !== 'twohand')
 export const poseOk = (f: HandFit | null | undefined, p: HandPose) => p === 'off' || posesFor(f).some(([k]) => k === p)
 
 import { HAND_LOOK0, nailGeometry, nailMaterial, type HandLook, type NailFit } from './nails'
@@ -72,7 +79,7 @@ interface FingerPlan { curl: [number, number, number, number]; close?: boolean; 
 interface ThumbPlan { oppose: number; abduct: number; curl: [number, number, number]; close?: boolean; max?: [number, number]; tip?: THREE.Vector3; touch?: boolean }
 /** follow: the whole hand (wrist and arm) moves so its touching digits reach their points without strain. */
 /** knuckle: where the middle finger's knuckle (MCP joint) goes. F: palm direction, wrist to knuckles. N: out of the palm. */
-interface HandPlan { side: 'right' | 'left'; knuckle: THREE.Vector3; F: THREE.Vector3; N: THREE.Vector3; roll?: number; seat?: number; follow?: boolean | 'y'; thumbFace?: number; fingers: FingerPlan[]; thumb: ThumbPlan }
+interface HandPlan { side: 'right' | 'left'; knuckle: THREE.Vector3; /** when set, the wrist joint goes here instead of the knuckle going to knuckle */ wrist?: THREE.Vector3; F: THREE.Vector3; N: THREE.Vector3; roll?: number; seat?: number; follow?: boolean | 'y'; thumbFace?: number; fingers: FingerPlan[]; thumb: ThumbPlan }
 
 const mx = (v: THREE.Vector3) => v3(-v.x, v.y, v.z)
 const mt = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && mx(o.tip) })
@@ -120,7 +127,11 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     const R = k.home.slice(4, 8), L = k.home.slice(0, 4).reverse().map(([x, y]) => [-x, y] as [number, number])
     return [hand(R, k.space[0] + 0.32 * s), mirror(hand(L, -(k.space[0] - 0.32 * s)))]
   }
-  if (isGesture(pose)) {
+  // Watch on the left wrist: the forearm runs off to the left behind the case, the band round it, the relaxed hand
+  // palm down to the right (the crown side). The wrist joint sits WATCH_WRIST past the case centre.
+  const watch = f.kind === 'watch', wearing: HandPlan[] = watch ? [wearPlan(f, size)] : []
+  if (pose === 'wear') return wearing
+  if (isGesture(pose) || pose === 'crown') {
     const P = (x: number, y: number) => ptToDevice(f, x, y), u = screenOf(f).unit
     // Middle, ring and little finger loosely closed into the palm, clear of the glass.
     const fist: FingerPlan[] = [{ curl: [0, 62, 80, 45], spread: -1 }, { curl: [0, 70, 85, 45], spread: -4 }, { curl: [0, 76, 85, 45], spread: -8 }]
@@ -133,13 +144,21 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
       const e = deg(Math.max(10, e0 - 28 * flat)), d = deg(Math.max(3, d0 - 24 * flat)), hl = Math.hypot(hx, hy), fl = Math.hypot(fx, fy)
       return { off: v3(hx / hl * Math.cos(e) * len, hy / hl * Math.cos(e) * len, Math.sin(e) * len), F: v3(fx / fl * Math.cos(d), fy / fl * Math.cos(d), -Math.sin(d)) } }
     // the knuckle's reach back from the point scales with the hand
-    const ap = approach(0.35, -0.55, 0.9596 * size, 46.85, -0.3, 0.72, 35.2), apZ = approach(0.3, -0.75, 0.9772 * size, 34.25, -0.35, 0.7, 35.1)
+    // on the watch the right hand comes from the near side (below), clear of the wearing hand on the right
+    const ap = watch ? approach(-0.25, -1, 0.9596 * size, 46.85, 0.1, 1, 35.2) : approach(0.35, -0.55, 0.9596 * size, 46.85, -0.3, 0.72, 35.2), apZ = approach(0.3, -0.75, 0.9772 * size, 34.25, -0.35, 0.7, 35.1)
     const pointer = (t: THREE.Vector3): HandPlan => ({ side: 'right', knuckle: t.clone().add(ap.off), F: ap.F, N: v3(0.15, 0.5, -1), follow: true,
       fingers: [{ curl: [0, 18, 22, 12], tip: t, touch: true }, ...fist], thumb: { oppose: -20, abduct: -10, curl: [10, 30, 30] } })
     const tw = import.meta.env.DEV ? (globalThis as { __gestTweak?: (p: HandPlan[], v: typeof v3) => HandPlan[] }).__gestTweak : undefined
-    if (tw) return tw(gesturePlans(), v3)
-    return gesturePlans()
+    if (tw) return tw([...gesturePlans(), ...wearing], v3)
+    return [...gesturePlans(), ...wearing]
     function gesturePlans(): HandPlan[] {
+    if (pose === 'crown') {
+      // index pad on the top of the Digital Crown, rolling it; the hand comes in from the near side
+      // from the lower right, so the hand stays off the display
+      const c = v3(f.W / 2 + (f.crown?.x ?? 0.03), f.crown?.y ?? 0.045, (f.crown?.r ?? 0.042)), ac = approach(0.55, -1, 0.9596 * size, 46.85, -0.15, 1, 35.2)
+      const pl: HandPlan = { side: 'right', knuckle: c.clone().add(ac.off), F: ac.F, N: v3(0.15, 0.5, -1), follow: true, fingers: [], thumb: { oppose: -20, abduct: -10, curl: [10, 30, 30] } }
+      return [{ ...pl, fingers: [{ curl: [0, 18, 22, 12], tip: c, touch: true }, ...fist] }]
+    }
     if (pose === 'tap') return [pointer(P(ges.x, ges.y))]
     if (pose === 'swipe') { const a = swipeAt(ges); return [pointer(P(a.x, a.y))] }
     if (pose === 'holdtap') return [mirror(tablet ? tabHold(hw, -hh * 0.1, ht) : grip), pointer(P(ges.x, ges.y))]
@@ -170,6 +189,13 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     // Thumb tap and thumb scroll: the one-handed grip slides up or down the frame to follow the point, and the thumb
     // reaches across. Beyond the thumb's reach it rests as close as it can and the panel says how far short it is.
     const a = pose === 'thumbswipe' ? swipeAt(ges) : ges
+    if (f.kind === 'remote') {
+      // Siri Remote: held in the fingers, the palm behind its lower half, fingers wrapping the back and the thumb
+      // reaching up onto the clickpad. The hand slides up or down with the thumb's point.
+      const t = P(a.x, a.y)
+      return [{ side: 'right', knuckle: v3(hw + 0.1, t.y - 0.62 * size, -ht - 0.12), F: v3(-0.3, 0.92, -0.25), N: v3(-0.85, 0.05, 0.5), seat: 0.004, follow: 'y',
+        fingers: [back(-hw * 0.2, t.y - 0.3, 3), back(-hw * 0.25, t.y - 0.45, 0), back(-hw * 0.2, t.y - 0.58, -3), back(-hw * 0.1, t.y - 0.7, -6)], thumb: { oppose: 0, abduct: 15, curl: [0, 0, 0], tip: t, touch: true } }]
+    }
     const t = P(a.x, a.y), dy = Math.min(hh * 0.5, Math.max(-hh * 0.5, t.y + hh * 0.05 + 0.35 * (hw - t.x))) - (-hh * 0.05), sh = (v?: THREE.Vector3) => v && v.clone().setY(v.y + dy)
     // The little finger supports the bottom edge only while the hand is low enough to reach it; as the grip slides up it
     // moves onto the back below the ring finger (shifting its under-the-edge point up left it reaching for empty space
@@ -236,6 +262,20 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     thumb: { oppose: 0, abduct: 20, curl: [0, 0, 0], tip: v3(hw + 0.06, -hh * 0.5, -ht * 0.2) },
   }]
   return []
+}
+
+/** How far up the forearm the watch sits from the wrist joint (model units at size 1), and the forearm's half-width and
+ * half-depth there (the forearm tube: 21 mm radius at the wrist widening by 13 mm over its first 104 mm, flattened to 0.78). */
+export const WATCH_WRIST = 0.36
+export function wristSection(size = 1, build = 1) {
+  const r = (0.21 + 0.13 * Math.min(1, (WATCH_WRIST - 0.1) / 2.5 * 2.5)) * size * build
+  return { ry: r, rz: r * 0.78 }
+}
+function wearPlan(f: HandFit, size: number): HandPlan {
+  const { rz } = wristSection(size, f.build ?? 1), zc = -f.T / 2 - (f.back ?? 0) - rz
+  return { side: 'left', knuckle: v3(0, 0, 0), wrist: v3(WATCH_WRIST * size, 0, zc), F: v3(1, 0, -0.08), N: v3(0, 0.1, -1),
+    fingers: [{ curl: [0, 14, 16, 8], spread: 2 }, { curl: [0, 18, 18, 8] }, { curl: [0, 24, 20, 10], spread: -3 }, { curl: [0, 30, 22, 10], spread: -6 }],
+    thumb: { oppose: 10, abduct: 15, curl: [5, 10, 10] } }
 }
 
 /** Turns a plan by the user's hand rotation about its pivot: the touching point (or hovering tip), else the grip
@@ -438,7 +478,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
   const rot = Bm.multiply(A.transpose())
   rig.root.quaternion.setFromRotationMatrix(rot)
   rig.root.scale.setScalar(HAND_SCALE * size)
-  rig.root.position.copy(plan.knuckle).sub(P('middle-finger-phalanx-proximal').clone().multiplyScalar(HAND_SCALE * size).applyQuaternion(rig.root.quaternion))
+  rig.root.position.copy(plan.wrist ?? plan.knuckle).sub(P(plan.wrist ? 'wrist' : 'middle-finger-phalanx-proximal').clone().multiplyScalar(HAND_SCALE * size).applyQuaternion(rig.root.quaternion))
 
   // Reset bones.
   for (const n in rig.bones) { rig.bones[n].position.copy(R[n].p); rig.bones[n].quaternion.copy(R[n].q) }
@@ -771,7 +811,8 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   // Arm off: the forearm is hidden and the hand itself fades out over the 19 mm its mesh runs past the wrist joint
   // (aArm, 0 at the joint, 0.2 at the open rim), so there is no overlap band and the open rim is fully clear. Photo and
   // Sketch (whose hands keep the skin material) take a copy of the skin with that fade; Spectral fades by uniform.
-  const armOff = look.arm === false
+  // the forearm always shows while the watch is worn: the band wraps it
+  const armOff = look.arm === false && !(fit.kind === 'watch')
   // Arm on: the hand cross-fades into the forearm over its last 11 mm, so the two shadings meet without a ring.
   const fadeFrom = useMemo(() => ({ value: 0.08 }), [])
   fadeFrom.value = armOff ? 0 : 0.08
