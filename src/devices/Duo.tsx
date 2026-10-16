@@ -519,9 +519,9 @@ function spineGeo(phi: number) {
     outer.push([-Math.sin(t) * rho, -Math.cos(t) * rho]); inner.push([-Math.sin(t) * ri, -Math.cos(t) * ri])
   }
   const sh = new THREE.Shape(outer.map(([x, z]) => new THREE.Vector2(x, -z)).concat(inner.reverse().map(([x, z]) => new THREE.Vector2(x, -z))))
-  // ends: 0.3 mm under the frame's top and bottom faces (y = +-(H/2 + EO)), as in the white back reference, with a 2 mm
-  // rounded end that wraps the corner; never stands above the top or bottom face
-  const L = H + 2 * EO - 0.0006, b = 0.002
+  // ends: 0.5 mm proud of the frame's top and bottom faces (y = +-(H/2 + EO)), as in the white back and end-on references, with a 2.5 mm
+  // rounded end that wraps the corner
+  const L = H + 2 * EO - 0.0006 + 0.0106 * cl, b = 0.0025   // opening, it eases back to 0.3 mm under (flat open it hides between the halves)
   const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: BS, bevelSegments: 6, curveSegments: 4 })
   g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return smooth(g)   // creased: flat end caps shade like the frame ends
 }
