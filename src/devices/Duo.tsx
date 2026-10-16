@@ -253,8 +253,8 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
       <group position={[W - 0.32, H / 2 - 0.1375, -T / 2]}>
         <mesh rotation={[Math.PI, 0, 0]} castShadow><extrudeGeometry args={[pill(0.562, 0.197), { depth: 0.005, bevelEnabled: true, bevelThickness: 0.009, bevelSize: 0.014, bevelSegments: 10, curveSegments: 48 }]} />{plateauMat}</mesh>
         <mesh rotation={[Math.PI, 0, 0]}><extrudeGeometry args={[pill(0.57, 0.205), { depth: 0.0001, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.022, bevelSegments: 8, curveSegments: 48 }]} />{glassBack}</mesh>
-        {[0.187, -0.002].map(x => (
-          <group key={x} position={[x, 0, -0.0139]}><RearLens d={0.17} rise={0.0211} frame={f.frame} /></group>))}
+        {[0.176, -0.005].map(x => (
+          <group key={x} position={[x, -0.003, -0.0139]}><RearLens d={0.165} rise={0.0211} frame={f.frame} ring={0.7} /></group>))}
         <mesh position={[-0.175, 0.045, -0.0141]} rotation={[Math.PI, 0, 0]}><shapeGeometry args={[pill(0.028, 0.012), 12]} />
           <meshPhysicalMaterial color="#1a1b1f" roughness={0.25} clearcoat={1} /></mesh>
       </group>

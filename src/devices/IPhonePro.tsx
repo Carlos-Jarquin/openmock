@@ -315,9 +315,9 @@ export function LensStack({ r, order = 0 }: { r: number; order?: number }) {
 /** Rear camera, built in true 3D on the plateau (local +y = out of the back, 0 = plateau surface).
  * Polished ring with chamfered lips, a dark recessed barrel, three glass elements at different depths with AR
  * coatings, an iris ring and a domed sapphire cover. All sizes not on the drawing are estimates. */
-export function RearLens({ d, rise, frame }: { d: number; rise: number; frame: string }) {
+export function RearLens({ d, rise, frame, ring: ringMm = 1.25 }: { d: number; rise: number; frame: string; ring?: number }) {
   // Ring: outer edge at the drawn 16.58 diameter; width 1.25 mm, measured from Apple's hero photo along the unforeshortened axis (ring/diameter ~0.075).
-  const R = d / 2, w = mm(1.25), ri = R - w, c = mm(0.32), floor = mm(0.12)
+  const R = d / 2, w = mm(ringMm), ri = R - w, c = mm(0.32), floor = mm(0.12)
   // Sketch style: outer edge, inner lip and the front element as circles, in this group's local space (y is up).
   const circles = useMemo(() => {
     const out: number[] = [], circ = (r: number, y: number) => { for (let i = 0; i < 96; i++) { const a = i / 96 * Math.PI * 2, b = (i + 1) / 96 * Math.PI * 2
@@ -325,26 +325,26 @@ export function RearLens({ d, rise, frame }: { d: number; rise: number; frame: s
     circ(R + mm(0.02), rise - c * 0.3); circ(ri + mm(0.02), rise - c * 0.9 + mm(0.01)); circ(ri * 0.34, rise - c - mm(0.04))
     return new Float32Array(out)
   }, [R, ri, rise, c])
-  const ring = geoOnce(`lring${d}|${rise}`, () => {
+  const ring = geoOnce(`lring${d}|${rise}|${ringMm}`, () => {
     // Satin body of the ring: outer wall and wide flat top.
     const pts = [[R - c * 0.3, rise - c * 0.3], [R - c, rise],
       [ri + c * 1.2, rise]].map(([x, y]) => new THREE.Vector2(x, y))
     return new THREE.LatheGeometry(pts, 128)
   })
   // Outer wall: same satin metal, but it faces away from the key lights, so it reads a shade darker as in Apple's photos.
-  const wall = geoOnce(`lwall${d}|${rise}`, () => new THREE.LatheGeometry(
+  const wall = geoOnce(`lwall${d}|${rise}|${ringMm}`, () => new THREE.LatheGeometry(
     [[R + mm(0.25), 0], [R, mm(0.25)], [R, rise - c], [R - c * 0.3, rise - c * 0.3]].map(([x, y]) => new THREE.Vector2(x, y)), 128))
   // Brighter chamfered inner lip, cut and polished down into the barrel.
-  const lip = geoOnce(`llip${d}|${rise}`, () => {
+  const lip = geoOnce(`llip${d}|${rise}|${ringMm}`, () => {
     const pts = [[ri + c * 1.2, rise], [ri + c * 0.5, rise - c * 0.25], [ri + c * 0.1, rise - c * 0.7], [ri, rise - c * 0.9]].map(([x, y]) => new THREE.Vector2(x, y))
     return new THREE.LatheGeometry(pts, 128)
   })
-  const barrel = geoOnce(`lbar${d}|${rise}`, () => {
+  const barrel = geoOnce(`lbar${d}|${rise}|${ringMm}`, () => {
     const pts = [[0, floor], [ri * 0.97, floor], [ri, floor + mm(0.1)], [ri, rise - c * 0.9]].map(([x, y]) => new THREE.Vector2(x, y))
     return new THREE.LatheGeometry(pts, 96)
   })
   // Flat sapphire cover sitting just below the inner lip of the ring (Apple's covers are flat, not domed).
-  const dome = geoOnce(`lcover${d}|${rise}`, () => {
+  const dome = geoOnce(`lcover${d}|${rise}|${ringMm}`, () => {
     const g = new THREE.CircleGeometry(ri, 96); g.rotateX(-Math.PI / 2); g.translate(0, rise - c - mm(0.05), 0); return g
   })
   const disc = (r: number, y: number, k: string, mat: ReactNode) => (
