@@ -16,8 +16,9 @@ export interface SketchOptions {
   /** line colour */ line: string
   /** outer silhouette width and inner line width, in CSS pixels */ outer: number; inner: number
   /** crease angle in degrees for the inner lines */ crease: number
+  /** Matte: no reflections, specular highlights or environment light on anything lit (the hands); off draws them as before. Missing (older saves) is on */ matte?: boolean
 }
-export const SKETCH_DEFAULTS: SketchOptions = { fill: '#f4ecdc', shade1: '#e3dac8', shade2: '#cfc5b2', line: '#77726a', outer: 2.6, inner: 1.1, crease: 32 }
+export const SKETCH_DEFAULTS: SketchOptions = { fill: '#f4ecdc', shade1: '#e3dac8', shade2: '#cfc5b2', line: '#77726a', outer: 2.6, inner: 1.1, crease: 32, matte: true }
 /** Warm off-white paper for the background in sketch mode. */
 /** Render layer for the sketch crease lines (see SketchStyle). */
 export const LINE_LAYER = 5
@@ -262,4 +263,31 @@ function restore(g: THREE.Object3D | null) {
       if (su?.idleC) su.idleC.value.set(0.0024, 0.0027, 0.0037) }
     for (const c of [...obj.children]) if (c.userData[ADDED]) obj.remove(c)
   })
+}
+
+// ---------- matte ----------
+// Sketch with Matte on: every lit standard or physical material under this group (the hand skin and nails; the device
+// itself is already flat toon) loses its specular, clearcoat, sheen and environment reflection while it is on. The
+// original values are kept on the material and put back when Matte goes off or the group unmounts.
+const MATTE = '__matte'
+type MatteSaved = Record<string, unknown>
+const MATTE_SET: Record<string, unknown> = { roughness: 1, roughnessMap: null, metalness: 0, metalnessMap: null, envMap: null, envMapIntensity: 0,
+  specularIntensity: 0, clearcoat: 0, sheen: 0, iridescence: 0 }
+function matteOn(mat: THREE.Material) {
+  const m = mat as THREE.MeshPhysicalMaterial; if (!m.isMeshStandardMaterial || m.userData[MATTE]) return
+  const saved: MatteSaved = {}
+  for (const k of Object.keys(MATTE_SET)) if (k in m) { saved[k] = (m as unknown as Record<string, unknown>)[k]; (m as unknown as Record<string, unknown>)[k] = MATTE_SET[k] }
+  m.userData[MATTE] = saved; m.needsUpdate = true
+}
+function matteOff(mat: THREE.Material) {
+  const saved = mat.userData[MATTE] as MatteSaved | undefined; if (!saved) return
+  Object.assign(mat, saved); delete mat.userData[MATTE]; mat.needsUpdate = true
+}
+const eachMat = (g: THREE.Object3D | null, f: (m: THREE.Material) => void) => g?.traverse(o => { const m = (o as THREE.Mesh).material; if (m) for (const x of Array.isArray(m) ? m : [m]) f(x) })
+export function MatteStyle({ on, children }: { on: boolean; children: ReactNode }) {
+  const root = useRef<THREE.Group>(null)
+  useEffect(() => { if (!on) return; const g = root.current; return () => eachMat(g, matteOff) }, [on])
+  // every frame: hands rebuild their materials (tone, nails), and a fresh one comes in glossy
+  useFrame(() => { if (on) eachMat(root.current, matteOn) })
+  return <group ref={root}>{children}</group>
 }

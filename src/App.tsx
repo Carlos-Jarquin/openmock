@@ -27,7 +27,7 @@ import { HAND_LOOK0, NAIL_SHAPES, NAIL_SWATCHES } from './hands/nails'
 import { GestureControls, HAND_ROT0, isGesture, screenOf, toScreen } from './hands/gestures'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 import { IPAD_MINI, IPAD_PRO_11, IPAD_PRO_129 } from './devices/ipadSpecs'
-import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER, SKETCH_SHADOW } from './sketch/Sketch'
+import { SketchStyle, MatteStyle, SKETCH_DEFAULTS, SKETCH_PAPER, SKETCH_SHADOW } from './sketch/Sketch'
 import { SB_DEFAULT } from './statusbar/config'
 import { StatusBarControls } from './statusbar/Panel'
 import { useStatusComposite } from './statusbar/composite'
@@ -340,10 +340,10 @@ const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, s
     <group ref={ref} position={pos} rotation={rot}
       onPointerDown={e => { if (e.button !== 0 || e.shiftKey || e.altKey || e.intersections.some(i => onGizmo(i.object))) return; e.stopPropagation(); sceneHit.current = true; onGrab(d.uid, e.nativeEvent) }}>
       <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, opts.lid, opts.tilt, opts.rise, opts.sdStand, opts.sdPortrait, screenTex.texture, d.hands.pose]}><group scale={scale}>
-        <HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={fitFor(d)} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle} look={d.look}>
+        <MatteStyle on={sketch && sk.matte !== false}><HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={fitFor(d)} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle} look={d.look}>
           <SketchStyle on={sketch} o={sk}><D uid={d.uid} texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
             {...(device === 'duo' ? { textureOuter: shownOuter?.texture ?? null, mediaAspectOuter: shownOuter?.aspect } : {})} /></SketchStyle>
-        </HandRig>
+        </HandRig></MatteStyle>
       </group></Centred>
     </group>)
 })
@@ -998,7 +998,7 @@ export default function App() {
       <button onClick={violetScene}>Violet silhouette</button>
       <p className="hint">A dark hand holds the phone up against a violet backdrop with light streaks. Change the colours under Background.</p>
     </> },
-    { id: 'style', side: 'scene', title: 'Style', icon: 'style', settings: ['Photo', 'Sketch', 'Line colour', 'Body colour', 'Outer lines', 'Inner lines', 'Reset sketch'], render: () => <>
+    { id: 'style', side: 'scene', title: 'Style', icon: 'style', settings: ['Photo', 'Sketch', 'Line colour', 'Body colour', 'Outer lines', 'Inner lines', 'Matte', 'Reset sketch'], render: () => <>
       <div className="seg"><button className={!sketch ? 'on' : ''} onClick={() => setStyle('photo')}>Photo</button>
         <button className={sketch ? 'on' : ''} onClick={() => { setStyle('sketch'); setBgMode('solid'); setBg1(SKETCH_PAPER); setTransparent(false) }}>Sketch</button></div>
       {sketch && <>
@@ -1006,6 +1006,7 @@ export default function App() {
         <label className="row"><span>Body colour</span><input type="color" value={sk.fill} onChange={e => setSk({ ...sk, fill: e.target.value })} /><input className="hex" value={sk.fill} onChange={e => setSk({ ...sk, fill: e.target.value })} /></label>
         {slider('Outer lines', sk.outer, 0, 8, 0.1, n => setSk({ ...sk, outer: n }), ' px')}
         {slider('Inner lines', sk.inner, 0, 4, 0.1, n => setSk({ ...sk, inner: n }), ' px')}
+        <label className="check" title="No reflections or specular highlights"><input type="checkbox" checked={sk.matte !== false} onChange={e => setSk({ ...sk, matte: e.target.checked })} /> Matte</label>
         <button className="ghost" onClick={() => setSk(SKETCH_DEFAULTS)}>Reset sketch</button>
         <p className="hint">A flat illustration: cream body, soft grey shading and grey outlines. Choosing Sketch sets a warm paper background, which you can change under Background.</p>
       </>}
