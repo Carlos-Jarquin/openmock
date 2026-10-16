@@ -301,7 +301,7 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
 export const WATCH_WRIST = 0.36
 export function wristSection(size = 1, build = 1) {
   const r = (0.21 + 0.13 * Math.min(1, (WATCH_WRIST - 0.1) / 2.5 * 2.5)) * size * build
-  return { ry: r, rz: r * 0.78 }
+  return { ry: r * armWide(WATCH_WRIST), rz: r * 0.78 * armDeep(WATCH_WRIST) }
 }
 function wearPlan(f: HandFit, size: number): HandPlan {
   const { rz } = wristSection(size, f.build ?? 1), zc = -f.T / 2 - (f.back ?? 0) - rz
@@ -753,6 +753,10 @@ function armFrame(rig: Rig, F: THREE.Vector3, N: THREE.Vector3) {
 // slightly flattened tube continues the wrist back along the arm, out of frame. It shares the skin material and is
 // tagged as hand, so the AI hands mask covers it too.
 let armGeo: THREE.BufferGeometry | null = null
+/** Side-to-side widening of the forearm tube at distance y past the wrist joint. */
+function armWide(y: number) { return 1 + 0.36 * (1 - THREE.MathUtils.smoothstep(y, 0.1, 1.0)) }
+/** Front-to-back deepening likewise (the hand's wrist is about 21 mm half-depth, the tube's 16). */
+function armDeep(y: number) { return 1 + 0.28 * (1 - THREE.MathUtils.smoothstep(y, 0.1, 1.0)) }
 function forearmGeometry() {
   if (armGeo) return armGeo
   // Along +y from the wrist: 26 cm long, 2.1 cm radius inside the wrist widening to 3.2 cm, rounded at the wrist end.
@@ -761,6 +765,11 @@ function forearmGeometry() {
   for (let i = 1; i <= 12; i++) { const t = i / 12; pts.push(new THREE.Vector2(0.21 + 0.13 * Math.min(1, t * 2.5) - 0.02 * t, 0.1 + 2.5 * t)) }
   armGeo = new THREE.LatheGeometry(pts, 32)
   armGeo.scale(1, 1, 0.78)   // flatter front to back, like a wrist
+  // as wide as the hand's wrist where they join (the hand mesh is about 28 mm half-width and 21 mm half-depth there, against the tube's 21 and 16),
+  // easing back to the round forearm over its first 9 cm, so there is no pinch or step at the wrist
+  const gp = armGeo.getAttribute('position')
+  for (let i = 0; i < gp.count; i++) { const y = gp.getY(i); gp.setX(i, gp.getX(i) * armWide(y)); gp.setZ(i, gp.getZ(i) * armDeep(y)) }
+  armGeo.computeVertexNormals()
   // effect data: the arm reads as solid (aMass), aArm is the distance past the wrist for the Arm off fade, aCut is unused
   const ap = armGeo.getAttribute('position'), aa = new Float32Array(ap.count)
   for (let i = 0; i < ap.count; i++) aa[i] = Math.max(0, ap.getY(i))
