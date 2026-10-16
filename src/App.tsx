@@ -101,6 +101,17 @@ const DUO_T = 0.052, DUO_GAP = 0.0012, DUO_W = 0.823
 const DUO_OPEN: HandFit = { W: 2 * DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005, SW: 1.11 * INNER_PX.w / INNER_PX.h, SH: 1.11, PW: Math.round(INNER_PX.w / 3), PH: Math.round(INNER_PX.h / 3), kind: 'tablet' }
 const DUO_CLOSED: HandFit = { W: DUO_W, H: 1.178, T: 2 * DUO_T + DUO_GAP, R: 0.127, E: 0.005, SW: 1.136 * OUTER_PX.w / OUTER_PX.h, SH: 1.136, PW: Math.round(OUTER_PX.w / 3), PH: Math.round(OUTER_PX.h / 3), kind: 'phone' }
 const DUO_CLOSED_OFF: HandFit = { ...DUO_CLOSED, cx: DUO_W / 2, cz: DUO_T / 2 + DUO_GAP }
+// Part folded: the hands hold the fixed (right) half and touch its half of the inner screen, the one that faces the
+// viewer; the swinging half stands clear of it. The half sits where the Duo's self-centring puts it at this angle
+// (devices/Duo.tsx: the root shifts by -(W/2, 0, T/2 + GAP) * (1 - fold / 180) when the camera follows the fold).
+const duoHalfCache = new Map<string, HandFit>()
+function duoHalf(fold: number, follow: boolean): HandFit {
+  const k = Math.round(fold), key = `${k}|${follow}`, hit = duoHalfCache.get(key); if (hit) return hit
+  const kc = follow ? 1 - k / 180 : 0, SW = DUO_OPEN.SW! / 2
+  const f: HandFit = { W: DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005, SW, SH: DUO_OPEN.SH, PW: Math.round(DUO_OPEN.PW! / 2), PH: DUO_OPEN.PH,
+    OX: SW / 2 - DUO_W / 2, kind: 'phone', cx: DUO_W / 2 - (DUO_W / 2) * kc, cz: -(DUO_T / 2 + DUO_GAP) * kc }
+  duoHalfCache.set(key, f); return f
+}
 // Desk machines are drawn at real size and scaled down as a whole (hands included) to sit in the same view as phones.
 const VIEW: Partial<Record<DeviceId, number>> = { mbp16: 0.6, imacg4: 0.3, studio: 0.3 }
 /** One device alone: the size it has always been shown at (large devices and tablets scaled to sit in a phone-sized view). */
@@ -151,7 +162,7 @@ function fitFor(d: Pick<DeviceState, 'model' | 'opts' | 'foldFollow' | 'look'>):
   if (d.model === 'imacg4') return imacFit(d.opts)
   if (d.model === 'studio') return studioFit(d.opts)
   if (d.model !== 'duo') return HAND_FITS[d.model] ?? null
-  return d.opts.fold >= 180 ? DUO_OPEN : d.opts.fold <= 0 ? (d.foldFollow ? DUO_CLOSED : DUO_CLOSED_OFF) : null
+  return d.opts.fold >= 180 ? DUO_OPEN : d.opts.fold <= 0 ? (d.foldFollow ? DUO_CLOSED : DUO_CLOSED_OFF) : duoHalf(d.opts.fold, d.foldFollow)
 }
 /** Violet silhouette scene: a hand held up from the lower right against a violet backdrop with light streaks. */
 const VIOLET_CAMERA = { tiltX: 4, tiltY: -16, rotZ: -11, zoom: 1.1, panX: -0.11, panY: 0.1, fov: 26 }
