@@ -132,6 +132,8 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
   // body slabs and rails: the same titanium, but the outer part of the screen-side edge chamfer (from 1.9 mm under the screen face) reads black (the cover glass
   // and display stack wrap it), so the closed halves show one narrow black seam between them as in the references
   const bodyMat = useMemo(() => seamMaterial(f.frame), [f.frame])
+  const boreMat = useMemo(() => boreMaterial(f.frame), [f.frame])
+  useEffect(() => () => boreMat.dispose(), [boreMat])
   useEffect(() => () => bodyMat.dispose(), [bodyMat])
   // antenna band resin, exactly as on our iPhone 18 Pro (IPhonePro.tsx): the frame colour pulled toward a neutral grey
   // (7% on dark finishes, 30% on light ones), matte and non-metallic, so the bands read low-contrast
@@ -308,10 +310,9 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
       <mesh ref={sealM} geometry={g.seal} visible={opts.fold < 1}><meshBasicMaterial color="#030304" side={THREE.DoubleSide} /></mesh>
       {/* antenna bands on both halves (see BANDS) */}
       <mesh geometry={g.rightBody} material={bandMat} renderOrder={1} />
-      {/* bottom edge speaker grilles, 16 to 23 mm and 60 to 68 mm from the hinge */}
+      {/* bottom edge speaker grilles, 16 to 23 mm and 60 to 68 mm from the hinge: bored holes (see boreMaterial) */}
       {[0.16, 0.60].flatMap(x0 => [0, 1, 2, 3].map(i => (
-        <mesh key={`${x0}${i}`} position={[x0 + 0.01 + i * 0.022, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}>
-          <circleGeometry args={[0.0065, 12]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>)))}
+        <mesh key={`${x0}${i}`} position={[x0 + 0.01 + i * 0.022, -H / 2 - EO - 0.0001, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={BORE_GEO} material={boreMat} />)))}
       {/* bottom edge mic holes (reference), 35 and 51 mm from the hinge, on both halves */}
       {[0.354, 0.51].map(x => <Screw key={x} x={x} />)}
       {/* internal hinge spine: a rounded cover on the pivot axis, revealed between the halves as they fold (see spineGeo) */}
@@ -329,10 +330,9 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
           {/* the port's metal tongue inside the black outline, as in the reference (not a solid black slot) */}
           <mesh position={[-0.43, -H / 2 - EO - 0.0005, 0]} rotation={[Math.PI / 2, 0, 0]}>
             <shapeGeometry args={[USB_TONGUE]} /><meshStandardMaterial color={f.frame} metalness={0.85} roughness={0.3} side={THREE.DoubleSide} /></mesh>
-          {/* top edge speaker grille, 36 to 51 mm from the hinge: open rings as in the reference, not solid dots */}
+          {/* top edge speaker grille, 36 to 51 mm from the hinge: bored holes (see boreMaterial) */}
           {[0, 1, 2, 3, 4, 5].map(i => (
-            <mesh key={i} position={[-0.365 - i * 0.028, H / 2 + EO + 0.0003, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-              <ringGeometry args={[0.0042, 0.0068, 20]} /><meshBasicMaterial color="#141518" side={THREE.DoubleSide} /></mesh>))}
+            <mesh key={i} position={[-0.365 - i * 0.028, H / 2 + EO + 0.0001, 0]} rotation={[-Math.PI / 2, 0, 0]} geometry={BORE_GEO} material={boreMat} />))}
           <mesh geometry={g.bezelL} position={[0, 0, zf]}><meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
           <mesh name="screen" geometry={g.scrL} position={[0, 0, zf + E]}><primitive object={mats.moving} attach="material" /></mesh>
           {/* outer display on the back, cover glass then screen */}
@@ -521,9 +521,7 @@ function spineGeo(phi: number) {
   const sh = new THREE.Shape(outer.map(([x, z]) => new THREE.Vector2(x, -z)).concat(inner.reverse().map(([x, z]) => new THREE.Vector2(x, -z))))
   // ends: flush with the frame's top and bottom faces (y = +-(H/2 + EO)) and rounded exactly like the rails' end caps
   // (1.2 mm bevel), so rails and spine end together as one closed rounded corner
-  // closed, the spine's ends stand 2.8 mm past the top and bottom faces (the tab in refs 10 and 11) with 2.2 mm rounded
-  // caps; the overhang shrinks with cl as the phone opens, so flat open the ends are back 0.3 mm under the frame top
-  const L = H + 2 * EO - 0.0006 + 0.056 * cl, b = 0.0022
+  const L = H + 2 * EO - 0.0006, b = 0.0012   // 0.3 mm under the frame top (rails sit 0.2 mm under): never stands above the top or bottom face
   const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: BS, bevelSegments: 4, curveSegments: 4 })
   g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return smooth(g)   // creased: flat end caps shade like the frame ends
 }
@@ -544,20 +542,20 @@ const SPINE_IN = 0.004
  *  back corner reaching x = -EO (flush with the other frame edges), rolling back in to the hinge face at x = 0, which runs
  *  flat to a 0.5 mm screen-side corner; overlaps the slab by 4 mm. */
 function railGeo(side: number) {
-  const { RB, k } = RAIL, bv = 0.0012, xo = -EO + bv, rb = RB - bv   // the extrude bevel grows the profile by bv
+  // bv and bt are exactly the slab's own bevel (0.6 mm across the thickness, EO out along y), so wherever rail and slab
+  // overlap their screen, back and end faces coincide (same planes, same chamfer, same flat normals): each half reads as
+  // one continuous frame up to the spine, with no seam, step or lip where the slab ends inside the rail
+  const { RB, k } = RAIL, bv = 0.0006, xo = -EO + bv, rb = RB - bv   // the extrude bevel grows the profile by bv
   // the arc rolls back only to XF (just behind the closed spine panel's face), so no groove opens between rail and panel
   const XF = -0.0011 + bv, xc = xo + rb, zc = -T / 2 + bv + rb, th = Math.acos(Math.min(1, (xc - XF) / rb))
-  // the rail runs 2 mm on under the slab (its faces there 0.05 mm inside the slab's), so its inner end is buried and its
-  // flat top (0.02 mm under the slab's) bridges the slab's bevelled hinge edge: one continuous top face, no wedge seam
-  const kIn = k, kE = k + 0.02, zi = 0.0005
-  const pts: [number, number][] = [[kE, -T / 2 + bv + zi], [kIn + zi, -T / 2 + bv + zi], [kIn, -T / 2 + bv]]
+  // the rail runs 2 mm on inside the slab, its inner end buried there
+  const kE = k + 0.02
+  const pts: [number, number][] = [[kE, -T / 2 + bv]]
   for (let i = 0; i <= 32; i++) { const al = -Math.PI / 2 - (Math.PI / 2 + th) * i / 32; pts.push([xc + rb * Math.cos(al), zc + rb * Math.sin(al)]) }
-  pts.push([XF, T / 2 - bv - 0.0005], [XF + 0.0007, T / 2 - bv], [kIn, T / 2 - bv], [kIn + zi, T / 2 - bv - zi], [kE, T / 2 - bv - zi])
+  pts.push([XF, T / 2 - bv - 0.0005], [XF + 0.0007, T / 2 - bv], [kE, T / 2 - bv])
   const sh = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(side * x, -z)))
-  // end caps chamfer over EO along y, exactly as far as the slab's end face stands out past H / 2, so rail and slab ends
-  // meet the top and bottom faces along the same line (no stepped, separately rounded caps)
-  const L = H + 2 * EO - 0.0004, bt = EO - 0.0002
-  const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * bt, bevelEnabled: true, bevelThickness: bt, bevelSize: bv, bevelSegments: 4, curveSegments: 4 })
+  const L = H + 2 * EO, bt = EO
+  const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * bt, bevelEnabled: true, bevelThickness: bt, bevelSize: bv, bevelSegments: 3, curveSegments: 4 })
   g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * bt) / 2, 0); return smooth(g)
 }
 
@@ -577,6 +575,36 @@ function sealGeo() {
     pos.push(a.x, a.y, z0, b.x, b.y, z0, b.x, b.y, z1, a.x, a.y, z0, b.x, b.y, z1, a.x, a.y, z1)
   }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); return g
+}
+/** Speaker grille hole, bored 1.2 mm into the frame: drawn on a disc lying on the edge face, the fragment shader casts
+ *  the view ray into a 0.62 mm radius cylinder, so the hole shows its lit metal wall darkening with depth and a black
+ *  floor, shifting with the viewing angle like a real bore; a narrow chamfered rim (lighter towards the top) rings it. */
+const BORE = { r: 0.0062, rim: 0.0011, depth: 0.012 }
+const BORE_GEO = new THREE.CircleGeometry(BORE.r + BORE.rim, 32)
+function boreMaterial(frame: string) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uFrame: { value: new THREE.Color(frame) }, uR: { value: BORE.r }, uRim: { value: BORE.rim }, uD: { value: BORE.depth } },
+    vertexShader: `varying vec3 vP; varying vec3 vC;
+      void main() { vP = position; vC = (inverse(modelMatrix) * vec4(cameraPosition, 1.0)).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform vec3 uFrame; uniform float uR, uRim, uD; varying vec3 vP; varying vec3 vC;
+      void main() {
+        vec2 p = vP.xy; float rho = length(p);
+        vec3 d = normalize(vP - vC); if (d.z > -1e-4) d.z = -1e-4;
+        float a = dot(d.xy, d.xy), b = dot(p, d.xy), c = dot(p, p) - uR * uR;
+        float t = a > 1e-9 ? (-b + sqrt(max(b * b - a * c, 0.0))) / a : 1e9;
+        float z = t * -d.z;
+        vec3 col;
+        if (z < uD) { vec2 w = (p + t * d.xy) / uR; float f = z / uD;
+          col = uFrame * (0.26 + 0.1 * w.y) * pow(1.0 - f, 2.5); }   // wall: lit near the mouth, black by the floor
+        else col = vec3(0.012);
+        if (rho > uR) {   // chamfered rim: sloping down into the hole, catching light on the far side
+          float k = (rho - uR) / uRim; vec2 n = p / max(rho, 1e-6);
+          col = uFrame * (0.28 + 0.4 * k * k + 0.12 * n.y); }
+        gl_FragColor = vec4(col, 1.0);
+        #include <colorspace_fragment>
+      }`,
+  })
 }
 const USB_SHAPE = pill(0.09, 0.028), USB_TONGUE = pill(0.078, 0.017)
 /** Bottom edge screw (reference): a frame-coloured head in a thin dark ring, 1.1 mm across. */
