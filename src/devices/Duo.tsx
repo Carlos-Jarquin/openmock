@@ -85,7 +85,7 @@ function seamMaterial(frame: string) {
   m.onBeforeCompile = sh => {
     sh.vertexShader = 'varying float vZ;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvZ = position.z;')
     sh.fragmentShader = 'varying float vZ;\n' + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
-  float seam = smoothstep(${(T / 2 - 0.0034).toFixed(4)}, ${(T / 2 - 0.0026).toFixed(4)}, vZ);
+  float seam = smoothstep(${(T / 2 - 0.0028).toFixed(4)}, ${(T / 2 - 0.0019).toFixed(4)}, vZ);
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.008), seam);`).replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.35, seam);')
       .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n  metalnessFactor = mix(metalnessFactor, 0.0, seam);')
   }
@@ -124,11 +124,12 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
     const outer = flat(rrect(OW, OH, [OCR_H, OCR, OCR, OCR_H]), OW, OH)   // [bl, br, tr, tl]: local -x is the hinge side
     const island = new THREE.ShapeGeometry(pill(ISL.w, ISL.h), 16)
     const udc = new THREE.CircleGeometry(0.014, 24)
-    return { rightBody, leftBody, railR, railL, bezelR, bezelL, scrR, scrL, outer, island, udc }
+    const seal = sealGeo()
+    return { seal, rightBody, leftBody, railR, railL, bezelR, bezelL, scrR, scrL, outer, island, udc }
   }, [])
   useEffect(() => () => Object.values(g).forEach(x => x.dispose()), [g])
   const frameMat = <meshPhysicalMaterial color={f.frame} metalness={0.9} roughness={0.28} clearcoat={0.3} />
-  // body slabs and rails: the same titanium, but the outer half of the screen-side edge chamfer (about 0.3 mm) reads black (the cover glass
+  // body slabs and rails: the same titanium, but the outer part of the screen-side edge chamfer (from 1.9 mm under the screen face) reads black (the cover glass
   // and display stack wrap it), so the closed halves show one narrow black seam between them as in the references
   const bodyMat = useMemo(() => seamMaterial(f.frame), [f.frame])
   useEffect(() => () => bodyMat.dispose(), [bodyMat])
@@ -146,7 +147,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
   // The fold is applied every frame from refs (no React state per frame): the hinge angle, the self-centring shift,
   // the spine and the three screen materials all read one eased timeline while a transition runs (foldLive.anim),
   // else the Fold slider.
-  const root = useRef<THREE.Group>(null), swingG = useRef<THREE.Group>(null), spineM = useRef<THREE.Mesh>(null), sealG = useRef<THREE.Group>(null)
+  const root = useRef<THREE.Group>(null), swingG = useRef<THREE.Group>(null), spineM = useRef<THREE.Mesh>(null), sealM = useRef<THREE.Mesh>(null)
   const mats = useMemo(() => ({ fixed: screenMaterial(), moving: screenMaterial(), outer: screenMaterial(OUTER_PROJ), strip: screenMaterial() }), [])
   const strip = useMemo(() => foldStripGeometry(), [])
   useEffect(() => () => strip.dispose(), [strip])
@@ -201,7 +202,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
     if (spineM.current) { spineM.current.visible = !!sp; if (sp) spineM.current.geometry = sp }
     // closed only: the seals stop the eye seeing down the 118 mm gap between the halves (it otherwise shows the backdrop
     // or grazing glass reflections as a light line splitting the hinge end); a degree open they would float, so they go
-    if (sealG.current) sealG.current.visible = fold < 1
+    if (sealM.current) sealM.current.visible = fold < 1
     // the bent fold region of the inner screen follows the hinge (flat and seamless at 180)
     if (stripFold.current !== fold) { stripFold.current = fold; updateFoldStrip(strip, swing) }
     // screens: the dissolve is a function of the hinge angle alone, so it is in step with the fold whether it is
@@ -302,13 +303,9 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
         <mesh position={[-0.0002, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w + 0.006, 0.188, 0.0004)}>{frameMat}</mesh>
         <mesh position={[-0.0002, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, 0.182, 0.0005)}><meshPhysicalMaterial color="#0c0d10" metalness={0.2} roughness={0.06} clearcoat={1} /></mesh>
       </Pressable>
-      {/* black seals across the closed gap at both ends, just inside the end faces, so the closed stack reads as two
-          slabs with one narrow black seam (straight part of the end only, clear of the free-edge corners) */}
-      <group ref={sealG} visible={opts.fold < 1}>
-        {[1, -1].map(sy => (
-          <mesh key={sy} position={[(W - CR) / 2 + 0.001, sy * (H / 2 + 0.0004), T / 2 + GAP]} rotation={[Math.PI / 2, 0, 0]}>
-            <planeGeometry args={[W - CR - 0.002, 2 * GAP + 0.0012]} /><meshBasicMaterial color="#030304" side={THREE.DoubleSide} /></mesh>))}
-      </group>
+      {/* black seal around the closed gap: a ribbon standing across it just inside the fixed half's outline (top, the rounded
+          free corners, the free edge, bottom), so the eye never sees down the gap; closed only */}
+      <mesh ref={sealM} geometry={g.seal} visible={opts.fold < 1}><meshBasicMaterial color="#030304" side={THREE.DoubleSide} /></mesh>
       {/* antenna bands on both halves (see BANDS) */}
       <mesh geometry={g.rightBody} material={bandMat} renderOrder={1} />
       {/* bottom edge speaker grilles, 16 to 23 mm and 60 to 68 mm from the hinge */}
@@ -510,7 +507,7 @@ function spineGeo(phi: number) {
   const R = T + GAP - 0.0003, r0 = R * 0.45, a = phi / 2, d = R * Math.cos(a) + R * SPINE_FLAT * Math.sin(a) * Math.sin(a)
   // c (back planes pulled in) ramps in over the first 60 degrees, so the cover is recessed between the rails at every
   // angle beyond that; near flat it widens (del) into a strip just under the backs that closes the rails' V groove
-  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 0, 60), cIn = SPINE_IN * cl, P = 8 * cl + 400 * (1 - cl), BS = 0.0002   // P: crisp panel edges when closed
+  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 0, 60), cIn = SPINE_IN * cl, P = 8 * cl + 400 * (1 - cl), BS = 0.0009   // P: crisp panel edges when closed
   const dmax = Math.max(d, R * Math.cos(a) + 0.0001), del = THREE.MathUtils.degToRad(1.5 + 30 * (1 - cl)), N = 160
   const outer: [number, number][] = [], inner: [number, number][] = []
   for (let i = 0; i <= N; i++) {
@@ -524,7 +521,9 @@ function spineGeo(phi: number) {
   const sh = new THREE.Shape(outer.map(([x, z]) => new THREE.Vector2(x, -z)).concat(inner.reverse().map(([x, z]) => new THREE.Vector2(x, -z))))
   // ends: flush with the frame's top and bottom faces (y = +-(H/2 + EO)) and rounded exactly like the rails' end caps
   // (1.2 mm bevel), so rails and spine end together as one closed rounded corner
-  const L = H + 2 * EO - 0.0006, b = 0.0012   // 0.3 mm under the frame top (rails sit 0.2 mm under): never shows on the top face
+  // closed, the spine's ends stand 2.8 mm past the top and bottom faces (the tab in refs 10 and 11) with 2.2 mm rounded
+  // caps; the overhang shrinks with cl as the phone opens, so flat open the ends are back 0.3 mm under the frame top
+  const L = H + 2 * EO - 0.0006 + 0.056 * cl, b = 0.0022
   const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: BS, bevelSegments: 4, curveSegments: 4 })
   g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return smooth(g)   // creased: flat end caps shade like the frame ends
 }
@@ -567,6 +566,17 @@ const shapeCache = new Map<string, THREE.Shape>()
 function rrC(w: number, h: number, r: number[], cx = 0) {
   const k = [w, h, ...r, cx].join('|'); let s = shapeCache.get(k)
   if (!s) shapeCache.set(k, s = rrect(w, h, r, cx)); return s
+}
+/** Closed-gap seal ribbon: the fixed half's outline inset 0.75 mm, from the hinge at the top round to the hinge at the
+ *  bottom, standing across the gap (z from 0.6 mm inside the fixed half's screen face to 0.6 mm inside the other's). */
+function sealGeo() {
+  const pts = rrect(W - 0.0015, H - 0.0015, [HR, CR - 0.001, CR - 0.001, HR], W / 2 + 0.00025).getSpacedPoints(400)
+  const z0 = T / 2 - 0.0006, z1 = T / 2 + 2 * GAP + 0.0006, pos: number[] = []
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1]; if (a.x < 0.0015 && b.x < 0.0015) continue   // open on the hinge side (the spine closes it)
+    pos.push(a.x, a.y, z0, b.x, b.y, z0, b.x, b.y, z1, a.x, a.y, z0, b.x, b.y, z1, a.x, a.y, z1)
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); return g
 }
 const USB_SHAPE = pill(0.09, 0.028), USB_TONGUE = pill(0.078, 0.017)
 /** Bottom edge screw (reference): a frame-coloured head in a thin dark ring, 1.1 mm across. */
