@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { mergeVertices, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { DeviceProps } from '../types'
 import { DEFAULT_LOGO_TINT } from './shared'
 import { RearLens, Pressable } from './IPhonePro'
@@ -80,6 +80,18 @@ function bandMaterial(colour: THREE.Color) {
   m.customProgramCacheKey = () => 'duo-band'
   return m
 }
+function seamMaterial(frame: string) {
+  const m = new THREE.MeshPhysicalMaterial({ color: frame, metalness: 0.9, roughness: 0.28, clearcoat: 0.3 })
+  m.onBeforeCompile = sh => {
+    sh.vertexShader = 'varying float vZ;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvZ = position.z;')
+    sh.fragmentShader = 'varying float vZ;\n' + sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+  float seam = smoothstep(${(T / 2 - 0.0034).toFixed(4)}, ${(T / 2 - 0.0026).toFixed(4)}, vZ);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.008), seam);`).replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.35, seam);')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n  metalnessFactor = mix(metalnessFactor, 0.0, seam);')
+  }
+  m.customProgramCacheKey = () => 'duo-seam'
+  return m
+}
 /** Pill (stadium) face of length len and height h, extruded d out of the surface along +z with a soft edge. */
 /** Button sizes from our iPhone 18 Pro (iphoneSpecs btn): width, protrusion, sink into the frame, press travel. */
 const BTN = { w: 0.0266, prot: 0.0045, sink: 0.003, press: 0.003 }
@@ -116,6 +128,10 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
   }, [])
   useEffect(() => () => Object.values(g).forEach(x => x.dispose()), [g])
   const frameMat = <meshPhysicalMaterial color={f.frame} metalness={0.9} roughness={0.28} clearcoat={0.3} />
+  // body slabs and rails: the same titanium, but the outer half of the screen-side edge chamfer (about 0.3 mm) reads black (the cover glass
+  // and display stack wrap it), so the closed halves show one narrow black seam between them as in the references
+  const bodyMat = useMemo(() => seamMaterial(f.frame), [f.frame])
+  useEffect(() => () => bodyMat.dispose(), [bodyMat])
   // antenna band resin, exactly as on our iPhone 18 Pro (IPhonePro.tsx): the frame colour pulled toward a neutral grey
   // (7% on dark finishes, 30% on light ones), matte and non-metallic, so the bands read low-contrast
   const bandMat = useMemo(() => {
@@ -130,7 +146,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
   // The fold is applied every frame from refs (no React state per frame): the hinge angle, the self-centring shift,
   // the spine and the three screen materials all read one eased timeline while a transition runs (foldLive.anim),
   // else the Fold slider.
-  const root = useRef<THREE.Group>(null), swingG = useRef<THREE.Group>(null), spineM = useRef<THREE.Mesh>(null)
+  const root = useRef<THREE.Group>(null), swingG = useRef<THREE.Group>(null), spineM = useRef<THREE.Mesh>(null), sealG = useRef<THREE.Group>(null)
   const mats = useMemo(() => ({ fixed: screenMaterial(), moving: screenMaterial(), outer: screenMaterial(OUTER_PROJ), strip: screenMaterial() }), [])
   const strip = useMemo(() => foldStripGeometry(), [])
   useEffect(() => () => strip.dispose(), [strip])
@@ -183,6 +199,9 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
     swingG.current?.rotation.set(0, swing, 0)
     const sp = spineAt(swing)
     if (spineM.current) { spineM.current.visible = !!sp; if (sp) spineM.current.geometry = sp }
+    // closed only: the seals stop the eye seeing down the 118 mm gap between the halves (it otherwise shows the backdrop
+    // or grazing glass reflections as a light line splitting the hinge end); a degree open they would float, so they go
+    if (sealG.current) sealG.current.visible = fold < 1
     // the bent fold region of the inner screen follows the hinge (flat and seamless at 180)
     if (stripFold.current !== fold) { stripFold.current = fold; updateFoldStrip(strip, swing) }
     // screens: the dissolve is a function of the hinge angle alone, so it is in step with the fold whether it is
@@ -231,8 +250,8 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
   return (
     <group ref={root} position={[-(W / 2) * (1 - opts.fold / 180), 0, -(T / 2 + GAP) * (1 - opts.fold / 180)]}>
       {/* ---------- right half (fixed) ---------- */}
-      <mesh geometry={g.rightBody} castShadow>{frameMat}</mesh>
-      <mesh geometry={g.railR} castShadow>{frameMat}</mesh>
+      <mesh geometry={g.rightBody} castShadow material={bodyMat} />
+      <mesh geometry={g.railR} castShadow material={bodyMat} />
       <mesh geometry={g.bezelR} position={[0, 0, zf]}><meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
       <mesh name="screen" geometry={g.scrR} position={[0, 0, zf + E]}><primitive object={mats.fixed} attach="material" /></mesh>
       {/* the screen's bent fold region: rebuilt per frame from the hinge angle, joins both halves without a seam */}
@@ -283,6 +302,13 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
         <mesh position={[-0.0002, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w + 0.006, 0.188, 0.0004)}>{frameMat}</mesh>
         <mesh position={[-0.0002, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, 0.182, 0.0005)}><meshPhysicalMaterial color="#0c0d10" metalness={0.2} roughness={0.06} clearcoat={1} /></mesh>
       </Pressable>
+      {/* black seals across the closed gap at both ends, just inside the end faces, so the closed stack reads as two
+          slabs with one narrow black seam (straight part of the end only, clear of the free-edge corners) */}
+      <group ref={sealG} visible={opts.fold < 1}>
+        {[1, -1].map(sy => (
+          <mesh key={sy} position={[(W - CR) / 2 + 0.001, sy * (H / 2 + 0.0004), T / 2 + GAP]} rotation={[Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[W - CR - 0.002, 2 * GAP + 0.0012]} /><meshBasicMaterial color="#030304" side={THREE.DoubleSide} /></mesh>))}
+      </group>
       {/* antenna bands on both halves (see BANDS) */}
       <mesh geometry={g.rightBody} material={bandMat} renderOrder={1} />
       {/* bottom edge speaker grilles, 16 to 23 mm and 60 to 68 mm from the hinge */}
@@ -296,8 +322,8 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
       {/* ---------- left half (swings) ---------- */}
       <group ref={swingG} position={[0, 0, T / 2 + GAP]} rotation={[0, THREE.MathUtils.degToRad(180 - opts.fold), 0]}>
         <group position={[0, 0, -T / 2 - GAP]}>
-          <mesh geometry={g.leftBody} castShadow>{frameMat}</mesh>
-          <mesh geometry={g.railL} castShadow>{frameMat}</mesh>
+          <mesh geometry={g.leftBody} castShadow material={bodyMat} />
+          <mesh geometry={g.railL} castShadow material={bodyMat} />
           <mesh geometry={g.leftBody} material={bandMat} renderOrder={1} />
           {[-0.354, -0.51].map(x => <Screw key={x} x={x} />)}
           {/* USB-C on the bottom edge, about 43 mm from the hinge */}
@@ -469,7 +495,7 @@ function updateFoldStrip(g: THREE.BufferGeometry, swing: number) {
  * spine face, as wide as the stack, only about 0.8 mm proud of the hinge ends. */
 // closed, the flat sits 0.29 mm out from the hinge ends' line, i.e. recessed behind the frames' rounded hinge edges
 // (which stand EO = 0.48 mm out), so the two frame rails wrap a narrower inset spine as in the closed reference
-const SPINE_FLAT = 0.03
+const SPINE_FLAT = 0.28
 const spineGeos = new Map<number, THREE.BufferGeometry>()
 export function spineAt(swing: number) {
   const key = Math.round(THREE.MathUtils.radToDeg(swing) * 2)   // 0.5 degree steps
@@ -479,12 +505,12 @@ export function spineAt(swing: number) {
 }
 function spineGeo(phi: number) {
   // R is 0.03 mm inside the backs; closed the outside is a flat panel (bisector plane at d), narrowed by pulling the two
-  // back planes in by c (0 when open, so the cover stays tangent to both backs; RAIL.c when closed, so the panel shows
+  // back planes in by c (0 when open, so the cover stays tangent to both backs; SPINE_IN when closed, so the panel shows
   // between the rails); a p-norm soft minimum rounds the panel's long edges
   const R = T + GAP - 0.0003, r0 = R * 0.45, a = phi / 2, d = R * Math.cos(a) + R * SPINE_FLAT * Math.sin(a) * Math.sin(a)
   // c (back planes pulled in) ramps in over the first 60 degrees, so the cover is recessed between the rails at every
   // angle beyond that; near flat it widens (del) into a strip just under the backs that closes the rails' V groove
-  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 0, 60), cIn = RAIL.c * cl, P = 16 + 44 * cl + 400 * (1 - cl), BS = 0.0002   // P: crisp panel edges when closed
+  const cl = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(phi), 0, 60), cIn = SPINE_IN * cl, P = 8 * cl + 400 * (1 - cl), BS = 0.0002   // P: crisp panel edges when closed
   const dmax = Math.max(d, R * Math.cos(a) + 0.0001), del = THREE.MathUtils.degToRad(1.5 + 30 * (1 - cl)), N = 160
   const outer: [number, number][] = [], inner: [number, number][] = []
   for (let i = 0; i <= N; i++) {
@@ -500,12 +526,7 @@ function spineGeo(phi: number) {
   // (1.2 mm bevel), so rails and spine end together as one closed rounded corner
   const L = H + 2 * EO - 0.0006, b = 0.0012   // 0.3 mm under the frame top (rails sit 0.2 mm under): never shows on the top face
   const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: BS, bevelSegments: 4, curveSegments: 4 })
-  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return smoothFast(g)
-}
-/** Cheap welded normals for the per-angle spine (built while the fold animates, so it must stay fast). */
-function smoothFast(g: THREE.BufferGeometry) {
-  g.deleteAttribute('normal'); g.deleteAttribute('uv')
-  const m = mergeVertices(g, 1e-6); m.computeVertexNormals(); g.dispose(); return m
+  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * b) / 2, 0); return smooth(g)   // creased: flat end caps shade like the frame ends
 }
 /** Extrusions come with faceted normals; weld and recompute so rounded parts shade smoothly like the frame. */
 function smooth(g: THREE.BufferGeometry) {
@@ -517,7 +538,9 @@ function smooth(g: THREE.BufferGeometry) {
   return m
 }
 /** Hinge-side rails: RB back-corner radius, k slab inset, c how far the closed spine panel is pulled in from each back. */
-const RAIL = { RB: 0.014, k: 0.015, c: 0.0225 }   // c puts the panel's edge into the crease where each rail's arc ends
+const RAIL = { RB: 0.014, k: 0.015 }
+/** Closed, the spine panel's long sides sit this far inside the backs, so the rails' rounded back corners show just beside it. */
+const SPINE_IN = 0.004
 /** One half's rail along y, side +1 right half (x >= 0), -1 left. Profile in (x, z), back at z = -T/2: a fully rounded
  *  back corner reaching x = -EO (flush with the other frame edges), rolling back in to the hinge face at x = 0, which runs
  *  flat to a 0.5 mm screen-side corner; overlaps the slab by 4 mm. */
@@ -532,9 +555,11 @@ function railGeo(side: number) {
   for (let i = 0; i <= 32; i++) { const al = -Math.PI / 2 - (Math.PI / 2 + th) * i / 32; pts.push([xc + rb * Math.cos(al), zc + rb * Math.sin(al)]) }
   pts.push([XF, T / 2 - bv - 0.0005], [XF + 0.0007, T / 2 - bv], [kIn, T / 2 - bv], [kIn + zi, T / 2 - bv - zi], [kE, T / 2 - bv - zi])
   const sh = new THREE.Shape(pts.map(([x, z]) => new THREE.Vector2(side * x, -z)))
-  const L = H + 2 * EO - 0.0004
-  const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * bv, bevelEnabled: true, bevelThickness: bv, bevelSize: bv, bevelSegments: 4, curveSegments: 4 })
-  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * bv) / 2, 0); return smooth(g)
+  // end caps chamfer over EO along y, exactly as far as the slab's end face stands out past H / 2, so rail and slab ends
+  // meet the top and bottom faces along the same line (no stepped, separately rounded caps)
+  const L = H + 2 * EO - 0.0004, bt = EO - 0.0002
+  const g = new THREE.ExtrudeGeometry(sh, { depth: L - 2 * bt, bevelEnabled: true, bevelThickness: bt, bevelSize: bv, bevelSegments: 4, curveSegments: 4 })
+  g.rotateX(-Math.PI / 2); g.translate(0, -(L - 2 * bt) / 2, 0); return smooth(g)
 }
 
 // Inline JSX shapes cached by parameters so re-renders don't rebuild geometry.
