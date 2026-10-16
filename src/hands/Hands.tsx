@@ -14,7 +14,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { HandMotion, type IdleLevel } from './motion'
-import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, HAND_ROT0, REACH_EVENT, type Gesture, type HandRot } from './gestures'
+import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, HAND_ROT0, REACH_EVENT, type Gesture, type HandRot, type HandGrab } from './gestures'
 
 export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap' | 'flat' | 'twohand' | 'rest' | 'keys' | 'wear' | 'crown'
 export const HAND_POSES: [HandPose, string][] = [['off', 'Off'], ['right', 'Right hand'], ['left', 'Left hand'], ['landscape', 'Two hands'], ['pinch', 'Present'], ['hold', 'Hold up'],
@@ -381,6 +381,9 @@ function makeRig(src: THREE.Object3D): Rig {
   })
   const m = mesh! as THREE.SkinnedMesh
   m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false
+  // the posed hand sits far from its bind pose, so the bind-pose bounding sphere made pointer rays miss it (pressing on the
+  // hand did nothing); a sphere that always passes lets the skinned, per-triangle raycast find the posed skin
+  m.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e4)
   m.userData.hand = true   // the AI hands pass finds hand meshes by this
   // owner[v] = name of the bone with the largest weight on vertex v
   const si = m.geometry.getAttribute('skinIndex'), sw = m.geometry.getAttribute('skinWeight'), owner: string[] = []
@@ -744,13 +747,17 @@ function placeArm(mesh: THREE.Mesh, rig: Rig) {
 /** Wraps the device: turns it for landscape and adds the posed hands, which Centred leaves out of its bounds. */
 export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTRAL_DEFAULTS, rot = HAND_ROT0, idle = 'low', look = HAND_LOOK0, children }: { look?: HandLook; idle?: IdleLevel; pose: HandPose; tone: string; rot?: HandRot; fit: HandFit | null; spectral?: SpectralOptions; gesture?: Gesture; onGesture?: (g: Gesture) => void; children: React.ReactNode }) {
   const on = pose !== 'off' && !!fit && poseOk(fit, pose)
+  const grab = useRef<HandGrab | null>(null)
   // On a surface: tipped back 72 degrees, as if lying on a desk seen from the near side.
   return (
     <group rotation={[on && pose === 'rest' ? -deg(72) : 0, 0, on && pose === 'landscape' ? Math.PI / 2 : 0]} userData={{ handRig: true }}>
       {children}
       <group position={[fit?.cx ?? 0, fit?.cy ?? 0, fit?.cz ?? 0]} rotation={[fit?.rx ?? 0, 0, 0]}>
-        {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} gesture={gesture} sp={spectral} rot={rot} idle={idle} look={look} /></Suspense>}
-        {on && isGesture(pose) && gesture && onGesture && <ScreenTarget pose={pose} fit={fit!} g={gesture} onChange={onGesture} />}
+        {/* pressing on the hand grabs the touch marker (gesture poses), so the thumb or finger drags directly */}
+        <group onPointerDown={e => grab.current?.down(e)} onPointerMove={e => grab.current?.move(e)} onPointerUp={e => grab.current?.up(e)}>
+          {on && <Suspense fallback={null}><Hands pose={pose} tone={tone} fit={fit!} gesture={gesture} sp={spectral} rot={rot} idle={idle} look={look} /></Suspense>}
+        </group>
+        {on && isGesture(pose) && gesture && onGesture && <ScreenTarget pose={pose} fit={fit!} g={gesture} onChange={onGesture} handGrab={grab} />}
       </group>
     </group>)
 }

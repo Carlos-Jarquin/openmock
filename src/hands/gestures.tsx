@@ -21,7 +21,9 @@ export const isGesture = (p: HandPose): p is GesturePose => (GESTURE_POSES as st
 
 /** All positions in screen points from the top left. x, y: tap target, pinch centre or thumb point. sx, sy to ex, ey:
  * swipe path, progress 0 to 1 along it. spread: distance between thumb and index in points. angle: pinch axis in degrees. */
-export interface Gesture { x: number; y: number; sx: number; sy: number; ex: number; ey: number; progress: number; spread: number; angle: number; marker: boolean; kx: number; ky: number; kx2: number; ky2: number }
+export interface Gesture { x: number; y: number; sx: number; sy: number; ex: number; ey: number; progress: number; spread: number; angle: number; marker: boolean; kx: number; ky: number; kx2: number; ky2: number
+  /** the screen size in points these values are in (saved with the scene, so a reload never rescales them again); missing = the 18 Pro's 402 x 874 */
+  pw?: number; ph?: number }
 export const GESTURE_DEFAULT: Gesture = { x: 201, y: 520, sx: 300, sy: 600, ex: 100, ey: 600, progress: 0.5, spread: 150, angle: 65, marker: true, kx: 290, ky: 660, kx2: 110, ky2: 660 }
 
 /** Screen size in model units and points, with the glass plane. Falls back to the 18 Pro proportions. */
@@ -37,8 +39,15 @@ export function ptToDevice(f: HandFit, x: number, y: number) {
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 /** Scales a gesture from one screen size to another, so switching between the Pro and Pro Max keeps the same spot. */
 export function rescale(g: Gesture, from: { pw: number; ph: number }, to: { pw: number; ph: number }): Gesture {
-  const kx = to.pw / from.pw, ky = to.ph / from.ph
-  return { ...g, x: g.x * kx, y: g.y * ky, sx: g.sx * kx, sy: g.sy * ky, ex: g.ex * kx, ey: g.ey * ky, kx: g.kx * kx, ky: g.ky * ky, kx2: g.kx2 * kx, ky2: g.ky2 * ky }
+  const kx = to.pw / from.pw, ky = to.ph / from.ph, X = (v: number) => clamp(v * kx, 0, to.pw), Y = (v: number) => clamp(v * ky, 0, to.ph)
+  return { ...g, x: X(g.x), y: Y(g.y), sx: X(g.sx), sy: Y(g.sy), ex: X(g.ex), ey: Y(g.ey), kx: X(g.kx), ky: Y(g.ky), kx2: X(g.kx2), ky2: Y(g.ky2), pw: to.pw, ph: to.ph }
+}
+/** The screen points a gesture's values are in. */
+export const gestureSpace = (g: Gesture) => ({ pw: g.pw ?? 402, ph: g.ph ?? 874 })
+/** Puts a gesture into a screen's points (clamped onto that screen); the same object when it already is. */
+export function toScreen(g: Gesture, to: { pw: number; ph: number }): Gesture {
+  const from = gestureSpace(g)
+  return from.pw === to.pw && from.ph === to.ph && g.pw != null ? g : rescale(g, from, to)
 }
 /** The point the swipe is at now. */
 export const swipeAt = (g: Gesture) => ({ x: g.sx + (g.ex - g.sx) * g.progress, y: g.sy + (g.ey - g.sy) * g.progress })
@@ -58,33 +67,55 @@ function Mark({ p, kind }: { p: THREE.Vector3; kind: Handle }) {
 
 /** Invisible pad over the screen that places the target where you click and follows a drag. Marker rings show
  * through the hand so you can see the fingertip land on them. Hidden from the AI hands passes (userData.gizmo). */
-export function ScreenTarget({ pose, fit, g, onChange }: { pose: GesturePose; fit: HandFit; g: Gesture; onChange: (g: Gesture) => void }) {
-  const s = screenOf(fit), pad = useRef<THREE.Mesh>(null), grab = useRef<Handle | null>(null)
+/** Pointer handlers for pressing on the hand itself: the press grabs the nearest marker and drags it relative to where you
+ *  pressed (the pointer ray meets the screen plane), so the touching thumb or finger follows without jumping. */
+export interface HandGrab { down: (e: ThreeEvent<PointerEvent>) => void; move: (e: ThreeEvent<PointerEvent>) => void; up: (e: ThreeEvent<PointerEvent>) => void }
+const Z0 = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), _inv = new THREE.Matrix4(), _ray = new THREE.Ray(), _hit = new THREE.Vector3()
+export function ScreenTarget({ pose, fit, g, onChange, handGrab }: { pose: GesturePose; fit: HandFit; g: Gesture; onChange: (g: Gesture) => void; handGrab?: React.MutableRefObject<HandGrab | null> }) {
+  const s = screenOf(fit), pad = useRef<THREE.Mesh>(null), grab = useRef<Handle | null>(null), off = useRef({ x: 0, y: 0 })
   const controls = useThree(st => st.controls) as { enabled?: boolean } | null
-  const toPt = (e: ThreeEvent<PointerEvent>) => {
-    const l = pad.current!.worldToLocal(e.point.clone())
-    return { x: clamp((l.x / s.sw + 0.5) * s.pw, 0, s.pw), y: clamp((0.5 - l.y / s.sh) * s.ph, 0, s.ph) }
+  // the pointer ray where it meets the screen plane (not e.point, which on the hand is on the skin above the glass)
+  const toPt = (e: ThreeEvent<PointerEvent>, clampIt = true) => {
+    const m = pad.current!; _inv.copy(m.matrixWorld).invert(); _ray.copy(e.ray).applyMatrix4(_inv)
+    const l = _ray.intersectPlane(Z0, _hit) ?? m.worldToLocal(e.point.clone())
+    const x = (l.x / s.sw + 0.5) * s.pw, y = (0.5 - l.y / s.sh) * s.ph
+    return clampIt ? { x: clamp(x, 0, s.pw), y: clamp(y, 0, s.ph) } : { x, y }
   }
-  const move = (h: Handle, p: { x: number; y: number }) => {
-    const r = (v: number) => Math.round(v)
+  const at = (h: Handle) => h === 'start' ? { x: g.sx, y: g.sy } : h === 'end' ? { x: g.ex, y: g.ey } : h === 'left' ? { x: g.kx2, y: g.ky2 } : pose === 'type' ? { x: g.kx, y: g.ky } : { x: g.x, y: g.y }
+  const move = (h: Handle, q: { x: number; y: number }) => {
+    const r = (v: number) => Math.round(v), p = { x: clamp(q.x - off.current.x, 0, s.pw), y: clamp(q.y - off.current.y, 0, s.ph) }
     if (h === 'start') onChange({ ...g, sx: r(p.x), sy: r(p.y) })
     else if (h === 'end') onChange({ ...g, ex: r(p.x), ey: r(p.y) })
     else if (pose === 'type') onChange(h === 'left' ? { ...g, kx2: r(p.x), ky2: r(p.y) } : { ...g, kx: r(p.x), ky: r(p.y) })
     else onChange({ ...g, x: r(p.x), y: r(p.y) })
   }
-  const down = (e: ThreeEvent<PointerEvent>) => {
+  const down = (e: ThreeEvent<PointerEvent>, onHand = false) => {
     if (e.button !== 0) return
     e.stopPropagation(); sceneHit.current = true
-    const p = toPt(e)
+    const p = toPt(e, !onHand)
     let h: Handle = 'target'
     if (pose === 'type') h = Math.hypot(p.x - g.kx2, p.y - g.ky2) < Math.hypot(p.x - g.kx, p.y - g.ky) ? 'left' : 'target'
-    if (isPath(pose)) h = Math.hypot(p.x - g.sx, p.y - g.sy) <= Math.hypot(p.x - g.ex, p.y - g.ey) ? 'start' : 'end'
+    if (isPath(pose)) {
+      const sw = swipeAt(g), d = (q: { x: number; y: number }) => Math.hypot(p.x - q.x, p.y - q.y)
+      // on the hand, the thumb or finger itself (the red marker) is what you grab: it slides along the swipe (progress)
+      h = onHand && d(sw) <= Math.min(d({ x: g.sx, y: g.sy }), d({ x: g.ex, y: g.ey })) ? 'target' : d({ x: g.sx, y: g.sy }) <= d({ x: g.ex, y: g.ey }) ? 'start' : 'end'
+      if (onHand && h === 'target') { off.current = { x: 0, y: 0 }; grab.current = h; (e.target as Element).setPointerCapture?.(e.pointerId); if (controls) controls.enabled = false; return }
+    }
+    // a press on the marker or screen puts the marker there; a press on the hand drags the marker by the same amount
+    const c = at(h); off.current = onHand ? { x: p.x - c.x, y: p.y - c.y } : { x: 0, y: 0 }
     grab.current = h; (e.target as Element).setPointerCapture?.(e.pointerId)
     if (controls) controls.enabled = false
-    move(h, p)
+    if (!onHand) move(h, p)
   }
-  const drag = (e: ThreeEvent<PointerEvent>) => { if (grab.current) { e.stopPropagation(); move(grab.current, toPt(e)) } }
+  const drag = (e: ThreeEvent<PointerEvent>) => { if (!grab.current) return
+    e.stopPropagation()
+    if (isPath(pose) && grab.current === 'target') { // slide the touch along the swipe path
+      const p = toPt(e), vx = g.ex - g.sx, vy = g.ey - g.sy, L2 = vx * vx + vy * vy
+      if (L2 > 1) onChange({ ...g, progress: clamp(((p.x - g.sx) * vx + (p.y - g.sy) * vy) / L2, 0, 1) }); return }
+    move(grab.current, toPt(e, false)) }
   const up = (e: ThreeEvent<PointerEvent>) => { grab.current = null; (e.target as Element).releasePointerCapture?.(e.pointerId); if (controls) controls.enabled = true }
+  if (handGrab) handGrab.current = { down: e => down(e, true), move: drag, up }
+  useEffect(() => () => { if (handGrab) handGrab.current = null }, [handGrab])
   const P = (x: number, y: number) => ptToDevice(fit, x, y)
   const sw = swipeAt(g)
   return <group userData={{ noBounds: true, gizmo: true }}>

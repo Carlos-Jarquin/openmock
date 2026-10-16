@@ -24,7 +24,7 @@ import { IDLE_LEVELS } from './hands/motion'
 import { HandRig, HAND_POSES, SKIN_TONES, posesFor, poseOk, wristSection, type HandFit, type HandPose } from './hands/Hands'
 import { SPECTRAL_DEFAULTS } from './hands/spectral'
 import { HAND_LOOK0, NAIL_SHAPES, NAIL_SWATCHES } from './hands/nails'
-import { GestureControls, HAND_ROT0, isGesture, rescale, screenOf } from './hands/gestures'
+import { GestureControls, HAND_ROT0, isGesture, screenOf, toScreen } from './hands/gestures'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX } from './devices/iphoneSpecs'
 import { IPAD_MINI, IPAD_PRO_11, IPAD_PRO_129 } from './devices/ipadSpecs'
 import { SketchStyle, SKETCH_DEFAULTS, SKETCH_PAPER, SKETCH_SHADOW } from './sketch/Sketch'
@@ -287,8 +287,6 @@ const nailWord = (l: number) => l < 0.08 ? 'Short' : l < 0.4 ? 'Medium' : l < 0.
 const HEIGHT: Partial<Record<DeviceId, number>> = { mbp16: 1.55, imacg4: 2.2, studio: 1.9, watchu: 2.7, atv4k: 0.6, ip18: 1.5, ip18max: 1.63, duo: 1.55, phone: 1.5, ipmini: 1.96, ippro11: 2.5, ippro13: 2.85, browser: 1.75 }
 const WIDTH: Partial<Record<DeviceId, number>> = { mbp16: 2.2, imacg4: 2.3, studio: 2.1, watchu: 0.7, atv4k: 1.9, ip18: 0.72, ip18max: 0.78, duo: 1.5, phone: 0.75, ipmini: 1.38, ippro11: 1.8, ippro13: 2.2, browser: 2.6 }
 const widthOf = (d: DeviceState) => d.model === 'duo' && d.opts.fold < 90 ? 0.75 : WIDTH[d.model] ?? 0.8
-/** The hand fit each device's gesture was last scaled for, so switching model rescales only that device's gesture. */
-const fitOfDev = new Map<string, HandFit>()
 /** Shown names: the model's name, numbered when the scene has more than one of it. */
 export function devNames(devs: DeviceState[]) {
   const seen: Record<string, number> = {}, tot: Record<string, number> = {}
@@ -538,9 +536,10 @@ export default function App() {
   const idle = D0.idle, setIdle = S.dev.idle
   const look = D0.look, setLook = S.dev.look
   const fitNow = fitFor(D0)
-  useEffect(() => { const f = fitNow, was = fitOfDev.get(D0.uid) ?? HAND_FITS.ip18!
-    if (f && f !== was) setGesture(g => rescale(g, screenOf(was), screenOf(f)))
-    if (f) fitOfDev.set(D0.uid, f) }, [fitNow, D0.uid])
+  // the gesture carries the screen size it is in (saved with the scene), so a reload or a model switch rescales it only
+  // when the screen actually changes. (It used to assume 18 Pro points after every reload and rescaled again each time,
+  // walking a Duo or iPad target off the screen.)
+  useEffect(() => { if (fitNow) { const to = screenOf(fitNow); setGesture(g => toScreen(g, to)) } }, [fitNow, D0.uid])
   // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
   const [ai, setAi] = useState<{ guide: Guide; shadows: boolean; busy: boolean; url: string | null }>({ guide: 'depth', shadows: false, busy: false, url: null })
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
@@ -680,7 +679,7 @@ export default function App() {
     for (const d of ds) if (d.xf.x + wOf(d) / 2 > best.xf.x + wOf(best) / 2) best = d
     return { ...XF0, x: Math.round((best.xf.x + wOf(best) / 2 + 0.12 + w / 2) * 100) / 100, y: best.xf.y, z: best.xf.z } }
   const addDevice = (model: DeviceId) => { S.add(model, nextXf((WIDTH[model] ?? 0.8) * devScale(model) / soloScale(model))); flash(`${DEVICES.find(d => d.id === model)!.label} added. Drag it in the view to move it.`) }
-  const dupDevice = (d: DeviceState) => { const uid = S.add(d.model, nextXf(wOf(d)), d); const f = fitOfDev.get(d.uid); if (f) fitOfDev.set(uid, f); flash('Device duplicated.') }
+  const dupDevice = (d: DeviceState) => { S.add(d.model, nextXf(wOf(d)), d); flash('Device duplicated.') }
   const layoutRef = useRef<(k: 'row' | 'fan' | 'grid') => void>(() => {})
   /** Layout presets: place every visible device side by side, fanned out or in a grid, centred on the view. */
   const layout = (kind: 'row' | 'fan' | 'grid') => {
