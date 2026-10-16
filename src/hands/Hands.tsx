@@ -40,7 +40,9 @@ export interface HandFit { W: number; H: number; T: number; R: number; E: number
   /** laptop keyboard: home row key centres (frame units) for the typing hands, left to right A S D F and J K L ;, the space bar and key pitch */
   keys?: { home: [number, number][]; space: [number, number]; pitch: number; top: number }
   /** watch: back crystal depth below the case, and the crown (x past the side, y, radius) */
-  back?: number; crown?: { x: number; y: number; r: number }; build?: number }
+  back?: number; crown?: { x: number; y: number; r: number }; build?: number
+  /** grips not offered on this fit (the part-folded Duo: no two-handed landscape) */
+  without?: HandPose[] }
 const PHONE_ONLY: HandPose[] = ['right', 'left', 'hold', 'pinch', 'thumb', 'thumbswipe', 'type']
 /** The grips and gestures that make sense for a device: a tablet is too wide for one-handed wraps and thumb reaches,
  *  and a phone does not need the upright two-handed hold. */
@@ -50,8 +52,8 @@ const LAPTOP: HandPose[] = ['off', 'keys', 'tap', 'swipe', 'hover'], DESKTOP: Ha
 // 'crown' (turning the crown) is planned but not yet convincing, so it is not offered
 export const WATCH_POSES: HandPose[] = ['off', 'wear', 'tap', 'swipe', 'hover'], REMOTE_POSES: HandPose[] = ['off', 'right', 'left', 'thumb', 'thumbswipe']
 const ONLY_HERE: HandPose[] = ['keys', 'wear', 'crown']
-export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] => !f ? [] : HAND_POSES.filter(([k]) =>
-  f.kind === 'laptop' ? LAPTOP.includes(k) : f.kind === 'desktop' ? DESKTOP.includes(k) : f.kind === 'watch' ? WATCH_POSES.includes(k) : f.kind === 'remote' ? REMOTE_POSES.includes(k) : ONLY_HERE.includes(k) ? false : f.kind === 'tablet' ? !PHONE_ONLY.includes(k) : k !== 'twohand')
+export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] => !f ? [] : HAND_POSES.filter(([k]) => !f.without?.includes(k) && (
+  f.kind === 'laptop' ? LAPTOP.includes(k) : f.kind === 'desktop' ? DESKTOP.includes(k) : f.kind === 'watch' ? WATCH_POSES.includes(k) : f.kind === 'remote' ? REMOTE_POSES.includes(k) : ONLY_HERE.includes(k) ? false : f.kind === 'tablet' ? !PHONE_ONLY.includes(k) : k !== 'twohand'))
 export const poseOk = (f: HandFit | null | undefined, p: HandPose) => p === 'off' || posesFor(f).some(([k]) => k === p)
 
 import { HAND_LOOK0, nailGeometry, nailMaterial, type HandLook, type NailFit } from './nails'

@@ -109,7 +109,7 @@ function duoHalf(fold: number, follow: boolean): HandFit {
   const k = Math.round(fold), key = `${k}|${follow}`, hit = duoHalfCache.get(key); if (hit) return hit
   const kc = follow ? 1 - k / 180 : 0, SW = DUO_OPEN.SW! / 2
   const f: HandFit = { W: DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005, SW, SH: DUO_OPEN.SH, PW: Math.round(DUO_OPEN.PW! / 2), PH: DUO_OPEN.PH,
-    OX: SW / 2 - DUO_W / 2, kind: 'phone', cx: DUO_W / 2 - (DUO_W / 2) * kc, cz: -(DUO_T / 2 + DUO_GAP) * kc }
+    OX: SW / 2 - DUO_W / 2, kind: 'phone', without: ['landscape'], cx: DUO_W / 2 - (DUO_W / 2) * kc, cz: -(DUO_T / 2 + DUO_GAP) * kc }
   duoHalfCache.set(key, f); return f
 }
 // Desk machines are drawn at real size and scaled down as a whole (hands included) to sit in the same view as phones.
@@ -551,6 +551,9 @@ export default function App() {
   // when the screen actually changes. (It used to assume 18 Pro points after every reload and rescaled again each time,
   // walking a Duo or iPad target off the screen.)
   useEffect(() => { if (fitNow) { const to = screenOf(fitNow); setGesture(g => toScreen(g, to)) } }, [fitNow, D0.uid])
+  // a grip this fit does not offer (the part-folded Duo has no two-handed landscape) falls back to holding it up;
+  // an ordinary hands change, so it is undoable with the fold
+  useEffect(() => { if (fitNow?.without?.includes(hands.pose)) setHands(h => ({ ...h, pose: 'hold' })) }, [fitNow, hands.pose])
   // AI hands: the finished picture (object URL) sits over the canvas until anything in the scene changes.
   const [ai, setAi] = useState<{ guide: Guide; shadows: boolean; busy: boolean; url: string | null }>({ guide: 'depth', shadows: false, busy: false, url: null })
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9))
