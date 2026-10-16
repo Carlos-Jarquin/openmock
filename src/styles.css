@@ -126,3 +126,7 @@ section.timeline { position: relative; }
 .om-lock-back { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(20,20,26,.28); }
 .om-lock { width: 320px; padding: 16px; border-radius: 12px; background: #fff; box-shadow: 0 12px 40px rgba(0,0,0,.22); font-size: 13px; line-height: 1.45; color: #1d1d22; }
 .om-lock p { margin: 0 0 14px; }
+
+/* Clean view (Cmd+\): only the rendered scene; every dock, panel, bar and overlay is hidden */
+.om.om-clean > :not(main):not(input) { display: none !important; }
+.om.om-clean .stage > .om-fps, .om.om-clean .stage > .om-selbox, .om.om-clean .stage > .toast, .om.om-clean .stage > .dropnote { display: none !important; }

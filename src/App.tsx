@@ -312,7 +312,7 @@ export function devNames(devs: DeviceState[]) {
 /** One device in the scene: its own screen composite, screen-track mixers, fold state, hand and placement. */
 const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, screenGen, onGesture, onGrab, reg, scale }: {
   scale: number; d: DeviceState; active: boolean; sketch: boolean; sk: typeof SKETCH_DEFAULTS; islandLook: ReturnType<typeof islandSketch> | undefined; screenGen: number
-  onGesture: (g: DeviceState['gesture']) => void; onGrab: (uid: string, e: PointerEvent) => void; reg: (uid: string, g: THREE.Group | null) => void
+  onGesture?: (g: DeviceState['gesture']) => void; onGrab: (uid: string, e: PointerEvent) => void; reg: (uid: string, g: THREE.Group | null) => void
 }) {
   const def = DEVICES.find(x => x.id === d.model)!, D = def.Component, opts = d.opts, device = d.model
   const screenAspect = typeof def.screenAspect === 'function' ? def.screenAspect(opts) : def.screenAspect
@@ -1276,6 +1276,16 @@ export default function App() {
       if (a && (a.isContentEditable || a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !/^(range|checkbox|radio|button|color)$/.test((a as HTMLInputElement).type)))) return
       e.preventDefault(); if (y || e.shiftKey) redo(); else undo() }
     window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on) }, [undo, redo])
+  // Clean view (Cmd+\ on a Mac, Ctrl+\ elsewhere): hides every piece of UI (docks, panels, timeline, overlays, the
+  // gesture target and selection box) so only the rendered scene shows; the same keys bring it back. View state
+  // only, so it is not in the undo history; ignored while typing in a text field.
+  const [clean, setClean] = useState(false)
+  useEffect(() => { const on = (e: KeyboardEvent) => {
+      if (!(IS_MAC ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || (e.code !== 'Backslash' && e.key !== '\\')) return
+      const a = document.activeElement as HTMLElement | null
+      if (a && (a.isContentEditable || a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && !/^(range|checkbox|radio|button|color)$/.test((a as HTMLInputElement).type)))) return
+      e.preventDefault(); setClean(c => !c) }
+    window.addEventListener('keydown', on); return () => window.removeEventListener('keydown', on) }, [])
   // Clear canvas: every device, its settings, timeline rows and the saved list go; one fresh default device remains. no undo past it
   const [clrAsk, setClrAsk] = useState(false)
   const clearCanvas = useCallback(() => { setClrAsk(false)
@@ -1375,9 +1385,9 @@ export default function App() {
   </>
 
   return (
-    <div className="app om">
+    <div className={`app om ${clean ? 'om-clean' : ''}`}>
       <input ref={fileInput} type="file" accept="image/*,video/*,.svg" hidden onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(f, undefined, target); e.target.value = '' }} />
-      <main className={`stage ${transparent ? 'checker' : ''} ${dragging ? 'drag' : ''}`} style={{ background: bgCss, left: insets[0], right: insets[1], cursor: navMode === 'pan' ? 'move' : undefined }}
+      <main className={`stage ${transparent ? 'checker' : ''} ${dragging ? 'drag' : ''}`} style={{ background: bgCss, left: clean ? 0 : insets[0], right: clean ? 0 : insets[1], cursor: navMode === 'pan' ? 'move' : undefined }}
         onDragOver={e => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)}
         onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) loadFile(f, device === 'duo' ? `Dropped onto the ${target} screen` : 'Dropped onto screen', target); else flash('That drop had no file. Drag in an image or video file.', true) }}
         onContextMenu={e => e.preventDefault()}
@@ -1438,10 +1448,10 @@ export default function App() {
           </>}
           <group ref={devGroup} position={devPos} rotation={devRot}>
             {devices.map(d => <DeviceRig key={d.uid} scale={devScale(d.model)} d={d} active={d.uid === D0.uid} sketch={sketch} sk={sk} islandLook={islandLook} screenGen={screenGen}
-              onGesture={setGesture} onGrab={onGrab} reg={reg} />)}
+              onGesture={clean ? undefined : setGesture} onGrab={onGrab} reg={reg} />)}
           </group>
           {fpsOn && <FpsMeter el={fpsEl} />}
-          {multi && <SelBox get={() => rigs.current.get(D0.uid) ?? null} el={selBox} />}
+          {multi && !clean && <SelBox get={() => rigs.current.get(D0.uid) ?? null} el={selBox} />}
           {light.shadowOn && light.shadow > 0 && (() => {
             // light.floor is the phone's height above the floor in cm (0.1 units per cm, phone about 1.6 units tall).
             // The floor plane stays where it is so it stays in frame at any height; the shadow is shaped as if the
