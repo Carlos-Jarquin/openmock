@@ -863,7 +863,16 @@ export default function App() {
     setStatus('Saved the AI hands passes and prompt. Load them into comfy/hands.json in ComfyUI.')
   }
 
-  const exportPng = async () => {
+  // Stills never carry editing UI: while one renders, the gesture target and selection box are unmounted (as in clean
+  // view) and anything still tagged as a gizmo is hidden, then both come back
+  const [exporting, setExporting] = useState(false)
+  const withoutEditing = async <R,>(run: () => Promise<R>): Promise<R> => {
+    setExporting(true); const hid: THREE.Object3D[] = []
+    try { await new Promise(r => requestAnimationFrame(r))
+      three.current?.scene.traverse(o => { if (o.userData.gizmo && o.visible) { o.visible = false; hid.push(o) } })
+      return await run() } finally { for (const o of hid) o.visible = true; setExporting(false) } }
+  const exportPng = () => withoutEditing(exportPngNow)
+  const exportPngNow = async () => {
     if (ai.url) { const a = document.createElement('a'); a.download = 'openmock-ai-hands.png'; a.href = ai.url; a.click(); setStatus('Exported the photoreal hands picture.'); return }
     const t = three.current; if (!t) return
     const { gl } = t
@@ -885,7 +894,8 @@ export default function App() {
   }
   /** SVG export: the full render as an embedded PNG (not vector: lighting, shading and perspective are raster). When the
    *  screen design came in as SVG, its original markup rides along as a hidden, named layer so it stays editable. */
-  const exportSvg = async () => {
+  const exportSvg = () => withoutEditing(exportSvgNow)
+  const exportSvgNow = async () => {
     const t = three.current; if (!t) return
     const { gl } = t, size = gl.getSize(new THREE.Vector2()), prev = t.dpr
     t.setDpr(Math.min(scale, 4096 / Math.max(size.x, size.y)))
@@ -914,7 +924,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { histRef: histDev, swapInAiHand, restoreHand, rigs, devGroup, defaultPose, resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { histRef: histDev, swapInAiHand, restoreHand, rigs, devGroup, defaultPose, resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle, exportPng, exportSvg }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -1280,6 +1290,8 @@ export default function App() {
   // gesture target and selection box) so only the rendered scene shows; the same keys bring it back. View state
   // only, so it is not in the undo history; ignored while typing in a text field.
   const [clean, setClean] = useState(false)
+  // no editing UI in the render: clean view, a still export, or a timeline video recording
+  const noEdit = clean || exporting || tlInfo.rec
   useEffect(() => { const on = (e: KeyboardEvent) => {
       if (!(IS_MAC ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey || (e.code !== 'Backslash' && e.key !== '\\')) return
       const a = document.activeElement as HTMLElement | null
@@ -1448,10 +1460,10 @@ export default function App() {
           </>}
           <group ref={devGroup} position={devPos} rotation={devRot}>
             {devices.map(d => <DeviceRig key={d.uid} scale={devScale(d.model)} d={d} active={d.uid === D0.uid} sketch={sketch} sk={sk} islandLook={islandLook} screenGen={screenGen}
-              onGesture={clean ? undefined : setGesture} onGrab={onGrab} reg={reg} />)}
+              onGesture={noEdit ? undefined : setGesture} onGrab={onGrab} reg={reg} />)}
           </group>
           {fpsOn && <FpsMeter el={fpsEl} />}
-          {multi && !clean && <SelBox get={() => rigs.current.get(D0.uid) ?? null} el={selBox} />}
+          {multi && !noEdit && <SelBox get={() => rigs.current.get(D0.uid) ?? null} el={selBox} />}
           {light.shadowOn && light.shadow > 0 && (() => {
             // light.floor is the phone's height above the floor in cm (0.1 units per cm, phone about 1.6 units tall).
             // The floor plane stays where it is so it stays in frame at any height; the shadow is shaped as if the
