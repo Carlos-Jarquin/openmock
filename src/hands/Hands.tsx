@@ -16,9 +16,9 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { HandMotion, type IdleLevel } from './motion'
 import { ptToDevice, screenOf, swipeAt, isGesture, ScreenTarget, GESTURE_DEFAULT, HAND_ROT0, REACH_EVENT, type Gesture, type HandRot, type HandGrab } from './gestures'
 
-export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap' | 'flat' | 'twohand' | 'rest' | 'keys' | 'wear' | 'crown'
+export type HandPose = 'off' | 'right' | 'left' | 'landscape' | 'pinch' | 'hold' | 'tap' | 'swipe' | 'zoom' | 'thumb' | 'thumbswipe' | 'type' | 'hover' | 'holdtap' | 'flat' | 'twohand' | 'rest' | 'keys' | 'wear' | 'crown' | 'bottom'
 export const HAND_POSES: [HandPose, string][] = [['off', 'Off'], ['right', 'Right hand'], ['left', 'Left hand'], ['landscape', 'Two hands'], ['pinch', 'Present'], ['hold', 'Hold up'],
-  ['tap', 'Tap'], ['swipe', 'Swipe'], ['zoom', 'Pinch to zoom'], ['thumb', 'Thumb tap'], ['thumbswipe', 'Thumb scroll'], ['type', 'Two-thumb typing'], ['hover', 'Point / hover'], ['holdtap', 'Hold and tap'], ['flat', 'Flat in palm'], ['twohand', 'Two hands upright'], ['rest', 'On a surface'], ['keys', 'Typing on keys'], ['wear', 'On the wrist'], ['crown', 'Turning the crown']]
+  ['tap', 'Tap'], ['swipe', 'Swipe'], ['zoom', 'Pinch to zoom'], ['thumb', 'Thumb tap'], ['thumbswipe', 'Thumb scroll'], ['type', 'Two-thumb typing'], ['hover', 'Point / hover'], ['holdtap', 'Hold and tap'], ['flat', 'Flat in palm'], ['twohand', 'Two hands upright'], ['rest', 'On a surface'], ['keys', 'Typing on keys'], ['wear', 'On the wrist'], ['crown', 'Turning the crown'], ['bottom', 'Hold at bottom']]
 export const SKIN_TONES: Record<string, { label: string; color: string; sheen: string }> = {
   light: { label: 'Light', color: '#f0c8ae', sheen: '#ffd9cf' },
   fair: { label: 'Fair', color: '#dfa98a', sheen: '#ffcbb8' },
@@ -42,7 +42,12 @@ export interface HandFit { W: number; H: number; T: number; R: number; E: number
   /** watch: back crystal depth below the case, and the crown (x past the side, y, radius) */
   back?: number; crown?: { x: number; y: number; r: number }; build?: number
   /** grips not offered on this fit (the part-folded Duo: no two-handed landscape) */
-  without?: HandPose[] }
+  without?: HandPose[]
+  /** poses offered only on fits that list them (the open or part-folded Duo: Hold at bottom) */
+  extra?: HandPose[]
+  /** part-folded Duo: the swinging (left) half's frame in this fit's frame, its inverse, and its body size; a holding
+   *  hand cradles that half like a book and the solver keeps clear of it too */
+  book?: { m: THREE.Matrix4; inv: THREE.Matrix4 } }
 const PHONE_ONLY: HandPose[] = ['right', 'left', 'hold', 'pinch', 'thumb', 'thumbswipe', 'type']
 /** The grips and gestures that make sense for a device: a tablet is too wide for one-handed wraps and thumb reaches,
  *  and a phone does not need the upright two-handed hold. */
@@ -51,9 +56,9 @@ const LAPTOP: HandPose[] = ['off', 'keys', 'tap', 'swipe', 'hover'], DESKTOP: Ha
 // Siri Remote: held in one hand, the thumb on the clickpad.
 // 'crown' (turning the crown) is planned but not yet convincing, so it is not offered
 export const WATCH_POSES: HandPose[] = ['off', 'wear', 'tap', 'swipe', 'hover'], REMOTE_POSES: HandPose[] = ['off', 'right', 'left', 'thumb', 'thumbswipe']
-const ONLY_HERE: HandPose[] = ['keys', 'wear', 'crown']
-export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] => !f ? [] : HAND_POSES.filter(([k]) => !f.without?.includes(k) && (
-  f.kind === 'laptop' ? LAPTOP.includes(k) : f.kind === 'desktop' ? DESKTOP.includes(k) : f.kind === 'watch' ? WATCH_POSES.includes(k) : f.kind === 'remote' ? REMOTE_POSES.includes(k) : ONLY_HERE.includes(k) ? false : f.kind === 'tablet' ? !PHONE_ONLY.includes(k) : k !== 'twohand'))
+const ONLY_HERE: HandPose[] = ['keys', 'wear', 'crown', 'bottom']
+export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] => !f ? [] : HAND_POSES.filter(([k]) => !f.without?.includes(k) && (f.extra?.includes(k) || (
+  f.kind === 'laptop' ? LAPTOP.includes(k) : f.kind === 'desktop' ? DESKTOP.includes(k) : f.kind === 'watch' ? WATCH_POSES.includes(k) : f.kind === 'remote' ? REMOTE_POSES.includes(k) : ONLY_HERE.includes(k) ? false : f.kind === 'tablet' ? !PHONE_ONLY.includes(k) : k !== 'twohand')))
 export const poseOk = (f: HandFit | null | undefined, p: HandPose) => p === 'off' || posesFor(f).some(([k]) => k === p)
 
 import { HAND_LOOK0, nailGeometry, nailMaterial, type HandLook, type NailFit } from './nails'
@@ -66,7 +71,12 @@ const deg = THREE.MathUtils.degToRad
 const v3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z)
 
 /** Signed distance from p to the device body (rounded rectangle slab with filleted edges). */
-function sdf(p: THREE.Vector3, f: HandFit) {
+const _bk = new THREE.Vector3()
+function sdf(p: THREE.Vector3, f: HandFit): number {
+  if (f.book) return Math.min(sdfBox(p, f), sdfBox(_bk.copy(p).applyMatrix4(f.book.inv), f))
+  return sdfBox(p, f)
+}
+function sdfBox(p: THREE.Vector3, f: HandFit) {
   const qx = Math.abs(p.x) - (f.W / 2 - f.R), qy = Math.abs(p.y) - (f.H / 2 - f.R)
   const d2 = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - (f.R - f.E)
   const dz = Math.abs(p.z) - (f.T / 2 - f.E)
@@ -86,6 +96,12 @@ interface HandPlan { side: 'right' | 'left'; knuckle: THREE.Vector3; /** when se
 const mx = (v: THREE.Vector3) => v3(-v.x, v.y, v.z)
 const mt = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && mx(o.tip) })
 const mirror = (p: HandPlan): HandPlan => ({ ...p, side: p.side === 'right' ? 'left' : 'right', knuckle: mx(p.knuckle), F: mx(p.F), N: mx(p.N), fingers: p.fingers.map(mt), thumb: mt(p.thumb) })
+/** A plan built in another frame (m: that frame to the fit's), e.g. on the part-folded Duo's swinging half. */
+const xfPlan = (p: HandPlan, m: THREE.Matrix4): HandPlan => {
+  const pt = (v: THREE.Vector3) => v.clone().applyMatrix4(m), dir = (v: THREE.Vector3) => v.clone().transformDirection(m)
+  const t = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && pt(o.tip) })
+  return { ...p, knuckle: pt(p.knuckle), wrist: p.wrist && pt(p.wrist), F: dir(p.F), N: dir(p.N), fingers: p.fingers.map(t), thumb: t(p.thumb) }
+}
 
 /** Poses in device space: x right and y up seen from the front, z out of the screen. Sizes scale with the device. */
 function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail = 0, flat = nail, size = 1): HandPlan[] {
@@ -116,6 +132,20 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     return { side: 'right', knuckle: v3(ex + 0.12, y0 - 0.22, -et - 0.1), F: v3(-0.25, 0.9, -0.4), N: v3(-0.85, 0.05, 0.5), seat: 0.006,
       fingers: [b(ex - 0.9 * k, y0 + 0.2, 2), b(ex - k, y0 + 0.04, 0), b(ex - 0.96 * k, y0 - 0.11, -3), b(ex - 0.81 * k, y0 - 0.25, -6)],
       thumb: { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: v3(ex - 0.045, y0 + 0.1, et + 0.004) } } }
+  // Open or part-folded Duo, held like a book: the left hand cradles the left half from its outer free edge, fingers
+  // on its back and the thumb on the screen by that edge (part folded the left half is the swinging one, so the
+  // plan is built on it and carried into this frame); the right hand mirrors that on the right half's free edge.
+  const book = f.book, bookL = (): HandPlan => { const h = mirror(tabHold(hw, -hh * 0.1, ht)); return book ? xfPlan(h, book.m) : h }
+  if (f.extra?.includes('bottom') && (pose === 'hold' || pose === 'left')) return [bookL()]
+  if (book && pose === 'right') return [tabHold(hw, -hh * 0.1, ht)]
+  if (pose === 'bottom') {
+    // Hold at bottom: the open book rests on the palm by its bottom edge, under the hinge; the fingers come up the
+    // back (part folded: the fixed half's, clear of the swinging one) and the thumb rests on the screen's bottom edge.
+    const xc = book ? -hw : 0, sx = book ? [0.3, 0.2, 0.11, 0.04] : [0.17, 0.06, -0.05, -0.16], bt = (x: number, y: number, sp: number): FingerPlan => ({ curl: [0, 25, 10, 6], spread: sp, tip: v3(xc + x, -hh + y, -ht - 0.05) })
+    return [{ side: 'right', knuckle: v3(xc + (book ? 0.12 : 0), -hh - 0.09, -ht - 0.08), F: v3(0, 0.25, -1).normalize(), N: v3(0, 1, 0.25).normalize(), seat: 0.006,
+      fingers: [bt(sx[0], 0.2, 4), bt(sx[1], 0.24, 1), bt(sx[2], 0.22, -2), bt(sx[3], 0.17, -5)],
+      thumb: { oppose: 10, abduct: 20, curl: [0, 5, 5], tip: v3(xc + (book ? 0.16 : 0.08), -hh + 0.06, ht + 0.004) } }]
+  }
   if (tablet && pose === 'twohand') { const r = tabHold(hw, -hh * 0.1, ht); return [r, mirror(r)] }
   if (pose === 'right') return [grip]
   if (pose === 'keys' && f.keys) {
@@ -163,7 +193,7 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     }
     if (pose === 'tap') return [pointer(P(ges.x, ges.y))]
     if (pose === 'swipe') { const a = swipeAt(ges); return [pointer(P(a.x, a.y))] }
-    if (pose === 'holdtap') return [mirror(tablet ? tabHold(hw, -hh * 0.1, ht) : grip), pointer(P(ges.x, ges.y))]
+    if (pose === 'holdtap') return [book ? bookL() : mirror(tablet ? tabHold(hw, -hh * 0.1, ht) : grip), pointer(P(ges.x, ges.y))]
     // on a surface: the device lies on a table (HandRig tips it back) and the hand comes in from the near side to tap
     if (pose === 'rest') { const pl = pointer(P(ges.x, ges.y)); return [{ ...pl, thumb: { oppose: 40, abduct: -15, curl: [20, 55, 45] } }] }   // thumb tucked, clear of the table
     if (pose === 'zoom') {

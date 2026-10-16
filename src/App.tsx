@@ -98,7 +98,7 @@ const HAND_FITS: Partial<Record<DeviceId, HandFit>> = { ip18: fitOf(IPHONE_18_PR
 // closed 82.3 x 117.8 mm, two halves (10.5 mm) with the outer display in front. With the fold camera off the closed
 // stack is not re-centred, so its centre sits half a width right of the hinge and half a body forward.
 const DUO_T = 0.052, DUO_GAP = 0.0012, DUO_W = 0.823
-const DUO_OPEN: HandFit = { W: 2 * DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005, SW: 1.11 * INNER_PX.w / INNER_PX.h, SH: 1.11, PW: Math.round(INNER_PX.w / 3), PH: Math.round(INNER_PX.h / 3), kind: 'tablet' }
+const DUO_OPEN: HandFit = { W: 2 * DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005, SW: 1.11 * INNER_PX.w / INNER_PX.h, SH: 1.11, PW: Math.round(INNER_PX.w / 3), PH: Math.round(INNER_PX.h / 3), kind: 'tablet', extra: ['bottom'] }
 const DUO_CLOSED: HandFit = { W: DUO_W, H: 1.178, T: 2 * DUO_T + DUO_GAP, R: 0.127, E: 0.005, SW: 1.136 * OUTER_PX.w / OUTER_PX.h, SH: 1.136, PW: Math.round(OUTER_PX.w / 3), PH: Math.round(OUTER_PX.h / 3), kind: 'phone' }
 const DUO_CLOSED_OFF: HandFit = { ...DUO_CLOSED, cx: DUO_W / 2, cz: DUO_T / 2 + DUO_GAP }
 // Part folded: the hands hold the fixed (right) half and touch its half of the inner screen, the one that faces the
@@ -109,7 +109,11 @@ function duoHalf(fold: number, follow: boolean): HandFit {
   const k = Math.round(fold), key = `${k}|${follow}`, hit = duoHalfCache.get(key); if (hit) return hit
   const kc = follow ? 1 - k / 180 : 0, SW = DUO_OPEN.SW! / 2
   const f: HandFit = { W: DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005, SW, SH: DUO_OPEN.SH, PW: Math.round(DUO_OPEN.PW! / 2), PH: DUO_OPEN.PH,
-    OX: SW / 2 - DUO_W / 2, kind: 'phone', without: ['landscape'], cx: DUO_W / 2 - (DUO_W / 2) * kc, cz: -(DUO_T / 2 + DUO_GAP) * kc }
+    OX: SW / 2 - DUO_W / 2, kind: 'phone', without: ['landscape'], extra: ['bottom'], cx: DUO_W / 2 - (DUO_W / 2) * kc, cz: -(DUO_T / 2 + DUO_GAP) * kc,
+    // the swinging half: its own centre frame turned (180 - fold) degrees about the hinge axis (x = -W/2 here, z = T/2 + gap)
+    book: (() => { const P = DUO_T / 2 + DUO_GAP, m = new THREE.Matrix4().makeTranslation(-DUO_W / 2, 0, P)
+      .multiply(new THREE.Matrix4().makeRotationY(THREE.MathUtils.degToRad(180 - k))).multiply(new THREE.Matrix4().makeTranslation(-DUO_W / 2, 0, -P))
+      return { m, inv: m.clone().invert() } })() }
   duoHalfCache.set(key, f); return f
 }
 // Desk machines are drawn at real size and scaled down as a whole (hands included) to sit in the same view as phones.
