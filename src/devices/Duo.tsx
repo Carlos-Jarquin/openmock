@@ -124,6 +124,9 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
   }, [f.frame])
   useEffect(() => () => bandMat.dispose(), [bandMat])
   const glassBack = <meshPhysicalMaterial color={f.back} metalness={0.1} roughness={0.55} clearcoat={0.6} clearcoatRoughness={0.4} />
+  // the camera plateau reads a shade lighter and glossier than the frosted back in the references
+  const plateauCol = useMemo(() => '#' + new THREE.Color(f.back).lerp(new THREE.Color('#ffffff'), 0.22).getHexString(), [f.back])
+  const plateauMat = <meshPhysicalMaterial color={plateauCol} metalness={0.1} roughness={0.38} clearcoat={0.8} clearcoatRoughness={0.25} />
   // The fold is applied every frame from refs (no React state per frame): the hinge angle, the self-centring shift,
   // the spine and the three screen materials all read one eased timeline while a transition runs (foldLive.anim),
   // else the Fold slider.
@@ -245,11 +248,14 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
       {/* camera plateau (after Carlos's iPhone Duo reference): a pill-shaped raised plateau in the back finish, about
           59 x 26 mm, 1.8 mm in from the top and free edges, holding two large lenses side by side (the iPhone 18 Pro lens
           build, 17 mm) next to the free edge, and a small flash/sensor slot at its inner end. */}
-      <group position={[W - 0.313, H / 2 - 0.148, -T / 2]}>
-        <mesh rotation={[Math.PI, 0, 0]} castShadow><extrudeGeometry args={[pill(0.59, 0.26), { depth: 0.008, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.006, bevelSegments: 6, curveSegments: 48 }]} />{glassBack}</mesh>
-        {[0.18, -0.009].map(x => (
-          <group key={x} position={[x, 0.006, -0.0139]}><RearLens d={0.17} rise={0.0211} frame={f.frame} /></group>))}
-        <mesh position={[-0.182, 0.074, -0.0141]} rotation={[Math.PI, 0, 0]}><shapeGeometry args={[pill(0.035, 0.014), 12]} />
+      {/* plateau after Carlos's Duo reference renders: 59 x 22.5 mm, 2.5 mm in from the top and free edges, with a soft
+          wide shoulder (a low skirt under a well rounded top) so it blends into the back as a fillet */}
+      <group position={[W - 0.32, H / 2 - 0.1375, -T / 2]}>
+        <mesh rotation={[Math.PI, 0, 0]} castShadow><extrudeGeometry args={[pill(0.562, 0.197), { depth: 0.005, bevelEnabled: true, bevelThickness: 0.009, bevelSize: 0.014, bevelSegments: 10, curveSegments: 48 }]} />{plateauMat}</mesh>
+        <mesh rotation={[Math.PI, 0, 0]}><extrudeGeometry args={[pill(0.57, 0.205), { depth: 0.0001, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.022, bevelSegments: 8, curveSegments: 48 }]} />{glassBack}</mesh>
+        {[0.187, -0.002].map(x => (
+          <group key={x} position={[x, 0, -0.0139]}><RearLens d={0.17} rise={0.0211} frame={f.frame} /></group>))}
+        <mesh position={[-0.175, 0.045, -0.0141]} rotation={[Math.PI, 0, 0]}><shapeGeometry args={[pill(0.028, 0.012), 12]} />
           <meshPhysicalMaterial color="#1a1b1f" roughness={0.25} clearcoat={1} /></mesh>
       </group>
       {/* logo spot: centre of the right half's back; user-supplied art only */}
@@ -284,8 +290,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
         <mesh key={`${x0}${i}`} position={[x0 + 0.01 + i * 0.022, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}>
           <circleGeometry args={[0.0065, 12]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>)))}
       {/* bottom edge mic holes (reference), 35 and 51 mm from the hinge, on both halves */}
-      {[0.354, 0.51].map(x => (
-        <mesh key={x} position={[x, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}><circleGeometry args={[0.0055, 16]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
+      {[0.354, 0.51].map(x => <Screw key={x} x={x} />)}
       {/* internal hinge spine: a rounded cover on the pivot axis, revealed between the halves as they fold (see spineGeo) */}
       <mesh ref={spineM} position={[0, 0, T / 2 + GAP]} castShadow><meshPhysicalMaterial color={f.frame} metalness={0.85} roughness={0.42} clearcoat={0.15} /></mesh>
       {/* ---------- left half (swings) ---------- */}
@@ -294,15 +299,17 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
           <mesh geometry={g.leftBody} castShadow>{frameMat}</mesh>
           <mesh geometry={g.railL} castShadow>{frameMat}</mesh>
           <mesh geometry={g.leftBody} material={bandMat} renderOrder={1} />
-          {[-0.354, -0.51].map(x => (
-            <mesh key={x} position={[x, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}><circleGeometry args={[0.0055, 16]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
+          {[-0.354, -0.51].map(x => <Screw key={x} x={x} />)}
           {/* USB-C on the bottom edge, about 43 mm from the hinge */}
           <mesh position={[-0.43, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}>
             <shapeGeometry args={[USB_SHAPE]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>
-          {/* top edge speaker grille, 36 to 51 mm from the hinge */}
+          {/* the port's metal tongue inside the black outline, as in the reference (not a solid black slot) */}
+          <mesh position={[-0.43, -H / 2 - EO - 0.0005, 0]} rotation={[Math.PI / 2, 0, 0]}>
+            <shapeGeometry args={[USB_TONGUE]} /><meshStandardMaterial color={f.frame} metalness={0.85} roughness={0.3} side={THREE.DoubleSide} /></mesh>
+          {/* top edge speaker grille, 36 to 51 mm from the hinge: open rings as in the reference, not solid dots */}
           {[0, 1, 2, 3, 4, 5].map(i => (
             <mesh key={i} position={[-0.365 - i * 0.028, H / 2 + EO + 0.0003, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-              <circleGeometry args={[0.007, 12]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>))}
+              <ringGeometry args={[0.0042, 0.0068, 20]} /><meshBasicMaterial color="#141518" side={THREE.DoubleSide} /></mesh>))}
           <mesh geometry={g.bezelL} position={[0, 0, zf]}><meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
           <mesh name="screen" geometry={g.scrL} position={[0, 0, zf + E]}><primitive object={mats.moving} attach="material" /></mesh>
           {/* outer display on the back, cover glass then screen */}
@@ -536,5 +543,12 @@ function rrC(w: number, h: number, r: number[], cx = 0) {
   const k = [w, h, ...r, cx].join('|'); let s = shapeCache.get(k)
   if (!s) shapeCache.set(k, s = rrect(w, h, r, cx)); return s
 }
-const USB_SHAPE = pill(0.09, 0.028)
+const USB_SHAPE = pill(0.09, 0.028), USB_TONGUE = pill(0.078, 0.017)
+/** Bottom edge screw (reference): a frame-coloured head in a thin dark ring, 1.1 mm across. */
+function Screw({ x }: { x: number }) {
+  return <group position={[x, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}>
+    <mesh><ringGeometry args={[0.0038, 0.0055, 20]} /><meshBasicMaterial color="#1a1b1e" side={THREE.DoubleSide} /></mesh>
+    <mesh position={[0, 0, 0.0001]}><circleGeometry args={[0.0012, 10]} /><meshBasicMaterial color="#2a2b2f" side={THREE.DoubleSide} /></mesh>
+  </group>
+}
 export default memo(Duo)
