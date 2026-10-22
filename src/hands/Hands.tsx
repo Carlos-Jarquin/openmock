@@ -4,8 +4,8 @@
 // the device body (a rounded-box distance field built from the device's own measurements), so the grip fits
 // the 18 Pro and the 18 Pro Max at their real sizes. The hands sit inside the device group, so they follow
 // any camera angle.
-import { Suspense, useEffect, useMemo, useRef } from 'react'
-import { useGLTF } from '@react-three/drei'
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useGLTF, useTexture } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import { spectralMaterials, buildSpectral, reskinSpectral, updateSpectral, addHull, removeHull, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
 import { LINE_LAYER } from '../sketch/Sketch'
@@ -62,6 +62,8 @@ export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] =>
 export const poseOk = (f: HandFit | null | undefined, p: HandPose) => p === 'off' || posesFor(f).some(([k]) => k === p)
 
 import { HAND_LOOK0, nailGeometry, nailMaterial, type HandLook, type NailFit } from './nails'
+import { REALISTIC_URLS, aoWeights, prepareSkinMaps, realisticArmMaterial, realisticHandMaterial } from './realisticSkin'
+const SKIN_URLS: string[] = [...REALISTIC_URLS]
 const URL_R = '/hands/right.glb', URL_L = '/hands/left.glb'
 const HAND_SCALE = 10 * 1.05   // asset is in metres; 1.05 gives an average adult hand, about 180 mm wrist to fingertip
 const FINGERS = ['index-finger', 'middle-finger', 'ring-finger', 'pinky-finger'] as const
@@ -417,6 +419,7 @@ function makeRig(src: THREE.Object3D): Rig {
   // hand did nothing); a sphere that always passes lets the skinned, per-triangle raycast find the posed skin
   m.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e4)
   m.userData.hand = true   // the AI hands pass finds hand meshes by this
+  if (!m.geometry.getAttribute('tangent')) { try { m.geometry.computeTangents() } catch { /* classic skin does not sample a normal map */ } }
   // owner[v] = name of the bone with the largest weight on vertex v
   const si = m.geometry.getAttribute('skinIndex'), sw = m.geometry.getAttribute('skinWeight'), owner: string[] = []
   for (let v = 0; v < si.count; v++) {
@@ -750,8 +753,8 @@ function armFrame(rig: Rig, F: THREE.Vector3, N: THREE.Vector3) {
 
 // ---------- forearm ----------
 // The hand models stop at the wrist, which shows as a flat cut whenever the arm points at the camera. A tapered,
-// slightly flattened tube continues the wrist back along the arm, out of frame. It shares the skin material and is
-// tagged as hand, so the AI hands mask covers it too.
+// slightly flattened tube continues the wrist back along the arm, out of frame. Classic shares the skin material;
+// realistic uses its own pore material, because the lathe unwrap is not the hand atlas. Tagged as hand, so the AI hands mask covers it too.
 let armGeo: THREE.BufferGeometry | null = null
 /** Side-to-side widening of the forearm tube at distance y past the wrist joint. */
 function armWide(y: number) { return 1 + 0.36 * (1 - THREE.MathUtils.smoothstep(y, 0.1, 1.0)) }
@@ -770,6 +773,7 @@ function forearmGeometry() {
   const gp = armGeo.getAttribute('position')
   for (let i = 0; i < gp.count; i++) { const y = gp.getY(i); gp.setX(i, gp.getX(i) * armWide(y)); gp.setZ(i, gp.getZ(i) * armDeep(y)) }
   armGeo.computeVertexNormals()
+  try { armGeo.computeTangents() } catch { /* the classic forearm has no normal map */ }
   // effect data: the arm reads as solid (aMass), aArm is the distance past the wrist for the Arm off fade, aCut is unused
   const ap = armGeo.getAttribute('position'), aa = new Float32Array(ap.count)
   for (let i = 0; i < ap.count; i++) aa[i] = Math.max(0, ap.getY(i))
@@ -806,13 +810,29 @@ export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTR
 function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture; sp: SpectralOptions; rot: HandRot; idle: IdleLevel; look: HandLook }) {
   const motion = useMemo(() => ({ right: new HandMotion(), left: new HandMotion() }), [])
   const right = useGLTF(URL_R), left = useGLTF(URL_L)
+  const skinTex = useTexture(SKIN_URLS)
+  const { gl } = useThree()
+  useLayoutEffect(() => {
+    prepareSkinMaps(skinTex)
+    const max = gl.capabilities.getMaxAnisotropy()
+    for (const t of skinTex) t.anisotropy = max
+  }, [skinTex, gl])
   const group = useRef<THREE.Group>(null)
   const rigs = useMemo(() => ({ right: makeRig(right.scene), left: makeRig(left.scene) }), [right.scene, left.scene])
   const spectral = tone === 'spectral'
   const spm = useMemo<SpectralMats | null>(() => spectral ? spectralMaterials(SPECTRAL_DEFAULTS) : null, [spectral])
   useEffect(() => () => spm?.dispose(), [spm])
-  const mat = useMemo(() => spm ? spm.body : skinMaterial(tone), [tone, spm])
+  const photoSkin = tone !== 'spectral' && tone !== 'silhouette'
+  const realistic = photoSkin && (look.style ?? 'realistic') !== 'classic'
+  const toneRec = SKIN_TONES[tone] ?? SKIN_TONES.fair
+  const mat = useMemo(() => {
+    if (spm) return spm.body
+    if (realistic) return realisticHandMaterial(toneRec, skinTex)
+    return skinMaterial(tone)
+  }, [tone, spm, realistic, skinTex, toneRec])
+  const armMat = useMemo(() => realistic ? realisticArmMaterial(toneRec, skinTex[4]) : null, [realistic, toneRec, skinTex])
   useEffect(() => () => { if (!spm) mat.dispose() }, [mat, spm])
+  useEffect(() => () => { armMat?.dispose() }, [armMat])
   // live uniforms: tint, transparency and the three effects
   useEffect(() => { if (!spm) return
     spm.tint.set(sp.tint); spm.setLine(sp.line ?? sp.tint); spm.setBlur(sp.seeBlur ?? 0.85)
@@ -820,7 +840,18 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     u.uMass.value = sp.mass ?? 0; u.uGlow.value = sp.glow ? 1 : 0; u.uRim.value = sp.rim ? 1 : 0; u.uContours.value = sp.contours ? 1 : 0
     const fade = look.arm === false ? 1 : 0; u.uArmFade.value = fade; spm.hull.uniforms.uArmFade.value = fade
   }, [spm, sp.tint, sp.line, sp.seeBlur, sp.transparency, sp.glimmer, sp.shimmer, sp.stars, sp.mass, sp.glow, sp.rim, sp.contours, look.arm])
-  const { size, gl } = useThree()
+  const { size } = useThree()
+  const aoTarget = useRef(new THREE.Vector4())
+  useLayoutEffect(() => {
+    const mix = mat.userData.aoMix as THREE.Vector4 | undefined
+    if (mix) aoWeights(pose, mix)
+  }, [mat])
+  useFrame((_, dt) => {
+    const mix = mat.userData.aoMix as THREE.Vector4 | undefined
+    if (!mix) return
+    aoWeights(pose, aoTarget.current)
+    mix.lerp(aoTarget.current, 1 - Math.exp(-5 * Math.min(0.05, dt)))
+  })
   useFrame(({ clock }, dt) => {
     for (const side of ['right', 'left'] as const) if (motion[side].step(dt, clock.elapsedTime, idle) && spm && rigs[side].root.parent) reskinSpectral(rigs[side].mesh)
   })
@@ -864,15 +895,19 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   // Arm on: the hand cross-fades into the forearm over its last 11 mm, so the two shadings meet without a ring.
   const fadeFrom = useMemo(() => ({ value: 0.08 }), [])
   fadeFrom.value = armOff ? 0 : 0.08
-  const handMat = useMemo(() => { if (spm) return mat
+  const realisticFade = mat.userData.fadeFrom as { value: number } | undefined
+  const realisticMask = mat.userData.maskAmt as { value: number } | undefined
+  if (realisticFade) realisticFade.value = armOff ? 0 : 0.08
+  if (realisticMask) realisticMask.value = armOff ? 1 : 0
+  const handMat = useMemo(() => { if (spm || realistic) return mat
     const m2 = (mat as THREE.MeshPhysicalMaterial).clone(); m2.transparent = true; m2.depthWrite = true
     m2.onBeforeCompile = sh => { sh.uniforms.uFadeFrom = fadeFrom
       sh.vertexShader = 'attribute float aArm; varying float vArm;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvArm = aArm;')
       sh.fragmentShader = 'uniform float uFadeFrom; varying float vArm;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.a *= 1.0 - smoothstep(uFadeFrom, 0.19, vArm);\nif (gl_FragColor.a < 0.01) discard;') }
-    m2.customProgramCacheKey = () => 'hand-fade'; return m2 }, [mat, spm, fadeFrom])
+    m2.customProgramCacheKey = () => 'hand-fade'; return m2 }, [mat, spm, realistic, fadeFrom])
   useEffect(() => () => { if (handMat !== mat) handMat.dispose() }, [handMat, mat])
   useEffect(() => { rigs.right.mesh.material = handMat; rigs.left.mesh.material = handMat }, [rigs, handMat])
-  useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = true; m.receiveShadow = true; m.userData.hand = true; m.userData.sketchEdges = false; m.userData.armOff = armOff } }, [arms, mat, armOff])
+  useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = armMat ?? mat; m.castShadow = true; m.receiveShadow = true; m.userData.hand = true; m.userData.sketchEdges = false; m.userData.armOff = armOff } }, [arms, mat, armMat, armOff])
   useEffect(() => {
     const g = group.current; if (!g) return
     const mk = (flat: number) => plans(pose, fit, ges, nailLen, flat + padK().flat, look.size).map(pl => rotatePlan(pl, rot))
@@ -929,6 +964,6 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   useEffect(() => () => { const g = group.current; for (const side of ['right', 'left'] as const) g?.remove(rigs[side].root, arms[side]); solved.current = {} }, [rigs, arms])
   return <group ref={group} userData={{ noBounds: true }} />
 }
-useGLTF.preload(URL_R); useGLTF.preload(URL_L)
+useGLTF.preload(URL_R); useGLTF.preload(URL_L); useTexture.preload(SKIN_URLS)
 
 if (import.meta.hot) import.meta.hot.dispose(() => { poreTex?.dispose(); poreTex = null; armGeo?.dispose(); armGeo = null })

@@ -42,6 +42,31 @@ Each pose places the hand next to the phone, rests the palm on it, then bends ea
 
 The hand models are the MIT-licensed WebXR "generic-hand" assets (see CREDITS.md), so they ship in `public/hands/`. They are fairly low detail, so close-ups show some faceting.
 
+### Realistic hands
+
+Hand → Appearance → Hand style switches photographic skin between **Realistic** (the default) and **Classic** (the original smooth material). Silhouette and Spectral keep their own materials either way. Realistic is on by default.
+
+Realistic skin is a `MeshPhysicalMaterial` (`src/hands/realisticSkin.ts`), so the orbit camera and the lighting controls (intensity, direction, height, contact shadow, the studio HDRI) still shade the hand. Matte, in Sketch, still strips sheen, clearcoat, specular and the environment reflection. A wrapped diffuse lobe and a thickness backlight stand in for subsurface scatter. Pose occlusion crossfades when the gesture changes.
+
+The maps are baked offline from the same MIT mesh. Blender is not required. `scripts/bake-hands.mjs` poses the hand, ray-traces ambient occlusion for rest, grip, point and flat, and writes:
+
+| File | Contents |
+| --- | --- |
+| `public/hands/realistic/albedo.webp` | Colour variation. Multiplied by the skin-tone swatch, so the swatches still drive the colour. |
+| `normal.webp` | Tangent-space pores, knuckle wrinkles and palm creases. |
+| `surface.webp` | Thickness (R), roughness (G), wrist mask (B). |
+| `ao.webp` | Rest, grip, point and flat occlusion, one channel each. |
+| `pores.webp` | A tileable normal for the forearm. The forearm is a lathe and does not share the hand unwrap. |
+
+Re-bake after changing the script:
+
+```
+npm install
+npm run bake-hands
+```
+
+`sharp` is a dev dependency. The script also writes preview PNGs under `/tmp/hand-preview/`. The mesh is the original generic hand (about 1,360 vertices), so the silhouette stays that resolution; the maps carry the skin detail.
+
 ### Photoreal hands (ComfyUI)
 
 "Make hands photoreal" sends the current view to a ComfyUI running on this Mac (port 8188, reached through the dev server at `/comfyui-api`; set `COMFY_URL` to use another address). ComfyUI repaints only the hands with `comfy/hands.json`: Z-Image Turbo (`z_image_turbo_bf16.safetensors`, `qwen_3_4b.safetensors` text encoder, `ae.safetensors` VAE) with the Z-Image Turbo Fun ControlNet Union 2.1 (`model_patches/`), guided by the hand depth map or the OpenPose hand skeleton, inpainting the hand mask only. About 100 s per picture on an M3 Max after the first load.
