@@ -125,29 +125,30 @@ function physical(tone: SkinTone, color: THREE.Color, extra: THREE.MeshPhysicalM
   return new THREE.MeshPhysicalMaterial({
     color,
     metalness: 0,
-    roughness: 0.78,
-    specularIntensity: 0.65,
+    // Dry skin. The roughness map still varies the pores, but a high floor keeps the
+    // specular lobe from turning the palm glossy under the studio key.
+    roughness: 0.94,
+    specularIntensity: 0.14,
     ior: 1.4,
-    sheen: 0.34,
-    sheenRoughness: 0.52,
+    sheen: 0.16,
+    sheenRoughness: 0.7,
     sheenColor: sheen,
-    clearcoat: 0.03,
-    clearcoatRoughness: 0.55,
+    clearcoat: 0,
+    clearcoatRoughness: 1,
     ...extra,
   })
 }
 
 /** Hand atlas. Colour is the model's albedo, nudged by the skin-tone swatch. */
 export function realisticHandMaterial(tone: SkinTone, maps: THREE.Texture[]) {
-  const [albedo, normal, roughness, specular] = maps
+  const [albedo, normal, roughness] = maps
   const fadeFrom = { value: 0.08 }
   const maskAmt = { value: 0 }
   const mat = physical(tone, toneGain(tone.color), {
     map: albedo,
     normalMap: normal,
-    normalScale: new THREE.Vector2(0.85, 0.85),
+    normalScale: new THREE.Vector2(0.32, 0.32),
     roughnessMap: roughness,
-    specularIntensityMap: specular,
   })
   mat.transparent = true
   mat.depthWrite = true
@@ -157,13 +158,13 @@ export function realisticHandMaterial(tone: SkinTone, maps: THREE.Texture[]) {
     uFadeFrom: fadeFrom,
     uMaskAmt: maskAmt,
   })
-  mat.customProgramCacheKey = () => 'om-elena-hand-2'
+  mat.customProgramCacheKey = () => 'om-elena-hand-3'
   return mat
 }
 
 /** Forearm lathe. Flat colour taken from the hand albedo, same sheen and backlight, no pore tile. */
 export function realisticArmMaterial(tone: SkinTone) {
-  const mat = physical(tone, CUFF.clone().multiply(toneGain(tone.color)), { roughness: 0.72, clearcoat: 0.015, sheen: 0.22 })
+  const mat = physical(tone, CUFF.clone().multiply(toneGain(tone.color)), { roughness: 0.92, specularIntensity: 0.1, sheen: 0.12 })
   mat.onBeforeCompile = (shader) => compileSkin(shader as SkinShader, 'arm', {})
   mat.customProgramCacheKey = () => 'om-elena-arm-1'
   return mat

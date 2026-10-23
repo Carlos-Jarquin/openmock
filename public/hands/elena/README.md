@@ -13,7 +13,7 @@ The conversion, done in headless Blender 4 with `automatic_bone_orientation` lef
 1. Keep the deform bones only. Vertex groups are `pulse`, `hand`, and each finger's base / 01 / 02 / 03. The `*_Ctrl*` bones have no weights and are deleted.
 2. Unparent every deform bone so its rest matrix stays in armature space. Rename them to the WebXR generic-hand names the solver already uses (`wrist`, `index-finger-phalanx-proximal`, `thumb-metacarpal`, and so on). `pulse` becomes `forearm` and keeps the wrist cuff skinned. It is not a posed joint.
 3. Add a tip bone at each distal end (`index-finger-tip`, `thumb-tip`, …). The solver aims those joints. They carry no weights.
-4. The thumb has an extra middle phalanx (`thumb_02`, named `thumb-phalanx-intermediate`). The WebXR thumb has no middle joint, so the solver does not curl it on its own. `followThumbMid` in `Hands.tsx` poses it with the proximal bone. The distal bone still bends the tip, and the skin stays in one piece. Re-rigging the weights onto three thumb bones would have thrown away that joint.
+4. The thumb has an extra middle phalanx (`thumb_02`, named `thumb-phalanx-intermediate`). The WebXR thumb has three curls and no middle joint. `poseThumb` in `Hands.tsx` shares those curls across the four Elena joints. The metacarpal and the short proximal bone stay near the sculpted rest (they are already bent, and more flexion there candy-wraps the thenar). The intermediate and distal joints take the grip. `followThumbMid` only runs if that pose has not happened yet.
 5. Limit skin weights to four influences per vertex (the FBX uses up to seven; glTF skinning here is four).
 6. Scale about the wrist so the wrist-to-middle-fingertip length is 178 mm, the same as `public/hands/right.glb`. `HAND_SCALE` then makes Realistic and Classic the same size, and the contact radii still fit.
 7. Mirror on X for the left hand. Bone names stay the same. The solver's palm normal flips with the hand side.
@@ -27,9 +27,16 @@ Positive curl still closes toward the palm. That was checked by hinging the midd
 | --- | --- | --- |
 | `albedo.webp` | `hand_Co.jpeg` | sRGB colour. WebP quality 84. |
 | `normal.webp` | `hand_No.png` | Tangent-space normal, OpenGL Y. Lossless WebP. |
-| `roughness.webp` | `hand_Ro.jpeg` | Linear roughness. WebP quality 82. |
-| `specular.webp` | `hand_Sp.jpeg` | Lifted with `0.22 + 0.78 * source` so the nearly black skin texels still read as satin. WebP quality 80. |
+| `roughness.webp` | `hand_Ro.jpeg` | Linear roughness, lifted (`min(255, 48 + 0.88 * source)` for texels at or above 20) so the pores stay matte instead of satin. WebP quality 82. |
+| `specular.webp` | `hand_Sp.jpeg` | Kept for reference. The hand material does not sample it. |
+| `studio.webp` | Cycles bake of this mesh | Fully lit colour for the Studio style. See below. WebP quality 86. |
 
 UVs are the glTF set, so the textures load with `flipY` off. The forearm is still the procedural lathe; it does not share this unwrap, and it uses the albedo's average skin colour instead of a second texture. Crease occlusion is not baked. The earlier procedural skin maps read as blotches, so they are not used.
 
-`MeshPhysicalMaterial` samples these maps, with a wrapped diffuse lobe, a small warm backlight, and a light sheen. Matte still clears specular, sheen, clearcoat and the environment reflection.
+`MeshPhysicalMaterial` (Realistic) samples colour, normal and roughness. Roughness is high, specular is low, clearcoat is off, and the normal map is scaled down, so the skin reads dry under the studio key. A wrapped diffuse lobe and a small warm backlight stay. Matte still clears specular, sheen and the environment reflection.
+
+## Studio
+
+`studio.webp` is a lighting bake of this same mesh, so it is CC BY-SA 4.0 as well. Headless Blender 4 Cycles (CPU, no denoiser) lit the open hand with a large soft key, a gentler fill, a dim back light and a little subsurface, and baked the diffuse illumination without the albedo. That lighting image was scaled into a soft range and multiplied by `hand_Co`, so the creases stay and the highlights do not clip. One neutral pose is enough: the light is even, so a curled finger does not pick up a hard shadow from the open-hand bake.
+
+In the app, Studio is a `MeshBasicMaterial` (`src/hands/studioSkin.ts`). It does not read the scene lights, the HDRI, or the lighting controls. The skin-tone swatch still tints the bake. A short fresnel stands in for a soft rim. The wrist cuff fades out through the existing `aArm` attribute instead of meeting the forearm tube. Matte has nothing glossy to remove.
