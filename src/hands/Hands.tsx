@@ -791,11 +791,11 @@ function forearmGeometry() {
   return armGeo
 }
 const _ax = new THREE.Vector3(), _ay = new THREE.Vector3(), _az = new THREE.Vector3(), _mb = new THREE.Matrix4()
-function placeArm(mesh: THREE.Mesh, rig: Rig) {
+function placeArm(mesh: THREE.Mesh, rig: Rig, shift = 0) {
   const a = rig.root.userData.arm as { at: THREE.Vector3; dir: THREE.Vector3; n: THREE.Vector3 } | undefined
   if (!a) { mesh.visible = false; return }
   _ay.copy(a.dir).normalize(); _az.copy(a.n).addScaledVector(_ay, -a.n.dot(_ay)).normalize(); _ax.crossVectors(_ay, _az)
-  _mb.makeBasis(_ax, _ay, _az); mesh.quaternion.setFromRotationMatrix(_mb); mesh.position.copy(a.at); mesh.visible = true
+  _mb.makeBasis(_ax, _ay, _az); mesh.quaternion.setFromRotationMatrix(_mb); mesh.position.copy(a.at).addScaledVector(_ay, shift); mesh.visible = true
 }
 
 /** Wraps the device: turns it for landscape and adds the posed hands, which Centred leaves out of its bounds. */
@@ -900,7 +900,10 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   fadeFrom.value = armOff ? 0 : 0.08
   const realisticFade = mat.userData.fadeFrom as { value: number } | undefined
   const realisticMask = mat.userData.maskAmt as { value: number } | undefined
-  if (realisticFade) realisticFade.value = armOff ? 0 : 0.08
+  // The Elena cuff is a solid sculpt. Fading it while the arm is on made the lower palm translucent
+  // over the forearm tube. The fade is only for Arm off, where the open rim has to disappear.
+  if (realisticFade) realisticFade.value = armOff ? 0 : 2
+  if (mat.userData.fadeFrom && mat.transparent !== armOff) { mat.transparent = armOff; mat.depthWrite = true; mat.needsUpdate = true }
   if (realisticMask) realisticMask.value = armOff ? 1 : 0
   const handMat = useMemo(() => { if (spm || realistic) return mat
     const m2 = (mat as THREE.MeshPhysicalMaterial).clone(); m2.transparent = true; m2.depthWrite = true
@@ -931,7 +934,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
         for (let k = 1, flat = nailLen; nailsOn && k <= 4 && (r.root.userData.nailClear ?? 1) < need; k++) {
           flat += 0.3; pl = { ...mk(flat)[li], thumbFace: 0.08 * k }; solve(r, pl, fit, look.size, nailLen); const sc = score(); if (sc < best.s) best = { s: sc, pl } }
         if (best.pl !== pl) { pl = best.pl; solve(r, pl, fit, look.size, nailLen) }
-        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); arms[pl.side].scale.set(build * look.size, look.size, build * look.size); if (!armOff) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
+        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r, realistic ? 0.16 : 0); arms[pl.side].scale.set(build * look.size, look.size, build * look.size); if (!armOff) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
         const touching = new Set<string>([...(pl.thumb.touch ? ['thumb'] : []), ...pl.fingers.flatMap((f, i) => f.touch ? [FINGERS[i]] : [])])
         m.capture(r.root, r.bones, r.rest, touching, arms[pl.side], animate)
       }

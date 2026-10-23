@@ -14,7 +14,7 @@ export const ELENA_URLS: string[] = [
 /** SKIN_TONES.fair. The albedo already is a skin colour, so fair leaves it unchanged and the other swatches scale it. */
 const FAIR = new THREE.Color('#dfa98a')
 /** Average of the albedo's skin texels, for the forearm lathe, which does not share the hand unwrap. */
-const CUFF = new THREE.Color('#986c56')
+const CUFF = new THREE.Color('#8d624f')
 
 export function toneGain(color: string) {
   const c = new THREE.Color(color)
@@ -112,7 +112,7 @@ float gThin;
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <dithering_fragment>',
       `#include <dithering_fragment>
-gl_FragColor.a *= mix( 1.0, gMask, uMaskAmt ) * ( 1.0 - smoothstep( uFadeFrom, 0.19, vArm ) );
+gl_FragColor.a *= mix( 1.0, gMask, uMaskAmt ) * ( 1.0 - smoothstep( uFadeFrom, uFadeFrom + 0.11, vArm ) );
 if ( gl_FragColor.a < 0.01 ) discard;`,
     )
   }
@@ -157,13 +157,13 @@ export function realisticHandMaterial(tone: SkinTone, maps: THREE.Texture[]) {
     uFadeFrom: fadeFrom,
     uMaskAmt: maskAmt,
   })
-  mat.customProgramCacheKey = () => 'om-elena-hand-1'
+  mat.customProgramCacheKey = () => 'om-elena-hand-2'
   return mat
 }
 
 /** Forearm lathe. Flat colour taken from the hand albedo, same sheen and backlight, no pore tile. */
 export function realisticArmMaterial(tone: SkinTone) {
-  const mat = physical(tone, CUFF.clone().multiply(toneGain(tone.color)), { roughness: 0.62 })
+  const mat = physical(tone, CUFF.clone().multiply(toneGain(tone.color)), { roughness: 0.72, clearcoat: 0.015, sheen: 0.22 })
   mat.onBeforeCompile = (shader) => compileSkin(shader as SkinShader, 'arm', {})
   mat.customProgramCacheKey = () => 'om-elena-arm-1'
   return mat

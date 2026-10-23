@@ -17,7 +17,7 @@ The conversion, done in headless Blender 4 with `automatic_bone_orientation` lef
 5. Limit skin weights to four influences per vertex (the FBX uses up to seven; glTF skinning here is four).
 6. Scale about the wrist so the wrist-to-middle-fingertip length is 178 mm, the same as `public/hands/right.glb`. `HAND_SCALE` then makes Realistic and Classic the same size, and the contact radii still fit.
 7. Mirror on X for the left hand. Bone names stay the same. The solver's palm normal flips with the hand side.
-8. Export glTF (Y-up, no materials) and compress with meshopt (`EXT_meshopt_compression` + `KHR_mesh_quantization`). The app's glTF loader already includes a meshopt decoder, so nothing is fetched from a CDN to decode the mesh. Position quantization is undone by the inverse bind matrices; rest-pose skinning lands on the original vertex positions.
+8. Export glTF (Y-up, no materials) and compress the buffers with meshopt (`EXT_meshopt_compression`). Normals, UVs and weights are quantized. Positions stay in metres: the grip solver measures the bind pose for the wrist fade and for girth, and a unit-volume position quantization made that fade eat the palm. The app's glTF loader already includes a meshopt decoder, so nothing is fetched from a CDN.
 
 Positive curl still closes toward the palm. That was checked by hinging the middle finger in armature space: the tip moved along the palm normal and the skin stayed continuous.
 
