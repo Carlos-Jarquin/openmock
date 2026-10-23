@@ -7,6 +7,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LINE_LAYER } from '../sketch/Sketch'
+import { skinAll, skinCache, type SkinCache } from './skinFast'
 
 /** mass: 0 to 1, darker and denser where the hand has more volume. glow: a soft inner light where it is thin (fingertips,
  *  webbing). rim: a crisp white edge light. contours: faint level lines across the skin. Older saves lack the new keys. */
@@ -318,8 +319,10 @@ export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: Spect
   const prep = armOff && fa ? { ...prep1, segs: prep1.segs.filter(s => !far(s[0]) && !far(s[3])), rings: prep1.rings.filter(r => !r.some(q => far(q[0]))) } : prep1
   let top: THREE.Object3D = mesh; while (top.parent) top = top.parent
   top.updateMatrixWorld(true); mesh.skeleton.update()
-  const N = mesh.geometry.getAttribute('position').count, sk = new Float32Array(N * 3), v = new THREE.Vector3()
-  for (let i = 0; i < N; i++) { mesh.getVertexPosition(i, v); sk[i * 3] = v.x; sk[i * 3 + 1] = v.y; sk[i * 3 + 2] = v.z }
+  const N = mesh.geometry.getAttribute('position').count, sk = new Float32Array(N * 3)
+  let cache = mesh.userData.skinCache as SkinCache | undefined
+  if (!cache || cache.count !== N) cache = mesh.userData.skinCache = skinCache(mesh)
+  skinAll(mesh, cache, sk)
   const P = (i: number, j: number, t: number, o: number[]) => { for (let k = 0; k < 3; k++) o.push(sk[i * 3 + k] + (sk[j * 3 + k] - sk[i * 3 + k]) * t) }
   const cr: number[] = []; for (const s of prep.segs) { P(s[0], s[1], s[2], cr); P(s[3], s[4], s[5], cr) }
   for (const [a, b, c, u, w] of prep.bary) for (let k = 0; k < 3; k++) cr.push(sk[a * 3 + k] * (1 - u - w) + sk[b * 3 + k] * u + sk[c * 3 + k] * w)
@@ -345,22 +348,147 @@ export function buildSpectral(mesh: THREE.SkinnedMesh, owner: string[], m: Spect
 /** Re-skins the lines in place for the pose the bones hold now. The hand's motion layer springs the bones after each
  *  solve, so lines baked only at the solve were left at an old pose: stacked, stale thumb outlines over the moving skin. */
 export function reskinSpectral(mesh: THREE.SkinnedMesh) {
+  const t0 = import.meta.env.DEV ? performance.now() : 0
   const st = mesh.userData.spectralLines as LineState | undefined; if (!st || !st.lines.parent) return
   let top: THREE.Object3D = mesh; while (top.parent) top = top.parent
   top.updateMatrixWorld(true); mesh.skeleton.update()
-  const sk = st.skinned, N = sk.length / 3, v = new THREE.Vector3()
-  for (let i = 0; i < N; i++) { mesh.getVertexPosition(i, v); sk[i * 3] = v.x; sk[i * 3 + 1] = v.y; sk[i * 3 + 2] = v.z }
+  const sk = st.skinned, N = sk.length / 3
+  let cache = mesh.userData.skinCache as SkinCache | undefined
+  if (!cache || cache.count !== N) cache = mesh.userData.skinCache = skinCache(mesh)
+  skinAll(mesh, cache, sk)
   const cr = st.creases; let o = 0
   const P = (i: number, j: number, t: number) => { for (let k = 0; k < 3; k++) cr[o++] = sk[i * 3 + k] + (sk[j * 3 + k] - sk[i * 3 + k]) * t }
   for (const g of st.prep.segs) { P(g[0], g[1], g[2]); P(g[3], g[4], g[5]) }
   for (const [a, b, c, u, w] of st.prep.bary) for (let k = 0; k < 3; k++) cr[o++] = sk[a * 3 + k] * (1 - u - w) + sk[b * 3 + k] * u + sk[c * 3 + k] * w
   st.prep.rings.forEach((r, ri) => { const a = st.rings[ri]; r.forEach(([x, y, z, u, w], i) => { for (let k = 0; k < 3; k++) a[i * 3 + k] = sk[x * 3 + k] * (1 - u - w) + sk[y * 3 + k] * u + sk[z * 3 + k] * w }) })
   st.camKey = ''   // the silhouette is redrawn on the next updateSpectral
+  if (import.meta.env.DEV) ((globalThis as { __reskinLog?: number[] }).__reskinLog ??= []).push(performance.now() - t0)
 }
 
 const _cam = new THREE.Vector3(), _inv = new THREE.Matrix4()
+const _ray = new THREE.Ray(), _va = new THREE.Vector3(), _vb = new THREE.Vector3(), _vc = new THREE.Vector3(), _hit = new THREE.Vector3()
+interface TriAccel { cell: number; ox: number; oy: number; oz: number; nx: number; ny: number; nz: number; offs: Int32Array; ids: Int32Array; stamp: Int32Array; stampId: number; range: Int32Array; ok: boolean }
+let triAccel: TriAccel | null = null
+let triCursor = new Int32Array(0)
+/** Triangle grid for the thumb-outline occlusion rays. Rebuilt when the skin moves; a ray only tests the cells it crosses. */
+function triGrid(sk: Float32Array, tris: Uint32Array): TriAccel {
+  const cell = 0.02, T = tris.length / 3
+  let minx = Infinity, miny = Infinity, minz = Infinity, maxx = -Infinity, maxy = -Infinity, maxz = -Infinity
+  for (let i = 0; i < sk.length; i += 3) {
+    const x = sk[i], y = sk[i + 1], z = sk[i + 2]
+    if (x < minx) minx = x; if (y < miny) miny = y; if (z < minz) minz = z
+    if (x > maxx) maxx = x; if (y > maxy) maxy = y; if (z > maxz) maxz = z
+  }
+  minx -= cell; miny -= cell; minz -= cell; maxx += cell; maxy += cell; maxz += cell
+  const nx = Math.max(1, Math.ceil((maxx - minx) / cell)), ny = Math.max(1, Math.ceil((maxy - miny) / cell)), nz = Math.max(1, Math.ceil((maxz - minz) / cell))
+  const cells = nx * ny * nz
+  let a = triAccel
+  if (!a || a.offs.length < cells + 1 || a.stamp.length < T || a.range.length < T * 6) {
+    a = { cell, ox: minx, oy: miny, oz: minz, nx, ny, nz, offs: new Int32Array(cells + 1), ids: new Int32Array(Math.max(T * 8, 1)), stamp: new Int32Array(T), stampId: 1, range: new Int32Array(T * 6), ok: false }
+    triAccel = a
+  }
+  a.cell = cell; a.ox = minx; a.oy = miny; a.oz = minz; a.nx = nx; a.ny = ny; a.nz = nz
+  a.ok = Number.isFinite(minx) && cells <= 250000 && T > 0
+  if (!a.ok) return a
+  const counts = a.offs
+  counts.fill(0)
+  const clamp = (v: number, hi: number) => v < 0 ? 0 : v > hi ? hi : v
+  const range = a.range
+  for (let t = 0; t < T; t++) {
+    const ia = tris[t * 3] * 3, ib = tris[t * 3 + 1] * 3, ic = tris[t * 3 + 2] * 3
+    const xMin = Math.min(sk[ia], sk[ib], sk[ic]), xMax = Math.max(sk[ia], sk[ib], sk[ic])
+    const yMin = Math.min(sk[ia + 1], sk[ib + 1], sk[ic + 1]), yMax = Math.max(sk[ia + 1], sk[ib + 1], sk[ic + 1])
+    const zMin = Math.min(sk[ia + 2], sk[ib + 2], sk[ic + 2]), zMax = Math.max(sk[ia + 2], sk[ib + 2], sk[ic + 2])
+    // A millimetre of slack so a ray that clips a cell boundary still sees the triangle.
+    const sl = 0.001
+    const ix0 = clamp(Math.floor((xMin - sl - minx) / cell), nx - 1)
+    const iy0 = clamp(Math.floor((yMin - sl - miny) / cell), ny - 1)
+    const iz0 = clamp(Math.floor((zMin - sl - minz) / cell), nz - 1)
+    const ix1 = clamp(Math.floor((xMax + sl - minx) / cell), nx - 1)
+    const iy1 = clamp(Math.floor((yMax + sl - miny) / cell), ny - 1)
+    const iz1 = clamp(Math.floor((zMax + sl - minz) / cell), nz - 1)
+    const o = t * 6
+    range[o] = ix0; range[o + 1] = iy0; range[o + 2] = iz0; range[o + 3] = ix1; range[o + 4] = iy1; range[o + 5] = iz1
+    for (let iz = iz0; iz <= iz1; iz++) for (let iy = iy0; iy <= iy1; iy++) for (let ix = ix0; ix <= ix1; ix++) counts[(iz * ny + iy) * nx + ix]++
+  }
+  let sum = 0
+  for (let i = 0; i < cells; i++) { const c = counts[i]; counts[i] = sum; sum += c }
+  counts[cells] = sum
+  if (a.ids.length < sum) a.ids = new Int32Array(sum)
+  if (triCursor.length < cells) triCursor = new Int32Array(cells)
+  triCursor.set(counts.subarray(0, cells))
+  const ids = a.ids
+  for (let t = 0; t < T; t++) {
+    const o = t * 6, ix0 = range[o], iy0 = range[o + 1], iz0 = range[o + 2], ix1 = range[o + 3], iy1 = range[o + 4], iz1 = range[o + 5]
+    for (let iz = iz0; iz <= iz1; iz++) for (let iy = iy0; iy <= iy1; iy++) for (let ix = ix0; ix <= ix1; ix++) {
+      const c = (iz * ny + iy) * nx + ix
+      ids[triCursor[c]++] = t
+    }
+  }
+  return a
+}
+/** Same test as a full triangle walk: the ray starts 10 mm along the way to the camera, and any hit counts. */
+function buriedAt(a: TriAccel, tris: Uint32Array, sk: Float32Array, p: number[]): boolean {
+  let dx = _cam.x - p[0], dy = _cam.y - p[1], dz = _cam.z - p[2]
+  const len = Math.hypot(dx, dy, dz) || 1
+  dx /= len; dy /= len; dz /= len
+  const ox = p[0] + dx * 0.01, oy = p[1] + dy * 0.01, oz = p[2] + dz * 0.01
+  _ray.origin.set(ox, oy, oz); _ray.direction.set(dx, dy, dz)
+  const hitOf = (t: number) => {
+    const ia = tris[t * 3] * 3, ib = tris[t * 3 + 1] * 3, ic = tris[t * 3 + 2] * 3
+    _va.set(sk[ia], sk[ia + 1], sk[ia + 2]); _vb.set(sk[ib], sk[ib + 1], sk[ib + 2]); _vc.set(sk[ic], sk[ic + 1], sk[ic + 2])
+    return _ray.intersectTriangle(_va, _vb, _vc, false, _hit)
+  }
+  if (!a.ok) { for (let t = 0; t < tris.length / 3; t++) if (hitOf(t)) return true; return false }
+  const { cell, nx, ny, nz, offs, ids } = a
+  let ix = Math.floor((ox - a.ox) / cell), iy = Math.floor((oy - a.oy) / cell), iz = Math.floor((oz - a.oz) / cell)
+  const stepX = dx >= 0 ? 1 : -1, stepY = dy >= 0 ? 1 : -1, stepZ = dz >= 0 ? 1 : -1
+  const tDeltaX = dx !== 0 ? Math.abs(cell / dx) : Infinity, tDeltaY = dy !== 0 ? Math.abs(cell / dy) : Infinity, tDeltaZ = dz !== 0 ? Math.abs(cell / dz) : Infinity
+  let tMaxX = dx !== 0 ? (a.ox + (ix + (stepX > 0 ? 1 : 0)) * cell - ox) / dx : Infinity
+  let tMaxY = dy !== 0 ? (a.oy + (iy + (stepY > 0 ? 1 : 0)) * cell - oy) / dy : Infinity
+  let tMaxZ = dz !== 0 ? (a.oz + (iz + (stepZ > 0 ? 1 : 0)) * cell - oz) / dz : Infinity
+  let stampId = ++a.stampId
+  if (stampId > 2e9) { a.stamp.fill(0); a.stampId = 1; stampId = 1 }
+  const stamp = a.stamp, maxSteps = nx + ny + nz + 4
+  for (let step = 0; step < maxSteps; step++) {
+    if (ix >= 0 && iy >= 0 && iz >= 0 && ix < nx && iy < ny && iz < nz) {
+      const c = (iz * ny + iy) * nx + ix
+      for (let k = offs[c]; k < offs[c + 1]; k++) {
+        const t = ids[k]
+        if (stamp[t] === stampId) continue
+        stamp[t] = stampId
+        if (hitOf(t)) return true
+      }
+    } else if (step > 0 && (ix < -1 || iy < -1 || iz < -1 || ix > nx || iy > ny || iz > nz)) return false
+    const px = ix, py = iy, pz = iz
+    if (tMaxX <= tMaxY && tMaxX <= tMaxZ) { ix += stepX; tMaxX += tDeltaX }
+    else if (tMaxY <= tMaxZ) { iy += stepY; tMaxY += tDeltaY }
+    else { iz += stepZ; tMaxZ += tDeltaZ }
+    if (ix === px && iy === py && iz === pz) return false
+  }
+  return false
+}
+/** Writes line positions into the existing geometry when it fits, so a pose change does not allocate a new one. */
+function setLinePositions(geo: LineSegmentsGeometry, src: number[]) {
+  const data = src.length >= 6 ? src : [0, 0, 0, 0, 0, 0]
+  const segs = data.length / 6
+  const start = geo.getAttribute('instanceStart') as THREE.InterleavedBufferAttribute | undefined
+  if (start && start.count >= segs) {
+    const arr = start.data.array as Float32Array
+    for (let i = 0; i < data.length; i++) arr[i] = data[i]
+    start.data.needsUpdate = true
+    geo.instanceCount = segs
+    return
+  }
+  geo.dispose()
+  const cap = Math.max(segs, Math.ceil(segs * 1.25) + 4), buf = new Float32Array(cap * 6)
+  for (let i = 0; i < data.length; i++) buf[i] = data[i]
+  geo.setPositions(buf)
+  geo.instanceCount = segs
+}
 /** Per frame: silhouette edges from the camera's point of view, plus the creases, all nudged toward the camera. */
 export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
+  const t0 = import.meta.env.DEV ? performance.now() : 0
   const st = mesh.userData.spectralLines as LineState | undefined; if (!st || !st.lines.parent) return
   _inv.copy(mesh.matrixWorld).invert(); _cam.setFromMatrixPosition(camera.matrixWorld).applyMatrix4(_inv)
   const key = `${_cam.x.toFixed(4)},${_cam.y.toFixed(4)},${_cam.z.toFixed(4)}`; if (key === st.camKey) return
@@ -395,17 +523,15 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
   // The thumb outline is drawn before the hand's depth (so only the phone hides it), which means the hand's own skin must
   // be checked here: a point counts as buried when the ray to the camera meets the hand more than 10 mm in front of it
   // (the palm, when the thumb is on the far side). Nearer skin, like the thenar bulge the edge runs past, doesn't count.
-  const ray = new THREE.Ray(), va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3(), hitP = new THREE.Vector3()
-  const buried = (p: number[]) => { ray.origin.set(p[0], p[1], p[2]); ray.direction.set(_cam.x - p[0], _cam.y - p[1], _cam.z - p[2]).normalize()
-    ray.origin.addScaledVector(ray.direction, 0.01)
-    for (let t = 0; t < T; t++) { const a = tris[t * 3] * 3, b = tris[t * 3 + 1] * 3, c = tris[t * 3 + 2] * 3
-      va.set(sk[a], sk[a + 1], sk[a + 2]); vb.set(sk[b], sk[b + 1], sk[b + 2]); vc.set(sk[c], sk[c + 1], sk[c + 2])
-      if (ray.intersectTriangle(va, vb, vc, false, hitP)) return true }
-    return false }
+  const tGrid = import.meta.env.DEV ? performance.now() : 0
+  const accel = st.rings.length ? triGrid(sk, tris) : null
+  if (import.meta.env.DEV) ((globalThis as { __gridLog?: number[] }).__gridLog ??= []).push(performance.now() - tGrid)
+  const buried = (p: number[]) => accel ? buriedAt(accel, tris, sk, p) : false
   // The thumb hugs the phone's side and front edge, so its inner edge lies on (or a hair inside) the frame and failed the
   // depth test there. Its points get a 7 mm pull: enough to clear the frame it rests on, still less than the phone's
   // 8.25 mm thickness, so a thumb truly behind the phone (seen from the back) stays hidden.
   pull = 0.007; tgt = tout
+  const tBury = import.meta.env.DEV ? performance.now() : 0
   { let prev: number[][] | null = null
     for (const r of st.rings) { const n = r.length / 3; let cx = 0, cy = 0, cz = 0; for (let i = 0; i < n; i++) { cx += r[i * 3]; cy += r[i * 3 + 1]; cz += r[i * 3 + 2] } cx /= n; cy /= n; cz /= n
       const f = (i: number) => { const x = r[i * 3], y = r[i * 3 + 1], z = r[i * 3 + 2]; return (x - cx) * (_cam.x - x) + (y - cy) * (_cam.y - y) + (z - cz) * (_cam.z - z) }
@@ -429,12 +555,13 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
       // a ring with no clean crossing (a gap in the cast points) is skipped and the edges bridge over it
     }
   }
-  if (import.meta.env.DEV) (globalThis as { __thumbHits?: number }).__thumbHits = thumbHits
+  if (import.meta.env.DEV) { (globalThis as { __thumbHits?: number }).__thumbHits = thumbHits; ((globalThis as { __buryLog?: number[] }).__buryLog ??= []).push(performance.now() - tBury) }
   tgt = out
   pull = 0.0012
   const cr = st.creases; for (let i = 0; i < cr.length; i += 3) nudge(cr[i], cr[i + 1], cr[i + 2])
-  st.lines.geometry.dispose(); const g = new LineSegmentsGeometry(); g.setPositions(out); st.lines.geometry = g; for (const gh of st.ghosts) gh.geometry = g
-  st.thumb.geometry.dispose(); const tg = new LineSegmentsGeometry(); tg.setPositions(tout.length ? tout : [0, 0, 0, 0, 0, 0]); st.thumb.geometry = tg
+  setLinePositions(st.lines.geometry, out)
+  setLinePositions(st.thumb.geometry, tout)
+  if (import.meta.env.DEV) ((globalThis as { __specLog?: number[] }).__specLog ??= []).push(performance.now() - t0)
 }
 
 /** The opaque outer outline: an inverted hull sharing the hand's geometry and skeleton (or a plain mesh for the forearm). */
@@ -453,7 +580,13 @@ export function ensureSmooth(g: THREE.BufferGeometry) {
 }
 export function addHull(mesh: THREE.Mesh, m: SpectralMats) {
   ensureSmooth(mesh.geometry)
-  for (const c of [...mesh.children]) if (c.userData.spectralHull) mesh.remove(c)
+  // Same hull material: the outline already exists. Pose changes must not allocate another depth prepass.
+  if (mesh.children.some(c => c.userData.spectralHull && (c as THREE.Mesh).material === m.hull)) return
+  for (const c of [...mesh.children]) if (c.userData.spectralHull) {
+    const mat = (c as THREE.Mesh).material as THREE.Material
+    mesh.remove(c)
+    if (mat !== m.hull && (mat as THREE.MeshBasicMaterial).colorWrite === false) mat.dispose()
+  }
   let h: THREE.Mesh
   if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) { const s = mesh as THREE.SkinnedMesh; const sh = new THREE.SkinnedMesh(s.geometry, m.hull); sh.bind(s.skeleton, s.bindMatrix); sh.bindMode = s.bindMode; h = sh }
   else h = new THREE.Mesh(mesh.geometry, m.hull)

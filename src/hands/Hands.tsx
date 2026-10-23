@@ -9,6 +9,7 @@ import { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useGLTF, useTexture } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import { spectralMaterials, buildSpectral, reskinSpectral, updateSpectral, addHull, removeHull, ensureSmooth, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
+import { bakeSkin, skinAt, skinCache, type SkinCache } from './skinFast'
 import { LINE_LAYER } from '../sketch/Sketch'
 import * as THREE from 'three'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
@@ -488,6 +489,39 @@ function segmentMap(rig: Rig): Record<string, [THREE.Vector3, THREE.Vector3]> {
   for (const f of [...FINGERS, 'thumb']) if (seg[`${f}-phalanx-distal`]) seg[`${f}-tip`] = seg[`${f}-phalanx-distal`]
   return seg
 }
+/** Vertices the solver's contact loops actually skin. Classic keeps every vertex (the mesh is already small).
+ *  Elena keeps the outer shell of each bone, and every vertex on the outer half of a fingertip, so the pad
+ *  that meets the glass is still in the set. A full-mesh pass confirms the result. */
+function buildProxy(rig: Rig): Uint32Array {
+  const n = rig.owner.length
+  if (n <= 4000) { const a = new Uint32Array(n); for (let i = 0; i < n; i++) a[i] = i; return a }
+  const mesh = rig.mesh, pa = mesh.geometry.getAttribute('position'), seg = segmentMap(rig)
+  const groups = new Map<string, number[]>(), chosen = new Set<number>()
+  for (let i = 0; i < n; i++) { const g = groups.get(rig.owner[i]); if (g) g.push(i); else groups.set(rig.owner[i], [i]) }
+  const v = new THREE.Vector3(), rel = new THREE.Vector3()
+  for (const [owner, ids] of groups) {
+    const s = seg[owner]
+    const fine = owner.includes('distal') || owner.endsWith('-tip') || owner.includes('intermediate')
+    if (!s) { const stride = fine ? 1 : 3; for (let k = 0; k < ids.length; k += stride) chosen.add(ids[k]); continue }
+    const ab = s[1].clone().sub(s[0]); const len = Math.max(1e-6, ab.length()); ab.multiplyScalar(1 / len)
+    const u = Math.abs(ab.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)
+    u.addScaledVector(ab, -u.dot(ab)).normalize()
+    const side = new THREE.Vector3().crossVectors(ab, u)
+    const angN = fine ? 24 : 14, axN = fine ? 12 : 7, bins = new Map<number, { i: number; r: number }>()
+    for (const i of ids) {
+      v.fromBufferAttribute(pa, i).applyMatrix4(mesh.bindMatrix); rel.copy(v).sub(s[0])
+      const axial = rel.dot(ab), t = Math.max(0, Math.min(axN - 1, Math.floor((axial / len) * axN)))
+      const rx = rel.dot(u), rz = rel.dot(side), ang = Math.atan2(rz, rx)
+      const a = Math.max(0, Math.min(angN - 1, Math.floor(((ang + Math.PI) / (Math.PI * 2)) * angN)))
+      const r = rx * rx + rz * rz, key = t * angN + a, prev = bins.get(key)
+      if (!prev || r > prev.r) bins.set(key, { i, r })
+      if (fine && axial / len > 0.45) chosen.add(i)
+    }
+    for (const b of bins.values()) chosen.add(b.i)
+  }
+  const out = new Uint32Array(chosen.size); let k = 0; for (const i of chosen) out[k++] = i
+  return out
+}
 function applyBuild(rig: Rig, build: number) {
   const m = rig.mesh, base = (m.userData.baseGeo ??= m.geometry) as THREE.BufferGeometry
   if ((m.userData.build ?? 1) === build && m.geometry !== base || build === 1 && m.geometry === base) return
@@ -566,6 +600,7 @@ const DIP_HYPER = 8, NAIL_CLEAR = 0.015
 const padK = () => ({ flat: PAD_FLAT, w: 0, hyper: DIP_HYPER, ...(import.meta.env.DEV ? (globalThis as { __padK?: object }).__padK : {}) }) as { flat: number; w: number; hyper: number; patch?: number; dipk?: number }
 export const nailNeed = (nail: number) => NAIL_CLEAR + 0.01 * nail
 function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
+  const tSolve = import.meta.env.DEV ? performance.now() : 0
   const R = rig.rest, P = (n: string) => R[n].p
   const h = plan.side === 'right' ? 1 : -1
   // Rest frame: F along the palm to the middle knuckle, N out of the palm.
@@ -586,27 +621,47 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
 
   // Reset bones.
   for (const n in rig.bones) { rig.bones[n].position.copy(R[n].p); rig.bones[n].quaternion.copy(R[n].q) }
-  const pos = rig.mesh.geometry.getAttribute('position')
-  const update = () => rig.root.updateMatrixWorld(true)
-  const distAt = (i: number) => { _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); return sdf(_v.applyMatrix4(rig.mesh.matrixWorld), fit) }
-  const minDist = (filter: (b: string) => boolean) => {
+  // Spectral lines and hulls hang off the mesh. updateMatrixWorld would skin them on every iteration of the solve.
+  const parked: THREE.Object3D[] = []
+  for (const c of [...rig.mesh.children]) if (c.userData.spectral) { parked.push(c); rig.mesh.remove(c) }
+  try {
+  let cache = rig.mesh.userData.skinCache as SkinCache | undefined
+  if (!cache || cache.count !== rig.owner.length) cache = rig.mesh.userData.skinCache = skinCache(rig.mesh)
+  let proxy = rig.mesh.userData.proxy as Uint32Array | undefined
+  if (!proxy || proxy.length > cache.count) proxy = rig.mesh.userData.proxy = buildProxy(rig)
+  let skinDirty = true
+  const update = () => { rig.root.updateMatrixWorld(true); skinDirty = true }
+  const ensure = () => { if (!skinDirty) return; bakeSkin(rig.mesh, cache); skinDirty = false }
+  const distAt = (i: number) => { ensure(); return sdf(skinAt(cache, i, _v).applyMatrix4(rig.mesh.matrixWorld), fit) }
+  // ids null: every vertex. The iterative passes pass the proxy; the last pass passes null so the landed gap matches a full scan.
+  const minDist = (filter: (b: string) => boolean, ids: Uint32Array | null) => {
+    ensure(); const world = rig.mesh.matrixWorld, n = ids ? ids.length : cache.count
     let d = Infinity
-    for (let i = 0; i < pos.count; i++) {
-      if (!filter(rig.owner[i])) continue
-      _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); _v.applyMatrix4(rig.mesh.matrixWorld)
-      const s = sdf(_v, fit); if (s < d) d = s
-    }
+    for (let k = 0; k < n; k++) { const i = ids ? ids[k] : k; if (!filter(rig.owner[i])) continue
+      const s = sdf(skinAt(cache, i, _v).applyMatrix4(world), fit); if (s < d) d = s }
     return d
   }
   // Seat the palm on the device: move along the palm normal until the palm just touches (plus a hair of gap).
   update()
+  if (import.meta.env.DEV && !(globalThis as { __skinChk?: boolean }).__skinChk) {
+    ;(globalThis as { __skinChk?: boolean }).__skinChk = true
+    ensure(); const cmp = new THREE.Vector3(); let max = 0
+    for (let i = 0; i < cache.count; i += 13) { rig.mesh.getVertexPosition(i, cmp); const d = cmp.distanceTo(skinAt(cache, i, _v)); if (d > max) max = d }
+    ;(globalThis as { __skinErr?: number }).__skinErr = max
+  }
   if (plan.seat !== undefined) {
     const palm = (b: string) => b === 'wrist' || b.endsWith('metacarpal') && !b.startsWith('thumb')
-    for (let it = 0; it < 6; it++) {
-      const d = minDist(palm)
-      if (!isFinite(d) || Math.abs(d - plan.seat) < 0.0005) break
-      rig.root.position.addScaledVector(N1, d - plan.seat); update()
+    const seat = (ids: Uint32Array | null, tries: number) => {
+      for (let it = 0; it < tries; it++) {
+        const d = minDist(palm, ids)
+        if (!isFinite(d) || Math.abs(d - plan.seat!) < 0.0005) break
+        rig.root.position.addScaledVector(N1, d - plan.seat!); update()
+      }
     }
+    // Every vertex, not the proxy. The seated palm is where each finger's starting curl is chosen, and a
+    // fraction of a millimetre there sends the index around a different side of the phone. Fast skinning
+    // makes the full scan cheap; the proxy is for the contact passes that run many times.
+    seat(null, 6)
   }
 
   // Fingers: forward kinematics down each chain, closing joints until contact.
@@ -625,7 +680,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       const limit = deg(max[j - from] ?? 60), part = (b: string) => below.has(b) && set.has(b)
       // Skin already resting on the device at the start (the knuckle by a seated palm) does not count as new contact.
       const free: number[] = []
-      for (let i = 0; i < pos.count; i++) if (part(rig.owner[i]) && distAt(i) > 0.0008) free.push(i)
+      for (let i = 0; i < cache.count; i++) if (part(rig.owner[i]) && distAt(i) > 0.0008) free.push(i)
       while (angles[j] < limit) {
         angles[j] += deg(2)
         chainPose(names, axes, angles, pre); update()
@@ -824,45 +879,70 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
   // The glass is the plane z = T / 2, so the contact is the pad's lowest skin point.
   // The contact point is the centroid of the pad's patch (the skin within 2.5 mm of its lowest point), not the very tip:
   // that is where a pressed pad meets the glass.
-  const contact = (owners: Set<string>, glass: number) => {
+  // ids null scans every vertex (step 2 on the lift, matching the old every-other-vertex sample). The iterative
+  // passes pass the proxy; a confirm pass passes null so the landed pad and the lift match a full scan.
+  const contact = (owners: Set<string>, glass: number, ids: Uint32Array | null) => {
+    ensure(); const world = rig.mesh.matrixWorld
     let best = Infinity; const pts: number[] = []
-    for (let i = 0; i < pos.count; i++) {
+    const n = ids ? ids.length : cache.count
+    for (let k = 0; k < n; k++) {
+      const i = ids ? ids[k] : k
       if (!owners.has(rig.owner[i])) continue
-      _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); _v.applyMatrix4(rig.mesh.matrixWorld)
+      skinAt(cache, i, _v).applyMatrix4(world)
       pts.push(_v.x, _v.y, _v.z); if (_v.z < best) best = _v.z
     }
-    const c = new THREE.Vector3(); let n = 0
-    for (let k = 0; k < pts.length; k += 3) if (pts[k + 2] < best + (padK().patch ?? 0.025)) { c.x += pts[k]; c.y += pts[k + 1]; n++ }
-    if (n) c.multiplyScalar(1 / n); c.z = best
+    const c = new THREE.Vector3(); let cnt = 0
+    for (let k = 0; k < pts.length; k += 3) if (pts[k + 2] < best + (padK().patch ?? 0.025)) { c.x += pts[k]; c.y += pts[k + 1]; cnt++ }
+    if (cnt) c.multiplyScalar(1 / cnt); c.z = best
     return { c, d: best - glass }
+  }
+  const lowSkin = (ids: Uint32Array | null, pads: Set<string>) => {
+    const hw = fit.W / 2, hh = fit.H / 2
+    let low = Infinity
+    const sn = ids ? ids.length : cache.count, step = ids ? 1 : 2
+    ensure(); const world = rig.mesh.matrixWorld
+    for (let k = 0; k < sn; k += step) {
+      const i = ids ? ids[k] : k
+      if (pads.has(rig.owner[i])) continue
+      skinAt(cache, i, _v).applyMatrix4(world)
+      if (Math.abs(_v.x) < hw && Math.abs(_v.y) < hh && _v.z < low) low = _v.z
+    }
+    return low
   }
   let worst = Infinity
   const iters = import.meta.env.DEV ? (globalThis as { __touchIters?: number }).__touchIters ?? 10 : 10
   const clearOf = (t: (typeof touches)[number]) => { const e = t.nail && nailEdge[t.nail]; if (!e) return Infinity; const m = rig.bones[t.nail!].matrixWorld
     let c1 = Infinity; for (const q of e) c1 = Math.min(c1, sdf(_v.copy(q).applyMatrix4(m), fit)); return c1 }
-  for (let round = 0; round < 7; round++) {
-  if (round) { let more = false; for (const t of touches) if (clearOf(t) < need && t.bend < 40) { t.bend += 6; more = true } if (!more) break }
-  for (let it = 0; it < iters; it++) {
-    const errs = touches.map(t => { t.run(t.aim); update(); const { c, d } = contact(t.owners, t.surf.z); return v3(t.surf.x - c.x, t.surf.y - c.y, GAP - d) })
-    worst = Math.max(...errs.map(e => e.length()))
-    if (import.meta.env.DEV) (globalThis as { __touchEach?: unknown }).__touchEach = errs.map((e, k) => [[...touches[k].owners][0], +(e.length() * 100).toFixed(2), +(e.z * 100).toFixed(2), touches[k].bend, +(clearOf(touches[k]) * 100).toFixed(2)])
-    if (worst < 0.0005) break
-    const mean = errs.reduce((a, e) => a.add(e), v3(0, 0, 0)).multiplyScalar(1 / errs.length)
-    // Damped, and kept within 15 mm of the point, so a digit that cannot reach does not wander off.
-    touches.forEach((t, k) => { t.aim.addScaledVector(errs[k], 0.7); const off = t.aim.clone().sub(t.surf); if (off.length() > 0.15) t.aim.copy(t.surf).add(off.setLength(0.15)) })
-    if (plan.follow === true) {
-      // Lift the hand if any skin other than the touching pads dips below the glass, else just slide it across.
-      const pads = new Set(touches.flatMap(t => [...t.owners])), hw = fit.W / 2, hh = fit.H / 2
-      let low = Infinity
-      for (let i = 0; i < pos.count; i += 2) {
-        if (pads.has(rig.owner[i])) continue
-        _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); _v.applyMatrix4(rig.mesh.matrixWorld)
-        if (Math.abs(_v.x) < hw && Math.abs(_v.y) < hh && _v.z < low) low = _v.z
-      }
-      const lift = Math.max(0, fit.T / 2 + 0.03 - low)
-      rig.root.position.add(v3(mean.x, mean.y, lift).clampLength(0, 0.3)); update()
-    } else if (plan.follow === 'y') { rig.root.position.y += Math.max(-0.05, Math.min(0.05, mean.y)); update() }
+  const subset = proxy.length === cache.count ? null : proxy
+  const pass = (ids: Uint32Array | null, tries: number) => {
+    for (let it = 0; it < tries; it++) {
+      const errs = touches.map(t => { t.run(t.aim); update(); const { c, d } = contact(t.owners, t.surf.z, ids); return v3(t.surf.x - c.x, t.surf.y - c.y, GAP - d) })
+      worst = Math.max(...errs.map(e => e.length()))
+      if (import.meta.env.DEV) (globalThis as { __touchEach?: unknown }).__touchEach = errs.map((e, k) => [[...touches[k].owners][0], +(e.length() * 100).toFixed(2), +(e.z * 100).toFixed(2), touches[k].bend, +(clearOf(touches[k]) * 100).toFixed(2)])
+      if (worst < 0.0005) return
+      const mean = errs.reduce((a, e) => a.add(e), v3(0, 0, 0)).multiplyScalar(1 / errs.length)
+      // Damped, and kept within 15 mm of the point, so a digit that cannot reach does not wander off.
+      touches.forEach((t, k) => { t.aim.addScaledVector(errs[k], 0.7); const off = t.aim.clone().sub(t.surf); if (off.length() > 0.15) t.aim.copy(t.surf).add(off.setLength(0.15)) })
+      if (plan.follow === true) {
+        // Lift the hand if any skin other than the touching pads dips below the glass, else just slide it across.
+        const pads = new Set(touches.flatMap(t => [...t.owners]))
+        const lift = Math.max(0, fit.T / 2 + 0.03 - lowSkin(ids, pads))
+        rig.root.position.add(v3(mean.x, mean.y, lift).clampLength(0, 0.3)); update()
+      } else if (plan.follow === 'y') { rig.root.position.y += Math.max(-0.05, Math.min(0.05, mean.y)); update() }
+    }
   }
+  for (let round = 0; round < 7; round++) {
+    if (round) { let more = false; for (const t of touches) if (clearOf(t) < need && t.bend < 40) { t.bend += 6; more = true } if (!more) break }
+    pass(subset, iters)
+    if (subset) {
+      // Proxy pads are dense at the fingertips, but the recorded gap is the full mesh. Correct only while that gap,
+      // or a non-pad vertex under the glass, is outside the tolerance the full scan used to stop on.
+      const errs = touches.map(t => { const { c, d } = contact(t.owners, t.surf.z, null); return v3(t.surf.x - c.x, t.surf.y - c.y, GAP - d) })
+      worst = Math.max(...errs.map(e => e.length()))
+      const pads = new Set(touches.flatMap(t => [...t.owners]))
+      const lift = plan.follow === true ? Math.max(0, fit.T / 2 + 0.03 - lowSkin(null, pads)) : 0
+      if (worst >= 0.0005 || lift > 0.0005) pass(null, 3)
+    }
   }
   rig.root.userData.touchError = worst   // model units; 0.001 is 0.1 mm
   // How far the touching digits' nail free edges sit above the glass (model units); the caller flattens the approach
@@ -872,6 +952,10 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     let c1 = Infinity; for (const p of e) c1 = Math.min(c1, sdf(_v.copy(p).applyMatrix4(m), fit)); clear = Math.min(clear, c1); if (import.meta.env.DEV) ((globalThis as { __nailBy?: Record<string, number> }).__nailBy ??= {})[o] = c1 }
   rig.root.userData.nailClear = clear
   armFrame(rig, F1, N1)
+  } finally {
+    for (const c of parked) rig.mesh.add(c)
+    if (import.meta.env.DEV) ((globalThis as { __solveLog?: number[] }).__solveLog ??= []).push(performance.now() - tSolve)
+  }
 }
 
 /** Where the forearm joins: the wrist joint, the arm's direction (back from the palm) and the palm normal. */
@@ -1020,6 +1104,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   }, [spm, sp.tint, sp.line, sp.seeBlur, sp.transparency, sp.glimmer, sp.shimmer, sp.stars, sp.mass, sp.glow, sp.rim, sp.contours, look.arm])
   const { size } = useThree()
   useFrame(({ clock }, dt) => {
+    if (import.meta.env.DEV) { const g = (globalThis as { __frameDt?: number[] }); (g.__frameDt ??= []).push(dt); if (g.__frameDt.length > 240) g.__frameDt.shift() }
     for (const side of ['right', 'left'] as const) if (motion[side].step(dt, clock.elapsedTime, idle) && spm && rigs[side].root.parent) reskinSpectral(rigs[side].mesh)
   })
   useFrame(({ clock, camera }) => { if (!spm) return
@@ -1030,6 +1115,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   // Nails: measured on each hand at rest (before any solve), rebuilt when length or shape change, riding on the distal bones
   const build = Math.max(0.75, Math.min(1.3, look.build ?? 1))
   const spots = useMemo(() => { applyBuild(rigs.right, build); applyBuild(rigs.left, build); annotate(rigs.right); annotate(rigs.left)
+    for (const side of ['right', 'left'] as const) { const r = rigs[side]; r.mesh.userData.skinCache = skinCache(r.mesh); r.mesh.userData.proxy = buildProxy(r) }
     return { right: measureNails(rigs.right, 'right'), left: measureNails(rigs.left, 'left') } }, [rigs, build])
   const nailMat = useMemo(() => spm ? spm.body : nailMaterial(SKIN_TONES[tone]?.color ?? SKIN_TONES.fair.color, look.nailColor ?? (tone === 'silhouette' ? SKIN_TONES.silhouette?.color ?? null : null)), [spm, tone, look.nailColor])
   useEffect(() => () => { if (!spm) nailMat.dispose() }, [nailMat, spm])
@@ -1140,7 +1226,8 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     const repKey = JSON.stringify(rep); if (lastRep.current !== repKey) { lastRep.current = repKey; setTimeout(() => window.dispatchEvent(new CustomEvent(REACH_EVENT, { detail: rep })), 0) }
     for (const side of ['right', 'left'] as const) if (!used.has(rigs[side].root)) { g.remove(rigs[side].root, arms[side]); delete solved.current[side] }
   }, [pose, fit, rigs, ges, arms, rot, look.size, nails, armOff, studio, elena])
-  // Spectral: outlines, inner lines and stars follow each re-solve; the hands leave the shadow pass (line layer) and cast none.
+  // Spectral outlines are built once per rig and material. A pose change re-skins those same lines
+  // (reskinSpectral, after the spring steps) instead of allocating new hulls and line geometry.
   useEffect(() => {
     for (const side of ['right', 'left'] as const) {
       const r = rigs[side], arm = arms[side]
@@ -1150,15 +1237,19 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
       for (const n of nails[side]) n.m.material = nailMat
       if (!spm) continue
       addHull(r.mesh, spm); addHull(arm, spm)
-      // nails: a thin plate's inflated hull read as a solid patch, so each nail gets its own outline line instead
-      for (const n of nails[side]) { const g = new LineSegmentsGeometry(); g.setPositions(n.outline)
-        const l = new LineSegments2(g, spm.line); l.renderOrder = 12; l.layers.set(LINE_LAYER); l.frustumCulled = false; l.userData = { spectral: true, noBounds: true }; n.m.add(l) }
+      // nails: a thin plate's inflated hull read as a solid patch, so each nail gets its own outline line instead.
+      // The line lives on the nail mesh, so it follows the bone. Replace any previous one so pose changes don't stack them.
+      for (const n of nails[side]) {
+        for (const c of [...n.m.children]) if (c.userData.spectral) { n.m.remove(c); (c as THREE.Mesh).geometry?.dispose() }
+        const g = new LineSegmentsGeometry(); g.setPositions(n.outline)
+        const l = new LineSegments2(g, spm.line); l.renderOrder = 12; l.layers.set(LINE_LAYER); l.frustumCulled = false; l.userData = { spectral: true, noBounds: true }; n.m.add(l)
+      }
       // Procedural plates are off on Elena, so the authored nail curves stay (they land on the sculpted nail).
       // Show nails off drops them. Classic Spectral, if it were still on this mesh, would keep using the plates.
       if (r.root.parent) buildSpectral(r.mesh, r.owner, spm, !(elena && look.nails !== false), armOff)
     }
     if (import.meta.env.DEV) (globalThis as { __omHands?: unknown }).__omHands = { rigs, arms }
-  }, [spm, rigs, arms, pose, fit, ges, rot, nails, nailMat, armOff, elena, look.nails])
+  }, [spm, rigs, arms, nails, nailMat, armOff, elena, look.nails])
   useEffect(() => () => { const g = group.current; for (const side of ['right', 'left'] as const) g?.remove(rigs[side].root, arms[side]); solved.current = {} }, [rigs, arms])
   return <group ref={group} userData={{ noBounds: true }} />
 }

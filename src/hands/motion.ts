@@ -48,17 +48,18 @@ export class HandMotion {
     if (arm) { root.updateMatrix(); arm.updateMatrix(); this.armRel.copy(root.matrix).invert().multiply(arm.matrix) }
     if (!fresh) this.restore()
     this.settled = false
+    if (import.meta.env.DEV) (globalThis as { __motionT0?: number }).__motionT0 = performance.now()
   }
   /** Displayed pose before a solve overwrote it (kept so capture can restore it). */
   snapshot() { for (const s of this.st) { const x = s as St & { dq?: THREE.Quaternion; dp?: THREE.Vector3 }; (x.dq ??= new THREE.Quaternion()).copy(s.o.quaternion); (x.dp ??= new THREE.Vector3()).copy(s.o.position) } }
   restore() { for (const s of this.st) { const x = s as St & { dq?: THREE.Quaternion; dp?: THREE.Vector3 }; if (x.dq) { s.o.quaternion.copy(x.dq); s.o.position.copy(x.dp!) } } }
-  /** Returns true when the pose on screen changed this frame. */
-  step(dt: number, time: number, idle: IdleLevel): boolean {
-    if (!this.root || (this.settled && idle === 'off')) return false
-    dt = Math.min(dt, 1 / 30)
+  /** One fixed spring step. Drag uses the hand's turn since the previous step, so it lands on the first substep of a frame. */
+  private integrate(dt: number, time: number, idle: IdleLevel): boolean {
+    const root = this.root
+    if (!root) return false
     const amp = IDLE_AMP[idle]
     // the hand's own turn this frame, which the fingers resist a little (drag)
-    _q.copy(this.prevRoot).invert().premultiply(this.root.quaternion); rotVec(_q, _e); const turn = _e.clone()
+    _q.copy(this.prevRoot).invert().premultiply(root.quaternion); rotVec(_q, _e); const turn = _e.clone()
     let moving = false
     for (const s of this.st) {
       const k = Math.min(s.depth, 4), om = OMEGA[k], ze = ZETA[k]
@@ -67,7 +68,7 @@ export class HandMotion {
       if (amp && s.idle && s.rest) _q2.slerp(s.rest, amp * (0.5 + 0.5 * Math.sin(time * 1.3 + s.phase)) * (k / 4))
       // drag: in this bone's parent frame, turn a fraction of the hand's turn back
       if (k > 0 && DRAG[k] && turn.lengthSq() > 1e-10) {
-        s.o.parent!.getWorldQuaternion(_pw); this.root.parent ? this.root.parent.getWorldQuaternion(_q) : _q.identity()
+        s.o.parent!.getWorldQuaternion(_pw); root.parent ? root.parent.getWorldQuaternion(_q) : _q.identity()
         _v.copy(turn).applyQuaternion(_q).applyQuaternion(_pw.invert()).multiplyScalar(-DRAG[k])
         if (_v.length() > 1e-9) { s.o.quaternion.premultiply(fromRotVec(_v, _q)); if (s.o.quaternion.angleTo(s.tq) > MAX_LAG) s.o.quaternion.rotateTowards(s.tq, s.o.quaternion.angleTo(s.tq) - MAX_LAG) }
       }
@@ -86,10 +87,31 @@ export class HandMotion {
       const err = _e.length() + _v.length() * 20, vel = s.w.length() * 0.05 + s.v.length()
       if (err < 2e-4 && vel < 2e-4 && !amp) { s.o.quaternion.copy(s.tq); s.o.position.copy(s.tp); s.w.set(0, 0, 0); s.v.set(0, 0, 0) } else moving = true
     }
-    this.prevRoot.copy(this.root.quaternion)
-    if (this.arm) { this.root.updateMatrix(); this.arm.matrix.multiplyMatrices(this.root.matrix, this.armRel); this.arm.matrix.decompose(this.arm.position, this.arm.quaternion, this.arm.scale) }
-    this.root.updateMatrixWorld(true)
+    this.prevRoot.copy(root.quaternion)
+    if (this.arm) { root.updateMatrix(); this.arm.matrix.multiplyMatrices(root.matrix, this.armRel); this.arm.matrix.decompose(this.arm.position, this.arm.quaternion, this.arm.scale) }
+    root.updateMatrixWorld(true)
+    const was = this.settled
     this.settled = !moving
+    if (import.meta.env.DEV && !was && this.settled) {
+      const g = globalThis as { __motionT0?: number; __motionLog?: number[] }
+      if (g.__motionT0) (g.__motionLog ??= []).push(performance.now() - g.__motionT0)
+    }
     return true
+  }
+  /** Returns true when the pose on screen changed this frame.
+   *  Below 60fps the spring takes several 1/60 steps covering the real frame, so the transition
+   *  finishes in the same wall-clock time. A gap longer than a second (a tab switch) does not
+   *  fast-forward further than that in one frame. */
+  step(dt: number, time: number, idle: IdleLevel): boolean {
+    if (!this.root || (this.settled && idle === 'off')) return false
+    const H = 1 / 60
+    let left = Math.min(Math.max(0, dt), 1)
+    let changed = false
+    while (left > 1e-4) {
+      if (this.integrate(Math.min(H, left), time, idle)) changed = true
+      left -= H
+      if (this.settled && idle === 'off') break
+    }
+    return changed
   }
 }
