@@ -40,32 +40,25 @@ The Hands section adds 3D hands holding the iPhone 18 Pro or 18 Pro Max: right h
 
 Each pose places the hand next to the phone, rests the palm on it, then bends each finger joint by joint until the skin touches the phone body, which is built from the phone's real measurements. That way the grip fits both sizes. Pose data lives in `src/hands/Hands.tsx`.
 
-The hand models are the MIT-licensed WebXR "generic-hand" assets (see CREDITS.md), so they ship in `public/hands/`. They are fairly low detail, so close-ups show some faceting.
+Classic hands are the MIT-licensed WebXR "generic-hand" assets (see CREDITS.md), in `public/hands/`. They are fairly low detail, so close-ups show some faceting. Realistic hands are a separate model, licensed CC BY-SA 4.0, in `public/hands/elena/`.
 
 ### Realistic hands
 
-Hand → Appearance → Hand style switches photographic skin between **Realistic** (the default) and **Classic** (the original smooth material). Silhouette and Spectral keep their own materials either way. Realistic is on by default.
+Hand → Appearance → Hand style switches between **Realistic** (the default) and **Classic** (the original generic-hand and its smooth material). Silhouette and Spectral keep their own materials either way. Realistic is on by default.
 
-Realistic skin is a `MeshPhysicalMaterial` (`src/hands/realisticSkin.ts`), so the orbit camera and the lighting controls (intensity, direction, height, contact shadow, the studio HDRI) still shade the hand. Matte, in Sketch, still strips sheen, clearcoat, specular and the environment reflection. A wrapped diffuse lobe and a thickness backlight stand in for subsurface scatter. Pose occlusion crossfades when the gesture changes.
+Realistic skin is a `MeshPhysicalMaterial` (`src/hands/realisticSkin.ts`) on Elena FF's mesh, so the orbit camera and the lighting controls (intensity, direction, height, contact shadow, the studio HDRI) still shade the hand. Matte, in Sketch, still strips sheen, clearcoat, specular and the environment reflection. A wrapped diffuse lobe and a small warm backlight stand in for subsurface scatter. The skin-tone swatches scale the albedo: Fair leaves the texture as painted, and the other swatches shift it.
 
-The maps are baked offline from the same MIT mesh. Blender is not required. `scripts/bake-hands.mjs` poses the hand, ray-traces ambient occlusion for rest, grip, point and flat, and writes:
+The mesh is "Rigged hand" by Elena FF, about 15.5k vertices and 29k triangles after triangulation. The grip solver is unchanged. In Blender the deform bones were unparented onto a flat armature (OpenMock poses each joint in armature space), renamed to the WebXR generic-hand bone names, and scaled so the wrist-to-middle-fingertip length matches the classic asset (178 mm). Control bones were dropped; they carried no skin weights. The thumb's extra middle phalanx is kept and follows the proximal pose, because the WebXR thumb has no middle joint. A left hand is the right hand mirrored on X, with the same bone names. See `public/hands/elena/README.md` for the conversion steps and the CC BY-SA terms.
+
+The model's sculpted nails are the ones you see. Procedural nail plates stay on Classic only, so they are not stacked on top of the sculpt.
 
 | File | Contents |
 | --- | --- |
-| `public/hands/realistic/albedo.webp` | Colour variation. Multiplied by the skin-tone swatch, so the swatches still drive the colour. |
-| `normal.webp` | Tangent-space pores, knuckle wrinkles and palm creases. |
-| `surface.webp` | Thickness (R), roughness (G), wrist mask (B). |
-| `ao.webp` | Rest, grip, point and flat occlusion, one channel each. |
-| `pores.webp` | A tileable normal for the forearm. The forearm is a lathe and does not share the hand unwrap. |
-
-Re-bake after changing the script:
-
-```
-npm install
-npm run bake-hands
-```
-
-`sharp` is a dev dependency. The script also writes preview PNGs under `/tmp/hand-preview/`. The mesh is the original generic hand (about 1,360 vertices), so the silhouette stays that resolution; the maps carry the skin detail.
+| `public/hands/elena/right.glb`, `left.glb` | Meshopt-compressed glTF, flat skeleton, 27 joints. |
+| `albedo.webp` | The model's colour map. |
+| `normal.webp` | The model's tangent-space normal map. |
+| `roughness.webp` | The model's roughness map. |
+| `specular.webp` | The model's specular map, lifted slightly so skin keeps a satin highlight. |
 
 ### Photoreal hands (ComfyUI)
 

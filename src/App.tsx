@@ -1222,7 +1222,7 @@ export default function App() {
           <button className={(look.style ?? 'realistic') !== 'classic' ? 'on' : ''} aria-pressed={(look.style ?? 'realistic') !== 'classic'} onClick={() => setLook(o => ({ ...o, style: 'realistic' }))}>Realistic</button>
           <button className={look.style === 'classic' ? 'on' : ''} aria-pressed={look.style === 'classic'} onClick={() => setLook(o => ({ ...o, style: 'classic' }))}>Classic</button>
         </div>
-        <p className="hint">Realistic bakes pores, creases and occlusion, and still follows the lighting controls. Classic is the original smooth skin. Silhouette and Spectral keep their own materials.</p>
+        <p className="hint">Realistic is a higher-detail hand with its own skin texture, and still follows the lighting controls. Classic is the original smooth model. Silhouette and Spectral keep their own materials.</p>
         <label className="check" title="Off: only the hand shows, fading out just past the wrist"><input type="checkbox" checked={look.arm !== false} onChange={e => setLook(o => ({ ...o, arm: e.target.checked }))} /> Show arm</label>
         <label className="check" title="Off: no nails, and the grip ignores nail clearance"><input type="checkbox" checked={look.nails !== false} onChange={e => setLook(o => ({ ...o, nails: e.target.checked }))} /> Show nails</label>
         {look.nails !== false && <button className="ghost" title="Back to a natural short nail" onClick={() => setLook(o => ({ ...o, nailLen: HAND_LOOK0.nailLen, nailShape: HAND_LOOK0.nailShape, nailColor: HAND_LOOK0.nailColor }))}>Reset nails</button>}

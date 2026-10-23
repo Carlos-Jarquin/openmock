@@ -1,9 +1,10 @@
-// Procedurally posed hands that hold the device. The hand models are the WebXR "generic-hand" assets
-// (MIT, Amazon, github.com/immersive-web/webxr-input-profiles), see CREDITS.md. Each pose places the wrist
-// relative to the device, seats the palm on it, then closes each finger joint by joint until its skin touches
-// the device body (a rounded-box distance field built from the device's own measurements), so the grip fits
-// the 18 Pro and the 18 Pro Max at their real sizes. The hands sit inside the device group, so they follow
-// any camera angle.
+// Procedurally posed hands that hold the device. Classic uses the WebXR "generic-hand" assets
+// (MIT, Amazon, github.com/immersive-web/webxr-input-profiles). Realistic uses Elena FF's "Rigged hand"
+// (CC BY-SA 4.0, public/hands/elena), re-rigged onto the same bone names. See CREDITS.md. Each pose places
+// the wrist relative to the device, seats the palm on it, then closes each finger joint by joint until its
+// skin touches the device body (a rounded-box distance field built from the device's own measurements), so
+// the grip fits the 18 Pro and the 18 Pro Max at their real sizes. The hands sit inside the device group,
+// so they follow any camera angle.
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useGLTF, useTexture } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
@@ -62,9 +63,9 @@ export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] =>
 export const poseOk = (f: HandFit | null | undefined, p: HandPose) => p === 'off' || posesFor(f).some(([k]) => k === p)
 
 import { HAND_LOOK0, nailGeometry, nailMaterial, type HandLook, type NailFit } from './nails'
-import { REALISTIC_URLS, aoWeights, prepareSkinMaps, realisticArmMaterial, realisticHandMaterial } from './realisticSkin'
-const SKIN_URLS: string[] = [...REALISTIC_URLS]
+import { ELENA_URLS, prepareSkinMaps, realisticArmMaterial, realisticHandMaterial } from './realisticSkin'
 const URL_R = '/hands/right.glb', URL_L = '/hands/left.glb'
+const ELENA_R = '/hands/elena/right.glb', ELENA_L = '/hands/elena/left.glb'
 const HAND_SCALE = 10 * 1.05   // asset is in metres; 1.05 gives an average adult hand, about 180 mm wrist to fingertip
 const FINGERS = ['index-finger', 'middle-finger', 'ring-finger', 'pinky-finger'] as const
 const JOINTS = ['metacarpal', 'phalanx-proximal', 'phalanx-intermediate', 'phalanx-distal', 'tip']
@@ -485,6 +486,12 @@ function setBone(rig: Rig, name: string, M: THREE.Matrix4) {
   const r = rig.rest[name], b = rig.bones[name]
   _m.compose(r.p, r.q, _s.set(1, 1, 1)).premultiply(M).decompose(b.position, b.quaternion, _s)
 }
+/** Elena's thumb has a middle phalanx the WebXR chain does not pose. It rides with the proximal bone, so the
+ *  skin stays attached, and the distal bone still bends the tip. Classic rigs have no such bone. */
+function followThumbMid(rig: Rig, boneM: Record<string, THREE.Matrix4>) {
+  const M = boneM['thumb-phalanx-proximal']
+  if (M && rig.bones['thumb-phalanx-intermediate']) setBone(rig, 'thumb-phalanx-intermediate', M)
+}
 
 // Thumb pad: which side of the distal phalanx is the pad (+1 or -1 along curl axis x bone), how far it should face into
 // the glass (1 = straight down, 0.85 leans back so the nail shows from above and behind), and how hard to ask.
@@ -549,6 +556,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     const M = new THREE.Matrix4()
     if (pre) pre(M)
     names.forEach((n, i) => { if (i < angles.length) hinge(M, P(n), axes[i], angles[i]); setBone(rig, n, M); boneM[n] = M.clone() })
+    followThumbMid(rig, boneM)
   }
   const boneM: Record<string, THREE.Matrix4> = {}
   const close = (names: string[], axes: THREE.Vector3[], angles: number[], from: number, max: number[], pre?: (M: THREE.Matrix4) => void) => {
@@ -668,6 +676,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       const M = new THREE.Matrix4(); hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h)
       const a = [x[2], x[3], x[4] - (tt?.bend ?? 0)].map(deg)
       THUMB.forEach((n, i) => { if (i < 3) hinge(M, P(n), axesT[i], a[i]); if (i === 1) hinge(M, P(n), rollAxis, deg(x[5]) * h); setBone(rig, n, M); boneM[n] = M.clone() })
+      followThumbMid(rig, boneM)
     }
     const pad = () => padRest.clone().transformDirection(boneM[THUMB[2]]).transformDirection(rig.root.matrixWorld)
     if (import.meta.env.DEV) (globalThis as { __thumbPad?: () => THREE.Vector3 }).__thumbPad = pad
@@ -754,7 +763,7 @@ function armFrame(rig: Rig, F: THREE.Vector3, N: THREE.Vector3) {
 // ---------- forearm ----------
 // The hand models stop at the wrist, which shows as a flat cut whenever the arm points at the camera. A tapered,
 // slightly flattened tube continues the wrist back along the arm, out of frame. Classic shares the skin material;
-// realistic uses its own pore material, because the lathe unwrap is not the hand atlas. Tagged as hand, so the AI hands mask covers it too.
+// realistic uses a flat colour taken from the hand albedo, because the lathe unwrap is not the hand atlas. Tagged as hand, so the AI hands mask covers it too.
 let armGeo: THREE.BufferGeometry | null = null
 /** Side-to-side widening of the forearm tube at distance y past the wrist joint. */
 function armWide(y: number) { return 1 + 0.36 * (1 - THREE.MathUtils.smoothstep(y, 0.1, 1.0)) }
@@ -809,8 +818,9 @@ export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTR
 
 function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture; sp: SpectralOptions; rot: HandRot; idle: IdleLevel; look: HandLook }) {
   const motion = useMemo(() => ({ right: new HandMotion(), left: new HandMotion() }), [])
-  const right = useGLTF(URL_R), left = useGLTF(URL_L)
-  const skinTex = useTexture(SKIN_URLS)
+  const classicRight = useGLTF(URL_R), classicLeft = useGLTF(URL_L)
+  const elenaRight = useGLTF(ELENA_R), elenaLeft = useGLTF(ELENA_L)
+  const skinTex = useTexture(ELENA_URLS)
   const { gl } = useThree()
   useLayoutEffect(() => {
     prepareSkinMaps(skinTex)
@@ -818,19 +828,22 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     for (const t of skinTex) t.anisotropy = max
   }, [skinTex, gl])
   const group = useRef<THREE.Group>(null)
-  const rigs = useMemo(() => ({ right: makeRig(right.scene), left: makeRig(left.scene) }), [right.scene, left.scene])
   const spectral = tone === 'spectral'
   const spm = useMemo<SpectralMats | null>(() => spectral ? spectralMaterials(SPECTRAL_DEFAULTS) : null, [spectral])
   useEffect(() => () => spm?.dispose(), [spm])
   const photoSkin = tone !== 'spectral' && tone !== 'silhouette'
   const realistic = photoSkin && (look.style ?? 'realistic') !== 'classic'
+  const rigs = useMemo(() => realistic
+    ? { right: makeRig(elenaRight.scene), left: makeRig(elenaLeft.scene) }
+    : { right: makeRig(classicRight.scene), left: makeRig(classicLeft.scene) },
+    [realistic, classicRight.scene, classicLeft.scene, elenaRight.scene, elenaLeft.scene])
   const toneRec = SKIN_TONES[tone] ?? SKIN_TONES.fair
   const mat = useMemo(() => {
     if (spm) return spm.body
     if (realistic) return realisticHandMaterial(toneRec, skinTex)
     return skinMaterial(tone)
   }, [tone, spm, realistic, skinTex, toneRec])
-  const armMat = useMemo(() => realistic ? realisticArmMaterial(toneRec, skinTex[4]) : null, [realistic, toneRec, skinTex])
+  const armMat = useMemo(() => realistic ? realisticArmMaterial(toneRec) : null, [realistic, toneRec])
   useEffect(() => () => { if (!spm) mat.dispose() }, [mat, spm])
   useEffect(() => () => { armMat?.dispose() }, [armMat])
   // live uniforms: tint, transparency and the three effects
@@ -841,17 +854,6 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     const fade = look.arm === false ? 1 : 0; u.uArmFade.value = fade; spm.hull.uniforms.uArmFade.value = fade
   }, [spm, sp.tint, sp.line, sp.seeBlur, sp.transparency, sp.glimmer, sp.shimmer, sp.stars, sp.mass, sp.glow, sp.rim, sp.contours, look.arm])
   const { size } = useThree()
-  const aoTarget = useRef(new THREE.Vector4())
-  useLayoutEffect(() => {
-    const mix = mat.userData.aoMix as THREE.Vector4 | undefined
-    if (mix) aoWeights(pose, mix)
-  }, [mat])
-  useFrame((_, dt) => {
-    const mix = mat.userData.aoMix as THREE.Vector4 | undefined
-    if (!mix) return
-    aoWeights(pose, aoTarget.current)
-    mix.lerp(aoTarget.current, 1 - Math.exp(-5 * Math.min(0.05, dt)))
-  })
   useFrame(({ clock }, dt) => {
     for (const side of ['right', 'left'] as const) if (motion[side].step(dt, clock.elapsedTime, idle) && spm && rigs[side].root.parent) reskinSpectral(rigs[side].mesh)
   })
@@ -866,7 +868,8 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     return { right: measureNails(rigs.right, 'right'), left: measureNails(rigs.left, 'left') } }, [rigs, build])
   const nailMat = useMemo(() => spm ? spm.body : nailMaterial(SKIN_TONES[tone]?.color ?? SKIN_TONES.fair.color, look.nailColor ?? (tone === 'silhouette' ? SKIN_TONES.silhouette?.color ?? null : null)), [spm, tone, look.nailColor])
   useEffect(() => () => { if (!spm) nailMat.dispose() }, [nailMat, spm])
-  const nailsOn = look.nails !== false, nailLen = nailsOn ? look.nailLen : 0
+  // Elena's mesh already has sculpted nails, so the procedural plates stay off in Realistic. Classic is unchanged.
+  const nailsOn = look.nails !== false && !realistic, nailLen = nailsOn ? look.nailLen : 0
   const nails = useMemo(() => {
     const out = { right: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[]; outline: number[] }[], left: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[]; outline: number[] }[] }
     if (nailsOn) for (const side of ['right', 'left'] as const) for (const sp of spots[side]) {
@@ -964,6 +967,6 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   useEffect(() => () => { const g = group.current; for (const side of ['right', 'left'] as const) g?.remove(rigs[side].root, arms[side]); solved.current = {} }, [rigs, arms])
   return <group ref={group} userData={{ noBounds: true }} />
 }
-useGLTF.preload(URL_R); useGLTF.preload(URL_L); useTexture.preload(SKIN_URLS)
+useGLTF.preload(URL_R); useGLTF.preload(URL_L); useGLTF.preload(ELENA_R); useGLTF.preload(ELENA_L); useTexture.preload(ELENA_URLS)
 
 if (import.meta.hot) import.meta.hot.dispose(() => { poreTex?.dispose(); poreTex = null; armGeo?.dispose(); armGeo = null })
