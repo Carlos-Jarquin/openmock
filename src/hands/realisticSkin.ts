@@ -18,7 +18,7 @@ export function prepareSkinMaps(maps: THREE.Texture[]) {
   albedo.colorSpace = THREE.SRGBColorSpace
   for (const t of [normal, surface, ao, pores]) t.colorSpace = THREE.NoColorSpace
   pores.wrapS = pores.wrapT = THREE.RepeatWrapping
-  pores.repeat.set(12, 18)
+  pores.repeat.set(18, 28)
   for (const t of maps) { t.flipY = true; t.needsUpdate = true }
 }
 
@@ -73,7 +73,7 @@ function patchedPars() {
   src = patchOnce(
     src,
     /reflectedLight\.directDiffuse \+= lightColor \* material\.diffuseContribution \* LTC_Evaluate\( normal, viewDir, position, mat3\( 1\.0 \), rectCoords \);/,
-    `float skinLtc = LTC_Evaluate( normal, viewDir, position, mat3( 1.0 ), rectCoords );
+    `vec3 skinLtc = LTC_Evaluate( normal, viewDir, position, mat3( 1.0 ), rectCoords );
 		reflectedLight.directDiffuse += lightColor * material.diffuseContribution * skinLtc;
 		float skinMatteR = mix( 0.4, 1.0, smoothstep( 0.0, 0.08, specularIntensity ) );
 		reflectedLight.directDiffuse += lightColor * uSSS * gThin * skinMatteR * 0.65 * material.diffuseContribution * LTC_Evaluate( - normal, viewDir, position, mat3( 1.0 ), rectCoords );`,
@@ -124,8 +124,8 @@ float gCavity;
 		gThin = surf.r;
 		gMask = surf.b;
 		vec4 aoTex = texture2D( tAO, vMapUv );
-		gCavity = mix( 1.0, dot( aoTex, uAOMix ), 0.82 );
-		diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 1.0, 0.78, 0.72 ), ( 1.0 - gThin ) * 0.42 );
+		gCavity = mix( 1.0, dot( aoTex, uAOMix ), 0.55 );
+		diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 1.0, 0.86, 0.82 ), ( 1.0 - gThin ) * 0.16 );
 	}
 #endif
 #include <lights_physical_fragment>`
@@ -172,7 +172,7 @@ export function realisticHandMaterial(tone: SkinTone, maps: THREE.Texture[]) {
   const mat = physical(tone, {
     map: albedo,
     normalMap: normal,
-    normalScale: new THREE.Vector2(0.55, 0.55),
+    normalScale: new THREE.Vector2(0.28, 0.28),
     roughness: 1,
     roughnessMap: surface,
   })
@@ -188,7 +188,7 @@ export function realisticHandMaterial(tone: SkinTone, maps: THREE.Texture[]) {
     tSurface: { value: surface },
     tAO: { value: ao },
   })
-  mat.customProgramCacheKey = () => 'om-skin-hand-1'
+  mat.customProgramCacheKey = () => 'om-skin-hand-3'
   return mat
 }
 
@@ -196,10 +196,10 @@ export function realisticHandMaterial(tone: SkinTone, maps: THREE.Texture[]) {
 export function realisticArmMaterial(tone: SkinTone, pores: THREE.Texture) {
   const mat = physical(tone, {
     normalMap: pores,
-    normalScale: new THREE.Vector2(0.35, 0.35),
-    roughness: 0.62,
+    normalScale: new THREE.Vector2(0.035, 0.035),
+    roughness: 0.58,
   })
   mat.onBeforeCompile = (shader) => compileSkin(shader as SkinShader, 'arm', {})
-  mat.customProgramCacheKey = () => 'om-skin-arm-1'
+  mat.customProgramCacheKey = () => 'om-skin-arm-4'
   return mat
 }

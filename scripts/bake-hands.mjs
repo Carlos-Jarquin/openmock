@@ -312,33 +312,32 @@ function shadeTexel(P, N, T, tw, palm, along, bone, u, vAlong) {
   const back = palm < 0 ? -palm : 0
   const front = palm > 0 ? palm : 0
   let r = 1, g = 0.985, b = 0.97
-  // back of the hand: a little pinker and deeper. Palm: lighter, slightly yellow.
-  if (back > 0) { const k = smooth(back, 0.02, 0.55); r = lerp(r, 0.98, k * 0.35); g = lerp(g, 0.80, k * 0.55); b = lerp(b, 0.76, k * 0.5) }
-  if (front > 0) { const k = smooth(front, 0.05, 0.6); r = lerp(r, 1, k * 0.45); g = lerp(g, 0.90, k * 0.35); b = lerp(b, 0.80, k * 0.28) }
+  // A light modulation of the swatch: the back is a touch warmer, the palm a touch lighter.
+  if (back > 0) { const k = smooth(back, 0.05, 0.6); r = lerp(r, 0.99, k * 0.1); g = lerp(g, 0.94, k * 0.18); b = lerp(b, 0.91, k * 0.14) }
+  if (front > 0) { const k = smooth(front, 0.08, 0.65); r = lerp(r, 1, k * 0.2); g = lerp(g, 0.96, k * 0.16); b = lerp(b, 0.9, k * 0.12) }
   const finger = bone === 'prox' || bone === 'mid' || bone === 'distal' || bone === 'thumb' || bone === 'tdistal'
   // knuckle blush on the back, just past each joint
   let knuckle = 0
   if (finger && bone !== 'thumb') {
     const band = Math.exp(-((along - 0.12) ** 2) / 0.0045) + 0.55 * Math.exp(-((along - 0.0) ** 2) / 0.003)
     knuckle = band * smooth(back, 0.05, 0.7)
-    r = lerp(r, 0.99, knuckle * 0.28); g = lerp(g, 0.74, knuckle * 0.34); b = lerp(b, 0.68, knuckle * 0.3)
+    r = lerp(r, 0.99, knuckle * 0.14); g = lerp(g, 0.88, knuckle * 0.16); b = lerp(b, 0.84, knuckle * 0.14)
   }
   // fingertips flush
   if (bone === 'distal' || bone === 'tdistal') {
     const tip = smooth(along, 0.45, 0.95)
-    r = lerp(r, 0.99, tip * 0.22); g = lerp(g, 0.72, tip * 0.28); b = lerp(b, 0.66, tip * 0.24)
+    r = lerp(r, 0.99, tip * 0.1); g = lerp(g, 0.9, tip * 0.12); b = lerp(b, 0.86, tip * 0.1)
   }
-  if (bone === 'wrist') { r *= 0.93; g *= 0.94; b *= 0.97 }
   // mottling and faint freckles, stable in bind space so they don't swim
   const n1 = fbm(P.x * 42, P.y * 42, P.z * 42, 4)
   const n2 = fbm(P.x * 160, P.y * 160, P.z * 160, 3)
-  r += n1 * 0.022 + n2 * 0.008; g += n1 * 0.016 + n2 * 0.006; b += n1 * 0.012
+  r += n1 * 0.012 + n2 * 0.004; g += n1 * 0.008 + n2 * 0.003; b += n1 * 0.006
   const fr = fbm(P.x * 110 + 4, P.y * 110, P.z * 110, 4)
-  if (fr > 0.55 && back > 0.2) { const k = smooth(fr, 0.55, 0.85) * 0.07; r -= k * 0.6; g -= k; b -= k * 0.85 }
+  if (fr > 0.62 && back > 0.35) { const k = smooth(fr, 0.62, 0.9) * 0.035; r -= k * 0.4; g -= k; b -= k * 0.7 }
   // veins on the back of the palm and wrist, very faint
   if ((bone === 'palm' || bone === 'wrist') && back > 0.15) {
     const vn = Math.sin(fbm(P.x * 28, P.y * 28, P.z * 28, 3) * 9)
-    const vein = smooth(vn, 0.55, 0.9) * 0.10 * smooth(back, 0.15, 0.5)
+    const vein = smooth(vn, 0.55, 0.9) * 0.04 * smooth(back, 0.15, 0.5)
     r -= vein * 0.55; g -= vein * 0.2; b += vein * 0.08
   }
   // palm creases painted in the palm plane (u across, v toward the fingers)
@@ -390,8 +389,8 @@ function shadeTexel(P, N, T, tw, palm, along, bone, u, vAlong) {
   const h0 = h(P.x, P.y, P.z)
   const hx = h(P.x + T.x * eps, P.y + T.y * eps, P.z + T.z * eps)
   const hy = h(P.x + B.x * eps, P.y + B.y * eps, P.z + B.z * eps)
-  let nx = (hx - h0) * 1.15
-  let ny = (hy - h0) * 1.15
+  let nx = (hx - h0) * 0.65
+  let ny = (hy - h0) * 0.65
   // wrinkles run across the finger, so their slope follows the bone axis
   if (crease > 0.1 || flex > 0.1) {
     const g = (crease + flex) * 0.85
@@ -473,7 +472,7 @@ function raster(mesh, fields) {
         const B = new THREE.Vector3().crossVectors(N, T).multiplyScalar(tw)
         const bdT = BD.dot(T), bdB = BD.dot(B)
         const knuckle = Math.exp(-((al - 0.12) ** 2) / 0.0045) * (pm < 0 ? smooth(-pm, 0, 0.45) : 0)
-        const dh = Math.cos((al - 0.12) * 48) * knuckle * 0.32
+        const dh = Math.cos((al - 0.12) * 48) * knuckle * 0.16
         s.nx += -dh * bdT
         s.ny += -dh * bdB
         const nl = Math.hypot(s.nx, s.ny, s.nz)
