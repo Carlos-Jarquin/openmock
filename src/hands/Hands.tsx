@@ -1,13 +1,15 @@
-// Procedurally posed hands that hold the device. The hand models are the WebXR "generic-hand" assets
-// (MIT, Amazon, github.com/immersive-web/webxr-input-profiles), see CREDITS.md. Each pose places the wrist
-// relative to the device, seats the palm on it, then closes each finger joint by joint until its skin touches
-// the device body (a rounded-box distance field built from the device's own measurements), so the grip fits
-// the 18 Pro and the 18 Pro Max at their real sizes. The hands sit inside the device group, so they follow
-// any camera angle.
-import { Suspense, useEffect, useMemo, useRef } from 'react'
-import { useGLTF } from '@react-three/drei'
+// Procedurally posed hands that hold the device. Classic and Silhouette use the WebXR "generic-hand" assets
+// (MIT, Amazon, github.com/immersive-web/webxr-input-profiles). Realistic, Studio, and Spectral use Elena FF's
+// "Rigged hand" (CC BY-SA 4.0, public/hands/elena), re-rigged onto the same bone names. See CREDITS.md. Each pose places
+// the wrist relative to the device, seats the palm on it, then closes each finger joint by joint until its
+// skin touches the device body (a rounded-box distance field built from the device's own measurements), so
+// the grip fits the 18 Pro and the 18 Pro Max at their real sizes. The hands sit inside the device group,
+// so they follow any camera angle.
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useGLTF, useTexture } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
-import { spectralMaterials, buildSpectral, reskinSpectral, updateSpectral, addHull, removeHull, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
+import { spectralMaterials, buildSpectral, reskinSpectral, updateSpectral, addHull, removeHull, ensureSmooth, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
+import { bakeSkin, skinAt, skinCache, type SkinCache } from './skinFast'
 import { LINE_LAYER } from '../sketch/Sketch'
 import * as THREE from 'three'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
@@ -62,7 +64,10 @@ export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] =>
 export const poseOk = (f: HandFit | null | undefined, p: HandPose) => p === 'off' || posesFor(f).some(([k]) => k === p)
 
 import { HAND_LOOK0, nailGeometry, nailMaterial, type HandLook, type NailFit } from './nails'
+import { ARM_URLS, ELENA_URLS, prepareArmMaps, prepareSkinMaps, realisticArmMaterial, realisticHandMaterial } from './realisticSkin'
+import { STUDIO_URL, prepareStudioMap, studioArmMaterial, studioHandMaterial } from './studioSkin'
 const URL_R = '/hands/right.glb', URL_L = '/hands/left.glb'
+const ELENA_R = '/hands/elena/right.glb', ELENA_L = '/hands/elena/left.glb'
 const HAND_SCALE = 10 * 1.05   // asset is in metres; 1.05 gives an average adult hand, about 180 mm wrist to fingertip
 const FINGERS = ['index-finger', 'middle-finger', 'ring-finger', 'pinky-finger'] as const
 const JOINTS = ['metacarpal', 'phalanx-proximal', 'phalanx-intermediate', 'phalanx-distal', 'tip']
@@ -104,7 +109,7 @@ const xfPlan = (p: HandPlan, m: THREE.Matrix4): HandPlan => {
 }
 
 /** Poses in device space: x right and y up seen from the front, z out of the screen. Sizes scale with the device. */
-function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail = 0, flat = nail, size = 1): HandPlan[] {
+function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail = 0, flat = nail, size = 1, sculpted = false): HandPlan[] {
   // Dev only: a test harness can override the plan to tune poses.
   const dbg = import.meta.env.DEV ? (globalThis as { __handPlan?: (f: HandFit, v: typeof v3) => HandPlan[] | undefined }).__handPlan?.(f, v3) : undefined
   if (dbg) return dbg
@@ -115,7 +120,23 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
   // Fingertip targets: the solver bends each chain until its tip reaches the target without entering the phone.
   const back = (x: number, y: number, spread: number): FingerPlan => ({ curl: [0, 20, 6, 4], spread, tip: v3(x, y, -ht - 0.05) })
   const edge = (y: number, spread: number): FingerPlan => ({ curl: [0, 20, 6, 4], spread, tip: v3(-hw - 0.045, y, -ht * 0.25) })
-  const grip: HandPlan = {
+  // Elena's fingers are thicker than the generic hand, and the thumb has an extra joint. The same targets
+  // that suit Classic send those fingers through the phone and fold the thumb into one knuckle. This grip keeps the
+  // palm on the right edge, lays the thumb across the glass, and rests the fingertips around the far side.
+  const grip: HandPlan = sculpted ? {
+    // The palm sits against the right edge. The thumb reaches onto the glass, clear of the bezel,
+    // and the fingertips come around the far side.
+    side: 'right', knuckle: v3(hw + 0.08, -hh * 0.3, -ht - 0.07), F: v3(-0.18, 0.88, -0.44), N: v3(-0.82, 0.04, 0.52), seat: 0.01,
+    fingers: [
+      { curl: [0, 30, 22, 12], spread: 5, tip: v3(-hw - 0.03, -hh * 0.04, 0.01) },
+      { curl: [0, 36, 26, 14], spread: 0, tip: v3(-hw - 0.035, -hh * 0.22, -0.005) },
+      { curl: [0, 42, 30, 16], spread: -5, tip: v3(-hw - 0.02, -hh * 0.42, -0.02) },
+      { curl: [0, 52, 36, 18], spread: -8, tip: v3(-hw * 0.05, -hh - 0.04, -0.01) },
+    ],
+    // The thumb lies across the glass, pad down and the nail clear of the bezel. The tip
+    // target sits in from the right edge; poseThumb keeps the last joint at a gentle bend.
+    thumb: { oppose: 14, abduct: 8, curl: [4, 8, 6], tip: v3(hw - 0.26, 0.02, ht + 0.03) },
+  } : {
     // The right edge rests in the palm, the thumb lies along the right frame, the fingertips reach the left edge
     // and the little finger supports the bottom.
     side: 'right', knuckle: v3(hw + 0.12, -hh * 0.42, -ht - 0.1), F: v3(-0.1, 0.9, -0.42), N: v3(-0.85, 0, 0.5), seat: 0.004,
@@ -248,6 +269,14 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     // Held up from the lower right: palm behind the lower right of the phone, the wrist dropping out of frame,
     // fingertips curling round the left edge and the thumb on the right frame.
     const g = (globalThis as { __holdTweak?: Partial<HandPlan> }).__holdTweak
+    if (sculpted) return [{ ...grip, knuckle: v3(hw + 0.04, -hh * 0.08, -ht - 0.05), F: v3(-0.38, 0.82, -0.42), N: v3(-0.72, 0.08, 0.58), seat: 0.012,
+      fingers: [
+        { curl: [0, 34, 26, 14], spread: 6, tip: v3(-hw - 0.02, hh * 0.22, ht * 0.4) },
+        { curl: [0, 40, 30, 16], spread: 1, tip: v3(-hw - 0.02, hh * 0.02, ht * 0.25) },
+        { curl: [0, 46, 34, 18], spread: -5, tip: v3(-hw - 0.01, -hh * 0.2, ht * 0.1) },
+        { curl: [0, 54, 38, 20], spread: -9, tip: v3(-hw * 0.1, -hh - 0.04, ht * 0.05) },
+      ],
+      thumb: { oppose: 12, abduct: 8, curl: [4, 8, 4], tip: v3(hw - 0.16, hh * 0.08, ht + 0.045) }, ...(import.meta.env.DEV ? g : {}) }]
     return [{ ...grip, knuckle: v3(hw + 0.08, -hh * 0.3, -ht - 0.12), F: v3(-0.25, 0.9, -0.38), N: v3(-0.8, 0.05, 0.55), seat: 0.006,
       fingers: [hold(hh * 0.05, 3), hold(-hh * 0.15, 0), hold(-hh * 0.35, -3), hold(-hh * 0.55, -6)],
       thumb: { oppose: 0, abduct: 0, curl: [0, 0, 0], tip: v3(hw + 0.05, hh * 0.18, ht * 0.25) }, ...(import.meta.env.DEV ? g : {}) }]
@@ -285,7 +314,18 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     const ft = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && fy(o.tip) })
     return [r, { ...r, side: 'left', knuckle: fy(r.knuckle), F: fy(r.F), N: fy(r.N), fingers: r.fingers.map(ft), thumb: ft(r.thumb) }]
   }
-  if (pose === 'pinch') return [{
+  if (pose === 'pinch') return [sculpted ? {
+    // Presenting, with the thicker hand: two fingertips around the lower left edge, the ring under the bottom,
+    // the little finger tucked, and the thumb on the lower front bezel. The screen stays clear.
+    side: 'right', knuckle: v3(hw + 0.06, -hh * 0.55, -ht - 0.06), F: v3(-0.4, 0.78, -0.48), N: v3(-0.82, 0.02, 0.5), seat: 0.014,
+    fingers: [
+      { curl: [0, 36, 28, 14], spread: 4, tip: v3(-hw * 0.15, -hh * 0.35, ht * 0.2) },
+      { curl: [0, 42, 32, 16], spread: 0, tip: v3(-hw * 0.05, -hh * 0.55, ht * 0.1) },
+      { curl: [0, 50, 36, 18], spread: -4, tip: v3(hw * 0.15, -hh - 0.04, 0) },
+      { curl: [0, 72, 70, 40], spread: -8 },
+    ],
+    thumb: { oppose: 8, abduct: 14, curl: [6, 12, 6], tip: v3(hw - 0.03, -hh * 0.42, ht + 0.008) },
+  } : {
     // Presenting: held low on the right edge, thumb on the frame, two fingertips on the back, the ring finger
     // under the bottom edge and the little finger tucked. The screen stays clear.
     side: 'right', knuckle: v3(hw + 0.2, -hh * 0.7, -ht - 0.2), F: v3(-0.25, 0.85, -0.45), N: v3(-0.9, 0, 0.4), seat: 0.03,
@@ -417,6 +457,7 @@ function makeRig(src: THREE.Object3D): Rig {
   // hand did nothing); a sphere that always passes lets the skinned, per-triangle raycast find the posed skin
   m.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e4)
   m.userData.hand = true   // the AI hands pass finds hand meshes by this
+  if (!m.geometry.getAttribute('tangent')) { try { m.geometry.computeTangents() } catch { /* classic skin does not sample a normal map */ } }
   // owner[v] = name of the bone with the largest weight on vertex v
   const si = m.geometry.getAttribute('skinIndex'), sw = m.geometry.getAttribute('skinWeight'), owner: string[] = []
   for (let v = 0; v < si.count; v++) {
@@ -432,16 +473,63 @@ function makeRig(src: THREE.Object3D): Rig {
  *  geometry from the asset's original positions, so caches keyed on the geometry (Spectral lines, edges) start fresh. */
 const NEXT: Record<string, string> = { wrist: 'middle-finger-phalanx-proximal', 'thumb-metacarpal': 'thumb-phalanx-proximal', 'thumb-phalanx-proximal': 'thumb-phalanx-distal', 'thumb-phalanx-distal': 'thumb-tip' }
 for (const f of FINGERS) for (let i = 0; i < 4; i++) NEXT[`${f}-${JOINTS[i]}`] = `${f}-${JOINTS[i + 1]}`
+/** Bone-to-bone segments for girth and Spectral mass. Elena's thumb has a middle phalanx the classic chain skips;
+ *  the cuff is skinned to `forearm`. Classic has neither bone, so its map stays the same. */
+function segmentMap(rig: Rig): Record<string, [THREE.Vector3, THREE.Vector3]> {
+  const m = rig.mesh, bones = m.skeleton.bones
+  const J = (n: string) => { const k = bones.findIndex(b => b.name === n); return new THREE.Vector3().setFromMatrixPosition(m.skeleton.boneInverses[k].clone().invert()) }
+  const next: Record<string, string> = { ...NEXT }
+  if (rig.bones['thumb-phalanx-intermediate']) {
+    next['thumb-phalanx-proximal'] = 'thumb-phalanx-intermediate'
+    next['thumb-phalanx-intermediate'] = 'thumb-phalanx-distal'
+  }
+  const seg: Record<string, [THREE.Vector3, THREE.Vector3]> = {}
+  for (const n of Object.keys(next)) if (rig.bones[n] && rig.bones[next[n]]) seg[n] = [J(n), J(next[n])]
+  if (rig.bones.forearm && rig.bones.wrist) seg.forearm = [J('forearm'), J('wrist')]
+  for (const f of [...FINGERS, 'thumb']) if (seg[`${f}-phalanx-distal`]) seg[`${f}-tip`] = seg[`${f}-phalanx-distal`]
+  return seg
+}
+/** Vertices the solver's contact loops actually skin. Classic keeps every vertex (the mesh is already small).
+ *  Elena keeps the outer shell of each bone, and every vertex on the outer half of a fingertip, so the pad
+ *  that meets the glass is still in the set. A full-mesh pass confirms the result. */
+function buildProxy(rig: Rig): Uint32Array {
+  const n = rig.owner.length
+  if (n <= 4000) { const a = new Uint32Array(n); for (let i = 0; i < n; i++) a[i] = i; return a }
+  const mesh = rig.mesh, pa = mesh.geometry.getAttribute('position'), seg = segmentMap(rig)
+  const groups = new Map<string, number[]>(), chosen = new Set<number>()
+  for (let i = 0; i < n; i++) { const g = groups.get(rig.owner[i]); if (g) g.push(i); else groups.set(rig.owner[i], [i]) }
+  const v = new THREE.Vector3(), rel = new THREE.Vector3()
+  for (const [owner, ids] of groups) {
+    const s = seg[owner]
+    const fine = owner.includes('distal') || owner.endsWith('-tip') || owner.includes('intermediate')
+    if (!s) { const stride = fine ? 1 : 3; for (let k = 0; k < ids.length; k += stride) chosen.add(ids[k]); continue }
+    const ab = s[1].clone().sub(s[0]); const len = Math.max(1e-6, ab.length()); ab.multiplyScalar(1 / len)
+    const u = Math.abs(ab.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)
+    u.addScaledVector(ab, -u.dot(ab)).normalize()
+    const side = new THREE.Vector3().crossVectors(ab, u)
+    const angN = fine ? 24 : 14, axN = fine ? 12 : 7, bins = new Map<number, { i: number; r: number }>()
+    for (const i of ids) {
+      v.fromBufferAttribute(pa, i).applyMatrix4(mesh.bindMatrix); rel.copy(v).sub(s[0])
+      const axial = rel.dot(ab), t = Math.max(0, Math.min(axN - 1, Math.floor((axial / len) * axN)))
+      const rx = rel.dot(u), rz = rel.dot(side), ang = Math.atan2(rz, rx)
+      const a = Math.max(0, Math.min(angN - 1, Math.floor(((ang + Math.PI) / (Math.PI * 2)) * angN)))
+      const r = rx * rx + rz * rz, key = t * angN + a, prev = bins.get(key)
+      if (!prev || r > prev.r) bins.set(key, { i, r })
+      if (fine && axial / len > 0.45) chosen.add(i)
+    }
+    for (const b of bins.values()) chosen.add(b.i)
+  }
+  const out = new Uint32Array(chosen.size); let k = 0; for (const i of chosen) out[k++] = i
+  return out
+}
 function applyBuild(rig: Rig, build: number) {
   const m = rig.mesh, base = (m.userData.baseGeo ??= m.geometry) as THREE.BufferGeometry
   if ((m.userData.build ?? 1) === build && m.geometry !== base || build === 1 && m.geometry === base) return
   const geo = build === 1 ? base : base.clone()
   if (build !== 1) {
-    const pos = geo.getAttribute('position') as THREE.BufferAttribute, bones = m.skeleton.bones
-    const J = (n: string) => { const k = bones.findIndex(b => b.name === n); return new THREE.Vector3().setFromMatrixPosition(m.skeleton.boneInverses[k].clone().invert()) }
-    const seg: Record<string, [THREE.Vector3, THREE.Vector3]> = {}
-    for (const n of Object.keys(NEXT)) if (rig.bones[n] && rig.bones[NEXT[n]]) seg[n] = [J(n), J(NEXT[n])]
-    for (const f of [...FINGERS, 'thumb']) seg[`${f}-tip`] = seg[`${f}-phalanx-distal`]
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute
+    const seg = segmentMap(rig)
+    geo.deleteAttribute('smoothNormal'); geo.userData = { ...geo.userData, annotated: undefined }
     const inv = m.bindMatrix.clone().invert(), v = new THREE.Vector3(), c = new THREE.Vector3(), ab = new THREE.Vector3()
     for (let i = 0; i < pos.count; i++) { const s = seg[rig.owner[i]]; if (!s) continue
       v.fromBufferAttribute(pos, i).applyMatrix4(m.bindMatrix)
@@ -458,18 +546,25 @@ function applyBuild(rig: Rig, build: number) {
  *  at the wrist, left out of the Spectral outline so the hand runs straight into the forearm. */
 function annotate(rig: Rig) {
   const m = rig.mesh, geo = m.geometry; if (geo.userData.annotated) return
-  const pos = geo.getAttribute('position'), bones = m.skeleton.bones, n = pos.count, mass = new Float32Array(n), cut = new Float32Array(n)
+  const pos = geo.getAttribute('position'), n = pos.count, mass = new Float32Array(n), cut = new Float32Array(n), along = new Float32Array(n)
+  const bones = m.skeleton.bones
   const J = (k: string) => { const i = bones.findIndex(b => b.name === k); return new THREE.Vector3().setFromMatrixPosition(m.skeleton.boneInverses[i].clone().invert()) }
-  const seg: Record<string, [THREE.Vector3, THREE.Vector3]> = {}
-  for (const k of Object.keys(NEXT)) if (rig.bones[k] && rig.bones[NEXT[k]]) seg[k] = [J(k), J(NEXT[k])]
-  for (const f of [...FINGERS, 'thumb']) seg[`${f}-tip`] = seg[`${f}-phalanx-distal`]
+  const seg = segmentMap(rig)
   const W = J('wrist'), out = W.clone().sub(J('middle-finger-phalanx-proximal')).normalize(), v = new THREE.Vector3(), ab = new THREE.Vector3(), arm = new Float32Array(n)
+  let rim = -Infinity
   for (let i = 0; i < n; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(m.bindMatrix); const sg = seg[rig.owner[i]]
     if (sg) { ab.subVectors(sg[1], sg[0]); const t = Math.max(0, Math.min(1, v.clone().sub(sg[0]).dot(ab) / Math.max(1e-9, ab.lengthSq())))
       const r = v.distanceTo(sg[0].clone().addScaledVector(ab, t)); mass[i] = THREE.MathUtils.smoothstep(r, 0.007, 0.021) }
-    const d = v.clone().sub(W).dot(out); arm[i] = d * 10
-    cut[i] = rig.owner[i] === 'wrist' && d > -0.004 ? 1 : 0 }
+    const d = v.clone().sub(W).dot(out); arm[i] = d * 10; along[i] = d
+    if (rig.owner[i] === 'forearm' || rig.owner[i] === 'wrist') rim = Math.max(rim, d) }
+  // The open wrist rim is left out of the Spectral hull so the hand runs into the forearm. Classic's rim is
+  // wrist-owned. Elena's cuff is skinned to `forearm`, so the last few millimetres of that cuff are the rim.
+  for (let i = 0; i < n; i++) {
+    const o = rig.owner[i], d = along[i]
+    cut[i] = (o === 'wrist' && d > -0.004) || (o === 'forearm' && d > rim - 0.005) ? 1 : 0
+  }
   geo.setAttribute('aMass', new THREE.BufferAttribute(mass, 1)); geo.setAttribute('aCut', new THREE.BufferAttribute(cut, 1)); geo.setAttribute('aArm', new THREE.BufferAttribute(arm, 1)); geo.userData.annotated = true
+  ensureSmooth(geo)
 }
 
 const _m = new THREE.Matrix4(), _t = new THREE.Matrix4(), _r = new THREE.Matrix4(), _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3()
@@ -481,6 +576,14 @@ function hinge(M: THREE.Matrix4, pivot: THREE.Vector3, axis: THREE.Vector3, ang:
 function setBone(rig: Rig, name: string, M: THREE.Matrix4) {
   const r = rig.rest[name], b = rig.bones[name]
   _m.compose(r.p, r.q, _s.set(1, 1, 1)).premultiply(M).decompose(b.position, b.quaternion, _s)
+}
+/** Elena's thumb has a middle phalanx the WebXR chain does not pose. poseThumb bends it on its own. This only
+ *  runs when that pose has not happened yet, so a later finger solve cannot fold the joint back onto the proximal bone.
+ *  Classic rigs have no such bone. */
+function followThumbMid(rig: Rig, boneM: Record<string, THREE.Matrix4>) {
+  if (boneM['thumb-phalanx-intermediate']) return
+  const M = boneM['thumb-phalanx-proximal']
+  if (M && rig.bones['thumb-phalanx-intermediate']) setBone(rig, 'thumb-phalanx-intermediate', M)
 }
 
 // Thumb pad: which side of the distal phalanx is the pad (+1 or -1 along curl axis x bone), how far it should face into
@@ -497,6 +600,7 @@ const DIP_HYPER = 8, NAIL_CLEAR = 0.015
 const padK = () => ({ flat: PAD_FLAT, w: 0, hyper: DIP_HYPER, ...(import.meta.env.DEV ? (globalThis as { __padK?: object }).__padK : {}) }) as { flat: number; w: number; hyper: number; patch?: number; dipk?: number }
 export const nailNeed = (nail: number) => NAIL_CLEAR + 0.01 * nail
 function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
+  const tSolve = import.meta.env.DEV ? performance.now() : 0
   const R = rig.rest, P = (n: string) => R[n].p
   const h = plan.side === 'right' ? 1 : -1
   // Rest frame: F along the palm to the middle knuckle, N out of the palm.
@@ -517,27 +621,47 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
 
   // Reset bones.
   for (const n in rig.bones) { rig.bones[n].position.copy(R[n].p); rig.bones[n].quaternion.copy(R[n].q) }
-  const pos = rig.mesh.geometry.getAttribute('position')
-  const update = () => rig.root.updateMatrixWorld(true)
-  const distAt = (i: number) => { _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); return sdf(_v.applyMatrix4(rig.mesh.matrixWorld), fit) }
-  const minDist = (filter: (b: string) => boolean) => {
+  // Spectral lines and hulls hang off the mesh. updateMatrixWorld would skin them on every iteration of the solve.
+  const parked: THREE.Object3D[] = []
+  for (const c of [...rig.mesh.children]) if (c.userData.spectral) { parked.push(c); rig.mesh.remove(c) }
+  try {
+  let cache = rig.mesh.userData.skinCache as SkinCache | undefined
+  if (!cache || cache.count !== rig.owner.length) cache = rig.mesh.userData.skinCache = skinCache(rig.mesh)
+  let proxy = rig.mesh.userData.proxy as Uint32Array | undefined
+  if (!proxy || proxy.length > cache.count) proxy = rig.mesh.userData.proxy = buildProxy(rig)
+  let skinDirty = true
+  const update = () => { rig.root.updateMatrixWorld(true); skinDirty = true }
+  const ensure = () => { if (!skinDirty) return; bakeSkin(rig.mesh, cache); skinDirty = false }
+  const distAt = (i: number) => { ensure(); return sdf(skinAt(cache, i, _v).applyMatrix4(rig.mesh.matrixWorld), fit) }
+  // ids null: every vertex. The iterative passes pass the proxy; the last pass passes null so the landed gap matches a full scan.
+  const minDist = (filter: (b: string) => boolean, ids: Uint32Array | null) => {
+    ensure(); const world = rig.mesh.matrixWorld, n = ids ? ids.length : cache.count
     let d = Infinity
-    for (let i = 0; i < pos.count; i++) {
-      if (!filter(rig.owner[i])) continue
-      _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); _v.applyMatrix4(rig.mesh.matrixWorld)
-      const s = sdf(_v, fit); if (s < d) d = s
-    }
+    for (let k = 0; k < n; k++) { const i = ids ? ids[k] : k; if (!filter(rig.owner[i])) continue
+      const s = sdf(skinAt(cache, i, _v).applyMatrix4(world), fit); if (s < d) d = s }
     return d
   }
   // Seat the palm on the device: move along the palm normal until the palm just touches (plus a hair of gap).
   update()
+  if (import.meta.env.DEV && !(globalThis as { __skinChk?: boolean }).__skinChk) {
+    ;(globalThis as { __skinChk?: boolean }).__skinChk = true
+    ensure(); const cmp = new THREE.Vector3(); let max = 0
+    for (let i = 0; i < cache.count; i += 13) { rig.mesh.getVertexPosition(i, cmp); const d = cmp.distanceTo(skinAt(cache, i, _v)); if (d > max) max = d }
+    ;(globalThis as { __skinErr?: number }).__skinErr = max
+  }
   if (plan.seat !== undefined) {
     const palm = (b: string) => b === 'wrist' || b.endsWith('metacarpal') && !b.startsWith('thumb')
-    for (let it = 0; it < 6; it++) {
-      const d = minDist(palm)
-      if (!isFinite(d) || Math.abs(d - plan.seat) < 0.0005) break
-      rig.root.position.addScaledVector(N1, d - plan.seat); update()
+    const seat = (ids: Uint32Array | null, tries: number) => {
+      for (let it = 0; it < tries; it++) {
+        const d = minDist(palm, ids)
+        if (!isFinite(d) || Math.abs(d - plan.seat!) < 0.0005) break
+        rig.root.position.addScaledVector(N1, d - plan.seat!); update()
+      }
     }
+    // Every vertex, not the proxy. The seated palm is where each finger's starting curl is chosen, and a
+    // fraction of a millimetre there sends the index around a different side of the phone. Fast skinning
+    // makes the full scan cheap; the proxy is for the contact passes that run many times.
+    seat(null, 6)
   }
 
   // Fingers: forward kinematics down each chain, closing joints until contact.
@@ -546,6 +670,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     const M = new THREE.Matrix4()
     if (pre) pre(M)
     names.forEach((n, i) => { if (i < angles.length) hinge(M, P(n), axes[i], angles[i]); setBone(rig, n, M); boneM[n] = M.clone() })
+    followThumbMid(rig, boneM)
   }
   const boneM: Record<string, THREE.Matrix4> = {}
   const close = (names: string[], axes: THREE.Vector3[], angles: number[], from: number, max: number[], pre?: (M: THREE.Matrix4) => void) => {
@@ -555,7 +680,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       const limit = deg(max[j - from] ?? 60), part = (b: string) => below.has(b) && set.has(b)
       // Skin already resting on the device at the start (the knuckle by a seated palm) does not count as new contact.
       const free: number[] = []
-      for (let i = 0; i < pos.count; i++) if (part(rig.owner[i]) && distAt(i) > 0.0008) free.push(i)
+      for (let i = 0; i < cache.count; i++) if (part(rig.owner[i]) && distAt(i) > 0.0008) free.push(i)
       while (angles[j] < limit) {
         angles[j] += deg(2)
         chainPose(names, axes, angles, pre); update()
@@ -593,7 +718,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
         for (const t of [0, 0.33, 0.66]) {
           if (k === 1 && t > 0.5) continue   // the knuckle itself may rest on the edge
           const q = wp.clone().lerp(wq, t), r = radius * (k === names.length - 1 ? 0.8 : 1), pen = r - sdf(q, fit)
-          if (pen > 0) c += 200 * pen * pen
+          if (pen > 0) c += (hasMid ? 900 : 200) * pen * pen
         }
       }
       for (let k = 0; k < x.length; k++) c += 2e-7 * (x[k] - x0[k]) ** 2
@@ -617,6 +742,10 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
   // closer to the glass than the clearance
   const touches: { owners: Set<string>; surf: THREE.Vector3; aim: THREE.Vector3; run: (aim: THREE.Vector3) => void; nail?: string; bend: number }[] = []
   const mcpOf: number[] = []; let lastMcp = 0
+  // Elena's finger skin sits further off the bone than the generic hand. The same 7 mm sphere let that skin enter the phone.
+  const hasMid = !!rig.bones['thumb-phalanx-intermediate']
+  const fingerR = hasMid ? 0.085 : 0.07
+  const thumbR = hasMid ? 0.09 : 0.08
   FINGERS.forEach((fn, i) => {
     const fp = plan.fingers[i], names = JOINTS.map(j => `${fn}-${j}`)
     // ring and little finger share tendons: keep the little finger's knuckle bend near the ring finger's
@@ -629,17 +758,36 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       const t: (typeof touches)[number] = { owners: new Set([names[3], names[4]]), surf: fp.tip.clone(), aim: fp.tip.clone(), nail: names[3], bend: 0, run: aim => {
         // pad down: the outer joint bends back a little (as a fingertip does when it presses), so the nail tilts up off the glass
         const apply = (x: number[]) => { lastMcp = x[1]; chainPose(names, axes, [0, x[1], x[2], x[2] * DIP_K * (padK().dipk ?? 0) - padK().hyper - 6 * nail - t.bend].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h)) }
-        reach(names.slice(1), aim, [fp.spread ?? 0, ...fp.curl.slice(1, 3)], [-SPREAD[i], ...MCP_LO], [SPREAD[i], ...MCP_HI], apply, 0.07, true, () => (couple?.() ?? 0) + nailLift(names))
+        reach(names.slice(1), aim, [fp.spread ?? 0, ...fp.curl.slice(1, 3)], [-SPREAD[i], ...MCP_LO], [SPREAD[i], ...MCP_HI], apply, fingerR, true, () => (couple?.() ?? 0) + nailLift(names))
       } }
       touches.push(t)
       return
     }
     if (fp.tip) {
       // Start from a contact wrap (so the finger begins outside the phone), then reach for the target.
-      chainPose(names, axes, angles, pre0); update(); close(names, axes, angles, 1, fp.max ?? [95, 95, 70], pre0)
+      // Elena's skin is thick enough that the contact wrap plants the finger on the near edge, and the
+      // reach cannot climb back out to the far side. Start that hand from the planned curl instead.
+      chainPose(names, axes, angles, pre0); update(); if (!hasMid) close(names, axes, angles, 1, fp.max ?? [95, 95, 70], pre0)
+      else {
+        // Pick a starting curl whose tip is near the target and whose bones stay outside the phone,
+        // so the wrap can come around the far edge instead of stopping on the near one.
+        let bestD = Infinity, best = angles.slice()
+        for (const degA of [[0, 18, 10, 6], [0, 36, 24, 12], [0, 52, 38, 18], [0, 68, 52, 26], [0, 84, 64, 32]]) {
+          const a = degA.map(deg)
+          chainPose(names, axes, a, pre0); update()
+          let pen = 0
+          for (let k = 1; k < names.length; k++) { const s = fingerR * 0.9 - sdf(rig.bones[names[k]].getWorldPosition(_v), fit); if (s > 0) pen += s }
+          const tip = rig.bones[names[4]].getWorldPosition(_v)
+          if (fp.tip.z < fit.T / 2 + 0.06 && tip.z > fit.T / 2 + 0.16) continue
+          const tipD = tip.distanceTo(fp.tip)
+          const d = tipD + (pen > 0.006 ? 1.5 + pen * 12 : pen * 4)
+          if (d < bestD) { bestD = d; best = a }
+        }
+        angles.splice(0, 4, ...best)
+      }
       const apply = (x: number[]) => { lastMcp = x[1]; chainPose(names, axes, [0, x[1], x[2], x[2] * DIP_K].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h)) }
       const x0 = [fp.spread ?? 0, ...angles.slice(1, 3).map(a => Math.min(MCP_HI[1], a * 180 / Math.PI))]
-      reach(names.slice(1), fp.tip, [Math.max(-SPREAD[i], Math.min(SPREAD[i], x0[0])), Math.max(MCP_LO[0], x0[1]), x0[2]], [-SPREAD[i], ...MCP_LO], [SPREAD[i], ...MCP_HI], apply, 0.07, false, couple)
+      reach(names.slice(1), fp.tip, [Math.max(-SPREAD[i], Math.min(SPREAD[i], x0[0])), Math.max(MCP_LO[0], x0[1]), x0[2]], [-SPREAD[i], ...MCP_LO], [SPREAD[i], ...MCP_HI], apply, fingerR, false, couple)
       mcpOf[i] = lastMcp
       return
     }
@@ -651,21 +799,57 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     mcpOf[i] = angles[1] * 180 / Math.PI
   })
   // Thumb: opposition turns it about the palm's long axis, abduction swings it out from the index; then it closes.
-  const tp = plan.thumb, axesT = THUMB.slice(0, 3).map((n, k) => curlAxis(n, THUMB[k + 1]))
-  const preT = (M: THREE.Matrix4) => { hinge(M, P(THUMB[0]), F0, deg(tp.oppose) * -h); hinge(M, P(THUMB[0]), N0, deg(tp.abduct) * h) }
+  // Elena's thenar is a short, fat bone. Putting a WebXR curl on that one hinge candy-wraps it, so the same three
+  // curls are shared with the extra middle joint and no single hinge on the base is allowed to fold past about 35°.
+  const tp = plan.thumb
+  const thumbNames = hasMid
+    ? ['thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-intermediate', 'thumb-phalanx-distal', 'thumb-tip']
+    : THUMB
+  const axesT = THUMB.slice(0, 3).map((n, k) => curlAxis(n, THUMB[k + 1]))
+  const poseThumb = (curls: number[], oppose: number, abduct: number, roll = 0) => {
+    const names = thumbNames
+    const axes = names.slice(0, -1).map((n, k) => curlAxis(n, names[k + 1]))
+    const angles = curls.slice()
+    if (hasMid) {
+      // The sculpted thumb is already bent at rest (about 48° at the proximal joint, 60° at the
+      // metacarpal). Extra flexion on those two short, fat bones candy-wraps the thenar, so most
+      // of a grip's curl is sent to the intermediate and distal joints and the base stays near rest.
+      const [cmc, mcp, ip] = curls
+      angles.length = 0
+      // The nail joint only takes a gentle bend: the distal skin is rigid, and a hard hook
+      // there folds the tip into the phone. Overflow from the base may move forward.
+      // Overflow at the nail stays there, capped, so it is not pushed back onto the thenar.
+      // The intermediate joint used to take almost all of the curl, which folded the
+      // skin into a deep crease and made the thumb look short and thick. The bend is
+      // shared, that middle joint stays shallow, and a little of the sculpted kink is
+      // opened back up. The nail joint stays on a gentle bend so the tip is not hooked
+      // into the bezel.
+      angles.push(cmc * 0.4, cmc * 0.16 + mcp * 0.2, mcp * 0.28 + ip * 0.06, ip * 0.4)
+      const cap = [0.26, 0.16, 0.2, 0.32]
+      for (let i = 0; i < 2; i++) if (angles[i] > cap[i]) { angles[i + 1] += angles[i] - cap[i]; angles[i] = cap[i] }
+      if (angles[2] > cap[2]) angles[2] = cap[2]
+      if (angles[3] > cap[3]) angles[3] = cap[3]
+      // The sculpt already kinks this joint. Extra flexion folds that kink into a slit
+      // and shortens the thumb, so the pose opens it a little and keeps only a soft crease.
+      angles[2] -= 0.22
+      if (angles[2] < -0.36) angles[2] = -0.36
+    }
+    const M = new THREE.Matrix4()
+    hinge(M, P(names[0]), F0, deg(oppose) * -h); hinge(M, P(names[0]), N0, deg(abduct) * h)
+    const rollAxis = P(names[names.length - 1]).clone().sub(P('thumb-phalanx-proximal')).normalize()
+    names.forEach((n, i) => {
+      if (i < angles.length) hinge(M, P(n), axes[i], angles[i])
+      if (n === 'thumb-phalanx-proximal' && roll) hinge(M, P(n), rollAxis, deg(roll) * h)
+      setBone(rig, n, M); boneM[n] = M.clone()
+    })
+  }
   const angT = tp.curl.map(deg)
   if (tp.tip && tp.touch) {
-    // A sixth angle rolls the thumb's two phalanges about their own long axis at the proximal joint (the tip stays
-    // near that axis, so the contact barely moves), so the pad, not the side of the thumb, faces the glass. The reach
-    // cost asks for the pad to face into the glass (nail up and away), leaning back a little the way a real thumb taps.
+    // A sixth angle rolls the thumb about its long axis at the proximal joint (the tip stays near that axis, so the
+    // contact barely moves), so the pad, not the side of the thumb, faces the glass.
     let tt: (typeof touches)[number] | undefined
-    const rollAxis = P(THUMB[3]).clone().sub(P(THUMB[1])).normalize()
     const dDist = P(THUMB[3]).clone().sub(P(THUMB[2])).normalize(), padRest = axesT[2].clone().cross(dDist).multiplyScalar(PAD_SIGN).normalize()
-    const apply = (x: number[]) => {
-      const M = new THREE.Matrix4(); hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h)
-      const a = [x[2], x[3], x[4] - (tt?.bend ?? 0)].map(deg)
-      THUMB.forEach((n, i) => { if (i < 3) hinge(M, P(n), axesT[i], a[i]); if (i === 1) hinge(M, P(n), rollAxis, deg(x[5]) * h); setBone(rig, n, M); boneM[n] = M.clone() })
-    }
+    const apply = (x: number[]) => poseThumb([x[2], x[3], x[4] - (tt?.bend ?? 0)].map(deg), x[0], x[1], x[5])
     const pad = () => padRest.clone().transformDirection(boneM[THUMB[2]]).transformDirection(rig.root.matrixWorld)
     if (import.meta.env.DEV) (globalThis as { __thumbPad?: () => THREE.Vector3 }).__thumbPad = pad
     const face = PAD_FACE + 0.05 * nail + (plan.thumbFace ?? 0), padW = PAD_W, tn = nailEdge[THUMB[2]]
@@ -674,16 +858,19 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       for (const p of tn) { const pen = need - sdf(_v.copy(p).applyMatrix4(m), fit); if (pen > 0) c += 20 * pen * pen } return c }
     const padCost = () => { const z = pad().z + face; return (z > 0 ? padW * z * z : 0) + thumbNail() }
     tt = { owners: new Set([THUMB[2], THUMB[3]]), surf: tp.tip.clone(), aim: tp.tip.clone(), bend: 0, run: aim =>
-      reach(THUMB, aim, [tp.oppose, tp.abduct, ...tp.curl, 0], [-60, -60, -30, -30, -20, -75], [100, 80, 70, 80, 90, 75], apply, 0.08, true, padCost)}
+      reach(THUMB, aim, [tp.oppose, tp.abduct, ...tp.curl, 0], [-60, -60, -30, -30, -20, -75], [100, 80, 70, 80, 90, 75], apply, thumbR, true, padCost)}
     touches.push(tt)
   } else if (tp.tip) {
-    const apply = (x: number[]) => chainPose(THUMB, axesT, [x[2], x[3], x[4]].map(deg), M => { hinge(M, P(THUMB[0]), F0, deg(x[0]) * -h); hinge(M, P(THUMB[0]), N0, deg(x[1]) * h) })
-    reach(THUMB, tp.tip, [tp.oppose, tp.abduct, ...tp.curl], [-60, -60, -20, -20, -10], [90, 70, 60, 70, 80], apply, 0.08)
+    const apply = (x: number[]) => poseThumb([x[2], x[3], x[4]].map(deg), x[0], x[1])
+    reach(THUMB, tp.tip, [tp.oppose, tp.abduct, ...tp.curl], [-60, -60, -20, -20, -10], [90, 70, 60, 70, 80], apply, thumbR)
     update()
-  } else {
+  } else if (!hasMid) {
+    const preT = (M: THREE.Matrix4) => { hinge(M, P(THUMB[0]), F0, deg(tp.oppose) * -h); hinge(M, P(THUMB[0]), N0, deg(tp.abduct) * h) }
     chainPose(THUMB, axesT, angT, preT); update()
     if (tp.close) close(THUMB, axesT, angT, 1, tp.max ?? [50, 45], preT)
     update()
+  } else {
+    poseThumb(angT, tp.oppose, tp.abduct); update()
   }
   // Contact pass: reach each touching digit, find the skin point of its pad nearest the phone, and correct the aim
   // (and, with follow, the whole hand) until that point sits on the glass at the target, just touching.
@@ -692,45 +879,70 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
   // The glass is the plane z = T / 2, so the contact is the pad's lowest skin point.
   // The contact point is the centroid of the pad's patch (the skin within 2.5 mm of its lowest point), not the very tip:
   // that is where a pressed pad meets the glass.
-  const contact = (owners: Set<string>, glass: number) => {
+  // ids null scans every vertex (step 2 on the lift, matching the old every-other-vertex sample). The iterative
+  // passes pass the proxy; a confirm pass passes null so the landed pad and the lift match a full scan.
+  const contact = (owners: Set<string>, glass: number, ids: Uint32Array | null) => {
+    ensure(); const world = rig.mesh.matrixWorld
     let best = Infinity; const pts: number[] = []
-    for (let i = 0; i < pos.count; i++) {
+    const n = ids ? ids.length : cache.count
+    for (let k = 0; k < n; k++) {
+      const i = ids ? ids[k] : k
       if (!owners.has(rig.owner[i])) continue
-      _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); _v.applyMatrix4(rig.mesh.matrixWorld)
+      skinAt(cache, i, _v).applyMatrix4(world)
       pts.push(_v.x, _v.y, _v.z); if (_v.z < best) best = _v.z
     }
-    const c = new THREE.Vector3(); let n = 0
-    for (let k = 0; k < pts.length; k += 3) if (pts[k + 2] < best + (padK().patch ?? 0.025)) { c.x += pts[k]; c.y += pts[k + 1]; n++ }
-    if (n) c.multiplyScalar(1 / n); c.z = best
+    const c = new THREE.Vector3(); let cnt = 0
+    for (let k = 0; k < pts.length; k += 3) if (pts[k + 2] < best + (padK().patch ?? 0.025)) { c.x += pts[k]; c.y += pts[k + 1]; cnt++ }
+    if (cnt) c.multiplyScalar(1 / cnt); c.z = best
     return { c, d: best - glass }
+  }
+  const lowSkin = (ids: Uint32Array | null, pads: Set<string>) => {
+    const hw = fit.W / 2, hh = fit.H / 2
+    let low = Infinity
+    const sn = ids ? ids.length : cache.count, step = ids ? 1 : 2
+    ensure(); const world = rig.mesh.matrixWorld
+    for (let k = 0; k < sn; k += step) {
+      const i = ids ? ids[k] : k
+      if (pads.has(rig.owner[i])) continue
+      skinAt(cache, i, _v).applyMatrix4(world)
+      if (Math.abs(_v.x) < hw && Math.abs(_v.y) < hh && _v.z < low) low = _v.z
+    }
+    return low
   }
   let worst = Infinity
   const iters = import.meta.env.DEV ? (globalThis as { __touchIters?: number }).__touchIters ?? 10 : 10
   const clearOf = (t: (typeof touches)[number]) => { const e = t.nail && nailEdge[t.nail]; if (!e) return Infinity; const m = rig.bones[t.nail!].matrixWorld
     let c1 = Infinity; for (const q of e) c1 = Math.min(c1, sdf(_v.copy(q).applyMatrix4(m), fit)); return c1 }
-  for (let round = 0; round < 7; round++) {
-  if (round) { let more = false; for (const t of touches) if (clearOf(t) < need && t.bend < 40) { t.bend += 6; more = true } if (!more) break }
-  for (let it = 0; it < iters; it++) {
-    const errs = touches.map(t => { t.run(t.aim); update(); const { c, d } = contact(t.owners, t.surf.z); return v3(t.surf.x - c.x, t.surf.y - c.y, GAP - d) })
-    worst = Math.max(...errs.map(e => e.length()))
-    if (import.meta.env.DEV) (globalThis as { __touchEach?: unknown }).__touchEach = errs.map((e, k) => [[...touches[k].owners][0], +(e.length() * 100).toFixed(2), +(e.z * 100).toFixed(2), touches[k].bend, +(clearOf(touches[k]) * 100).toFixed(2)])
-    if (worst < 0.0005) break
-    const mean = errs.reduce((a, e) => a.add(e), v3(0, 0, 0)).multiplyScalar(1 / errs.length)
-    // Damped, and kept within 15 mm of the point, so a digit that cannot reach does not wander off.
-    touches.forEach((t, k) => { t.aim.addScaledVector(errs[k], 0.7); const off = t.aim.clone().sub(t.surf); if (off.length() > 0.15) t.aim.copy(t.surf).add(off.setLength(0.15)) })
-    if (plan.follow === true) {
-      // Lift the hand if any skin other than the touching pads dips below the glass, else just slide it across.
-      const pads = new Set(touches.flatMap(t => [...t.owners])), hw = fit.W / 2, hh = fit.H / 2
-      let low = Infinity
-      for (let i = 0; i < pos.count; i += 2) {
-        if (pads.has(rig.owner[i])) continue
-        _v.fromBufferAttribute(pos, i); rig.mesh.applyBoneTransform(i, _v); _v.applyMatrix4(rig.mesh.matrixWorld)
-        if (Math.abs(_v.x) < hw && Math.abs(_v.y) < hh && _v.z < low) low = _v.z
-      }
-      const lift = Math.max(0, fit.T / 2 + 0.03 - low)
-      rig.root.position.add(v3(mean.x, mean.y, lift).clampLength(0, 0.3)); update()
-    } else if (plan.follow === 'y') { rig.root.position.y += Math.max(-0.05, Math.min(0.05, mean.y)); update() }
+  const subset = proxy.length === cache.count ? null : proxy
+  const pass = (ids: Uint32Array | null, tries: number) => {
+    for (let it = 0; it < tries; it++) {
+      const errs = touches.map(t => { t.run(t.aim); update(); const { c, d } = contact(t.owners, t.surf.z, ids); return v3(t.surf.x - c.x, t.surf.y - c.y, GAP - d) })
+      worst = Math.max(...errs.map(e => e.length()))
+      if (import.meta.env.DEV) (globalThis as { __touchEach?: unknown }).__touchEach = errs.map((e, k) => [[...touches[k].owners][0], +(e.length() * 100).toFixed(2), +(e.z * 100).toFixed(2), touches[k].bend, +(clearOf(touches[k]) * 100).toFixed(2)])
+      if (worst < 0.0005) return
+      const mean = errs.reduce((a, e) => a.add(e), v3(0, 0, 0)).multiplyScalar(1 / errs.length)
+      // Damped, and kept within 15 mm of the point, so a digit that cannot reach does not wander off.
+      touches.forEach((t, k) => { t.aim.addScaledVector(errs[k], 0.7); const off = t.aim.clone().sub(t.surf); if (off.length() > 0.15) t.aim.copy(t.surf).add(off.setLength(0.15)) })
+      if (plan.follow === true) {
+        // Lift the hand if any skin other than the touching pads dips below the glass, else just slide it across.
+        const pads = new Set(touches.flatMap(t => [...t.owners]))
+        const lift = Math.max(0, fit.T / 2 + 0.03 - lowSkin(ids, pads))
+        rig.root.position.add(v3(mean.x, mean.y, lift).clampLength(0, 0.3)); update()
+      } else if (plan.follow === 'y') { rig.root.position.y += Math.max(-0.05, Math.min(0.05, mean.y)); update() }
+    }
   }
+  for (let round = 0; round < 7; round++) {
+    if (round) { let more = false; for (const t of touches) if (clearOf(t) < need && t.bend < 40) { t.bend += 6; more = true } if (!more) break }
+    pass(subset, iters)
+    if (subset) {
+      // Proxy pads are dense at the fingertips, but the recorded gap is the full mesh. Correct only while that gap,
+      // or a non-pad vertex under the glass, is outside the tolerance the full scan used to stop on.
+      const errs = touches.map(t => { const { c, d } = contact(t.owners, t.surf.z, null); return v3(t.surf.x - c.x, t.surf.y - c.y, GAP - d) })
+      worst = Math.max(...errs.map(e => e.length()))
+      const pads = new Set(touches.flatMap(t => [...t.owners]))
+      const lift = plan.follow === true ? Math.max(0, fit.T / 2 + 0.03 - lowSkin(null, pads)) : 0
+      if (worst >= 0.0005 || lift > 0.0005) pass(null, 3)
+    }
   }
   rig.root.userData.touchError = worst   // model units; 0.001 is 0.1 mm
   // How far the touching digits' nail free edges sit above the glass (model units); the caller flattens the approach
@@ -740,6 +952,10 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     let c1 = Infinity; for (const p of e) c1 = Math.min(c1, sdf(_v.copy(p).applyMatrix4(m), fit)); clear = Math.min(clear, c1); if (import.meta.env.DEV) ((globalThis as { __nailBy?: Record<string, number> }).__nailBy ??= {})[o] = c1 }
   rig.root.userData.nailClear = clear
   armFrame(rig, F1, N1)
+  } finally {
+    for (const c of parked) rig.mesh.add(c)
+    if (import.meta.env.DEV) ((globalThis as { __solveLog?: number[] }).__solveLog ??= []).push(performance.now() - tSolve)
+  }
 }
 
 /** Where the forearm joins: the wrist joint, the arm's direction (back from the palm) and the palm normal. */
@@ -750,9 +966,11 @@ function armFrame(rig: Rig, F: THREE.Vector3, N: THREE.Vector3) {
 
 // ---------- forearm ----------
 // The hand models stop at the wrist, which shows as a flat cut whenever the arm points at the camera. A tapered,
-// slightly flattened tube continues the wrist back along the arm, out of frame. It shares the skin material and is
-// tagged as hand, so the AI hands mask covers it too.
+// slightly flattened tube continues the wrist back along the arm, out of frame. Classic shares the skin material
+// and the plain lathe. Realistic clones that lathe, gives it a soft forearm belly, and tiles a pore patch cut
+// from the hand maps so the tube is the same skin as the wrist. Tagged as hand, so the AI hands mask covers it too.
 let armGeo: THREE.BufferGeometry | null = null
+let armSkinGeo: THREE.BufferGeometry | null = null
 /** Side-to-side widening of the forearm tube at distance y past the wrist joint. */
 function armWide(y: number) { return 1 + 0.36 * (1 - THREE.MathUtils.smoothstep(y, 0.1, 1.0)) }
 /** Front-to-back deepening likewise (the hand's wrist is about 21 mm half-depth, the tube's 16). */
@@ -770,19 +988,49 @@ function forearmGeometry() {
   const gp = armGeo.getAttribute('position')
   for (let i = 0; i < gp.count; i++) { const y = gp.getY(i); gp.setX(i, gp.getX(i) * armWide(y)); gp.setZ(i, gp.getZ(i) * armDeep(y)) }
   armGeo.computeVertexNormals()
+  try { armGeo.computeTangents() } catch { /* the classic forearm has no normal map */ }
   // effect data: the arm reads as solid (aMass), aArm is the distance past the wrist for the Arm off fade, aCut is unused
   const ap = armGeo.getAttribute('position'), aa = new Float32Array(ap.count)
   for (let i = 0; i < ap.count; i++) aa[i] = Math.max(0, ap.getY(i))
   armGeo.setAttribute('aArm', new THREE.BufferAttribute(aa, 1)); armGeo.setAttribute('aMass', new THREE.BufferAttribute(new Float32Array(ap.count).fill(0.85), 1))
   armGeo.setAttribute('aCut', new THREE.BufferAttribute(new Float32Array(ap.count), 1))
+  ensureSmooth(armGeo)
   return armGeo
 }
+/** Realistic forearm. Same silhouette at the wrist as the shared lathe, with a soft belly further down and UVs that repeat a skin tile. */
+function forearmSkinGeometry() {
+  if (armSkinGeo) return armSkinGeo
+  const g = forearmGeometry().clone()
+  const pos = g.getAttribute('position') as THREE.BufferAttribute
+  const ouv = g.getAttribute('uv') as THREE.BufferAttribute
+  for (let k = 0; k < pos.count; k++) {
+    const y = pos.getY(k)
+    // Flare at the wrist so the tube covers the hand's open rim, then a soft belly down the forearm.
+    const flare = 1 + 0.2 * (1 - THREE.MathUtils.smoothstep(y, 0.0, 0.42))
+    const t = THREE.MathUtils.clamp((y - 0.08) / 2.1, 0, 1)
+    const belly = (1 + 0.05 * Math.sin(Math.PI * t)) * flare
+    pos.setX(k, pos.getX(k) * belly)
+    pos.setZ(k, pos.getZ(k) * belly)
+    // Five repeats around the arm and about 4 cm along it. The last column's u is an integer, so the lathe seam tiles.
+    ouv.setXY(k, ouv.getX(k) * 5, y / 0.42)
+  }
+  pos.needsUpdate = true
+  ouv.needsUpdate = true
+  g.computeVertexNormals()
+  g.deleteAttribute('tangent')
+  g.deleteAttribute('smoothNormal')
+  try { g.computeTangents() } catch { /* normal-mapped skin needs tangents; the preview still shades without them */ }
+  // The flare moved the vertices, so the cloned lathe's averaged normals no longer match. Spectral's body reads them.
+  ensureSmooth(g)
+  armSkinGeo = g
+  return g
+}
 const _ax = new THREE.Vector3(), _ay = new THREE.Vector3(), _az = new THREE.Vector3(), _mb = new THREE.Matrix4()
-function placeArm(mesh: THREE.Mesh, rig: Rig) {
+function placeArm(mesh: THREE.Mesh, rig: Rig, shift = 0) {
   const a = rig.root.userData.arm as { at: THREE.Vector3; dir: THREE.Vector3; n: THREE.Vector3 } | undefined
   if (!a) { mesh.visible = false; return }
   _ay.copy(a.dir).normalize(); _az.copy(a.n).addScaledVector(_ay, -a.n.dot(_ay)).normalize(); _ax.crossVectors(_ay, _az)
-  _mb.makeBasis(_ax, _ay, _az); mesh.quaternion.setFromRotationMatrix(_mb); mesh.position.copy(a.at); mesh.visible = true
+  _mb.makeBasis(_ax, _ay, _az); mesh.quaternion.setFromRotationMatrix(_mb); mesh.position.copy(a.at).addScaledVector(_ay, shift); mesh.visible = true
 }
 
 /** Wraps the device: turns it for landscape and adds the posed hands, which Centred leaves out of its bounds. */
@@ -805,14 +1053,48 @@ export function HandRig({ pose, tone, fit, gesture, onGesture, spectral = SPECTR
 
 function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPose; tone: string; fit: HandFit; gesture?: Gesture; sp: SpectralOptions; rot: HandRot; idle: IdleLevel; look: HandLook }) {
   const motion = useMemo(() => ({ right: new HandMotion(), left: new HandMotion() }), [])
-  const right = useGLTF(URL_R), left = useGLTF(URL_L)
+  const classicRight = useGLTF(URL_R), classicLeft = useGLTF(URL_L)
+  const elenaRight = useGLTF(ELENA_R), elenaLeft = useGLTF(ELENA_L)
+  const skinTex = useTexture(ELENA_URLS)
+  const armTex = useTexture(ARM_URLS)
+  const studioTex = useTexture(STUDIO_URL)
+  const { gl } = useThree()
+  useLayoutEffect(() => {
+    prepareSkinMaps(skinTex)
+    prepareArmMaps(armTex)
+    prepareStudioMap(studioTex)
+    const max = gl.capabilities.getMaxAnisotropy()
+    for (const t of [...skinTex, ...armTex, studioTex]) t.anisotropy = max
+  }, [skinTex, armTex, studioTex, gl])
   const group = useRef<THREE.Group>(null)
-  const rigs = useMemo(() => ({ right: makeRig(right.scene), left: makeRig(left.scene) }), [right.scene, left.scene])
   const spectral = tone === 'spectral'
   const spm = useMemo<SpectralMats | null>(() => spectral ? spectralMaterials(SPECTRAL_DEFAULTS) : null, [spectral])
   useEffect(() => () => spm?.dispose(), [spm])
-  const mat = useMemo(() => spm ? spm.body : skinMaterial(tone), [tone, spm])
+  const photoSkin = tone !== 'spectral' && tone !== 'silhouette'
+  const style = look.style ?? 'realistic'
+  const studio = photoSkin && style === 'studio'
+  // Realistic, Studio, and Spectral share Elena's mesh. Spectral keeps its own see-through material.
+  // Silhouette stays on the generic hand. Classic (when the tone is a skin) keeps it too.
+  const elena = spectral || (photoSkin && style !== 'classic')
+  const realistic = photoSkin && style !== 'classic' && !studio
+  const rigs = useMemo(() => elena
+    ? { right: makeRig(elenaRight.scene), left: makeRig(elenaLeft.scene) }
+    : { right: makeRig(classicRight.scene), left: makeRig(classicLeft.scene) },
+    [elena, classicRight.scene, classicLeft.scene, elenaRight.scene, elenaLeft.scene])
+  const toneRec = SKIN_TONES[tone] ?? SKIN_TONES.fair
+  const mat = useMemo(() => {
+    if (spm) return spm.body
+    if (studio) return studioHandMaterial(toneRec, studioTex)
+    if (realistic) return realisticHandMaterial(toneRec, skinTex)
+    return skinMaterial(tone)
+  }, [tone, spm, realistic, studio, skinTex, studioTex, toneRec])
+  const armMat = useMemo(() => {
+    if (studio) return studioArmMaterial(toneRec, armTex[0])
+    if (realistic) return realisticArmMaterial(toneRec, armTex)
+    return null
+  }, [studio, realistic, toneRec, armTex])
   useEffect(() => () => { if (!spm) mat.dispose() }, [mat, spm])
+  useEffect(() => () => { armMat?.dispose() }, [armMat])
   // live uniforms: tint, transparency and the three effects
   useEffect(() => { if (!spm) return
     spm.tint.set(sp.tint); spm.setLine(sp.line ?? sp.tint); spm.setBlur(sp.seeBlur ?? 0.85)
@@ -820,8 +1102,9 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     u.uMass.value = sp.mass ?? 0; u.uGlow.value = sp.glow ? 1 : 0; u.uRim.value = sp.rim ? 1 : 0; u.uContours.value = sp.contours ? 1 : 0
     const fade = look.arm === false ? 1 : 0; u.uArmFade.value = fade; spm.hull.uniforms.uArmFade.value = fade
   }, [spm, sp.tint, sp.line, sp.seeBlur, sp.transparency, sp.glimmer, sp.shimmer, sp.stars, sp.mass, sp.glow, sp.rim, sp.contours, look.arm])
-  const { size, gl } = useThree()
+  const { size } = useThree()
   useFrame(({ clock }, dt) => {
+    if (import.meta.env.DEV) { const g = (globalThis as { __frameDt?: number[] }); (g.__frameDt ??= []).push(dt); if (g.__frameDt.length > 240) g.__frameDt.shift() }
     for (const side of ['right', 'left'] as const) if (motion[side].step(dt, clock.elapsedTime, idle) && spm && rigs[side].root.parent) reskinSpectral(rigs[side].mesh)
   })
   useFrame(({ clock, camera }) => { if (!spm) return
@@ -832,10 +1115,13 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   // Nails: measured on each hand at rest (before any solve), rebuilt when length or shape change, riding on the distal bones
   const build = Math.max(0.75, Math.min(1.3, look.build ?? 1))
   const spots = useMemo(() => { applyBuild(rigs.right, build); applyBuild(rigs.left, build); annotate(rigs.right); annotate(rigs.left)
+    for (const side of ['right', 'left'] as const) { const r = rigs[side]; r.mesh.userData.skinCache = skinCache(r.mesh); r.mesh.userData.proxy = buildProxy(r) }
     return { right: measureNails(rigs.right, 'right'), left: measureNails(rigs.left, 'left') } }, [rigs, build])
   const nailMat = useMemo(() => spm ? spm.body : nailMaterial(SKIN_TONES[tone]?.color ?? SKIN_TONES.fair.color, look.nailColor ?? (tone === 'silhouette' ? SKIN_TONES.silhouette?.color ?? null : null)), [spm, tone, look.nailColor])
   useEffect(() => () => { if (!spm) nailMat.dispose() }, [nailMat, spm])
-  const nailsOn = look.nails !== false, nailLen = nailsOn ? look.nailLen : 0
+  // Elena's mesh already has sculpted nails, so the procedural plates stay off. Spectral draws its own nail
+  // lines on that sculpt (see buildSpectral). Classic and Silhouette keep the procedural plates.
+  const nailsOn = look.nails !== false && !elena, nailLen = nailsOn ? look.nailLen : 0
   const nails = useMemo(() => {
     const out = { right: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[]; outline: number[] }[], left: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[]; outline: number[] }[] }
     if (nailsOn) for (const side of ['right', 'left'] as const) for (const sp of spots[side]) {
@@ -856,6 +1142,11 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const solved = useRef<Record<string, string>>({})
   const lastRep = useRef('')
   const arms = useMemo(() => ({ right: new THREE.Mesh(forearmGeometry()), left: new THREE.Mesh(forearmGeometry()) }), [])
+  useLayoutEffect(() => {
+    const geo = elena ? forearmSkinGeometry() : forearmGeometry()
+    arms.right.geometry = geo
+    arms.left.geometry = geo
+  }, [arms, elena])
   // Arm off: the forearm is hidden and the hand itself fades out over the 19 mm its mesh runs past the wrist joint
   // (aArm, 0 at the joint, 0.2 at the open rim), so there is no overlap band and the open rim is fully clear. Photo and
   // Sketch (whose hands keep the skin material) take a copy of the skin with that fade; Spectral fades by uniform.
@@ -864,25 +1155,51 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   // Arm on: the hand cross-fades into the forearm over its last 11 mm, so the two shadings meet without a ring.
   const fadeFrom = useMemo(() => ({ value: 0.08 }), [])
   fadeFrom.value = armOff ? 0 : 0.08
-  const handMat = useMemo(() => { if (spm) return mat
+  const realisticFade = mat.userData.fadeFrom as { value: number } | undefined
+  const realisticMask = mat.userData.maskAmt as { value: number } | undefined
+  // Studio wears the same forearm tube and fades it over most of its length.
+  // Realistic, arm on: the cuff stays opaque until its open rim, where it fades into
+  // the skinned forearm (aArm is 0 at the wrist and about 0.12 at the rim). The palm
+  // stays opaque. Arm off fades from the wrist, as before. Classic keeps its own cloned fade material.
+  if (studio) {
+    // Arm on: the hand stays opaque and the forearm carries the long fade. Arm off
+    // still dissolves the short cuff, because there is no tube to continue it.
+    const studioSpan = mat.userData.fadeSpan as { value: number } | undefined
+    if (realisticFade) realisticFade.value = armOff ? 0 : 0.09
+    if (studioSpan) studioSpan.value = armOff ? 0.12 : 0.03
+    if (!mat.transparent) { mat.transparent = true; mat.depthWrite = true; mat.needsUpdate = true }
+  } else if (realistic) {
+    // aArm is about 0.12 at the rim. Only that last few millimetres fade, where the
+    // flared tube is already behind the cuff. A longer fade drew the forearm through
+    // the wrist. Arm off still fades from the joint. The palm stays opaque.
+    const realisticSpan = mat.userData.fadeSpan as { value: number } | undefined
+    if (realisticFade) realisticFade.value = armOff ? 0 : 0.09
+    if (realisticSpan) realisticSpan.value = armOff ? 0.11 : 0.03
+    if (!mat.transparent) { mat.transparent = true; mat.depthWrite = true; mat.needsUpdate = true }
+  } else {
+    if (realisticFade) realisticFade.value = armOff ? 0 : 2
+    if (mat.userData.fadeFrom && mat.transparent !== armOff) { mat.transparent = armOff; mat.depthWrite = true; mat.needsUpdate = true }
+  }
+  if (realisticMask) realisticMask.value = armOff ? 1 : 0
+  const handMat = useMemo(() => { if (spm || elena) return mat
     const m2 = (mat as THREE.MeshPhysicalMaterial).clone(); m2.transparent = true; m2.depthWrite = true
     m2.onBeforeCompile = sh => { sh.uniforms.uFadeFrom = fadeFrom
       sh.vertexShader = 'attribute float aArm; varying float vArm;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvArm = aArm;')
       sh.fragmentShader = 'uniform float uFadeFrom; varying float vArm;\n' + sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.a *= 1.0 - smoothstep(uFadeFrom, 0.19, vArm);\nif (gl_FragColor.a < 0.01) discard;') }
-    m2.customProgramCacheKey = () => 'hand-fade'; return m2 }, [mat, spm, fadeFrom])
+    m2.customProgramCacheKey = () => 'hand-fade'; return m2 }, [mat, spm, elena, fadeFrom])
   useEffect(() => () => { if (handMat !== mat) handMat.dispose() }, [handMat, mat])
   useEffect(() => { rigs.right.mesh.material = handMat; rigs.left.mesh.material = handMat }, [rigs, handMat])
-  useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = mat; m.castShadow = true; m.receiveShadow = true; m.userData.hand = true; m.userData.sketchEdges = false; m.userData.armOff = armOff } }, [arms, mat, armOff])
+  useEffect(() => { for (const m of [arms.right, arms.left]) { m.material = armMat ?? mat; m.castShadow = true; m.receiveShadow = true; m.userData.hand = true; m.userData.sketchEdges = false; m.userData.armOff = armOff } }, [arms, mat, armMat, armOff])
   useEffect(() => {
     const g = group.current; if (!g) return
-    const mk = (flat: number) => plans(pose, fit, ges, nailLen, flat + padK().flat, look.size).map(pl => rotatePlan(pl, rot))
+    const mk = (flat: number) => plans(pose, fit, ges, nailLen, flat + padK().flat, look.size, elena).map(pl => rotatePlan(pl, rot))
     const list = mk(nailLen)
     const used = new Set<THREE.Object3D>()
     for (let li = 0; li < list.length; li++) { let pl = list[li]
-      const r = rigs[pl.side], key = JSON.stringify([pl, fit, look.size, nailLen, look.nailShape, build, nailsOn, armOff])
+      const r = rigs[pl.side], key = JSON.stringify([pl, fit, look.size, nailLen, look.nailShape, build, nailsOn, armOff, studio])
       if (solved.current[pl.side] !== key || r.root.parent !== g) {
         // spring from the pose on screen to the new solve, unless the hand is just appearing
-        const m = motion[pl.side], animate = r.root.parent === g
+        const m = motion[pl.side], animate = r.root.parent === g && !(import.meta.env.DEV && (globalThis as { __noHandSpring?: boolean }).__noHandSpring)
         if (animate) m.snapshot()
         g.remove(r.root); solve(r, pl, fit, look.size, nailLen)
         // long nails: while a touching nail's free edge is within 1 mm of the glass, come in flatter (and turn the thumb's
@@ -893,7 +1210,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
         for (let k = 1, flat = nailLen; nailsOn && k <= 4 && (r.root.userData.nailClear ?? 1) < need; k++) {
           flat += 0.3; pl = { ...mk(flat)[li], thumbFace: 0.08 * k }; solve(r, pl, fit, look.size, nailLen); const sc = score(); if (sc < best.s) best = { s: sc, pl } }
         if (best.pl !== pl) { pl = best.pl; solve(r, pl, fit, look.size, nailLen) }
-        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r); arms[pl.side].scale.set(build * look.size, look.size, build * look.size); if (!armOff) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
+        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r, elena ? -0.06 : 0); const wide = elena ? 1.16 : 1; arms[pl.side].scale.set(build * look.size * wide, look.size, build * look.size * wide); if (!armOff) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
         const touching = new Set<string>([...(pl.thumb.touch ? ['thumb'] : []), ...pl.fingers.flatMap((f, i) => f.touch ? [FINGERS[i]] : [])])
         m.capture(r.root, r.bones, r.rest, touching, arms[pl.side], animate)
       }
@@ -908,8 +1225,9 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     // posted after the effect, so the panel's update is not a state change inside this effect (which React flags every frame)
     const repKey = JSON.stringify(rep); if (lastRep.current !== repKey) { lastRep.current = repKey; setTimeout(() => window.dispatchEvent(new CustomEvent(REACH_EVENT, { detail: rep })), 0) }
     for (const side of ['right', 'left'] as const) if (!used.has(rigs[side].root)) { g.remove(rigs[side].root, arms[side]); delete solved.current[side] }
-  }, [pose, fit, rigs, ges, arms, rot, look.size, nails, armOff])
-  // Spectral: outlines, inner lines and stars follow each re-solve; the hands leave the shadow pass (line layer) and cast none.
+  }, [pose, fit, rigs, ges, arms, rot, look.size, nails, armOff, studio, elena])
+  // Spectral outlines are built once per rig and material. A pose change re-skins those same lines
+  // (reskinSpectral, after the spring steps) instead of allocating new hulls and line geometry.
   useEffect(() => {
     for (const side of ['right', 'left'] as const) {
       const r = rigs[side], arm = arms[side]
@@ -919,16 +1237,22 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
       for (const n of nails[side]) n.m.material = nailMat
       if (!spm) continue
       addHull(r.mesh, spm); addHull(arm, spm)
-      // nails: a thin plate's inflated hull read as a solid patch, so each nail gets its own outline line instead
-      for (const n of nails[side]) { const g = new LineSegmentsGeometry(); g.setPositions(n.outline)
-        const l = new LineSegments2(g, spm.line); l.renderOrder = 12; l.layers.set(LINE_LAYER); l.frustumCulled = false; l.userData = { spectral: true, noBounds: true }; n.m.add(l) }
-      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm, true, armOff)
+      // nails: a thin plate's inflated hull read as a solid patch, so each nail gets its own outline line instead.
+      // The line lives on the nail mesh, so it follows the bone. Replace any previous one so pose changes don't stack them.
+      for (const n of nails[side]) {
+        for (const c of [...n.m.children]) if (c.userData.spectral) { n.m.remove(c); (c as THREE.Mesh).geometry?.dispose() }
+        const g = new LineSegmentsGeometry(); g.setPositions(n.outline)
+        const l = new LineSegments2(g, spm.line); l.renderOrder = 12; l.layers.set(LINE_LAYER); l.frustumCulled = false; l.userData = { spectral: true, noBounds: true }; n.m.add(l)
+      }
+      // Procedural plates are off on Elena, so the authored nail curves stay (they land on the sculpted nail).
+      // Show nails off drops them. Classic Spectral, if it were still on this mesh, would keep using the plates.
+      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm, !(elena && look.nails !== false), armOff)
     }
     if (import.meta.env.DEV) (globalThis as { __omHands?: unknown }).__omHands = { rigs, arms }
-  }, [spm, rigs, arms, pose, fit, ges, rot, nails, nailMat, armOff])
+  }, [spm, rigs, arms, nails, nailMat, armOff, elena, look.nails])
   useEffect(() => () => { const g = group.current; for (const side of ['right', 'left'] as const) g?.remove(rigs[side].root, arms[side]); solved.current = {} }, [rigs, arms])
   return <group ref={group} userData={{ noBounds: true }} />
 }
-useGLTF.preload(URL_R); useGLTF.preload(URL_L)
+useGLTF.preload(URL_R); useGLTF.preload(URL_L); useGLTF.preload(ELENA_R); useGLTF.preload(ELENA_L); useTexture.preload(ELENA_URLS); useTexture.preload(STUDIO_URL)
 
 if (import.meta.hot) import.meta.hot.dispose(() => { poreTex?.dispose(); poreTex = null; armGeo?.dispose(); armGeo = null })

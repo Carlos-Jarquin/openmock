@@ -924,7 +924,7 @@ export default function App() {
   }
   // Light finishes need more light in the dark preset to read white, as in Apple's shots; dark finishes keep the low level.
   const lift = apple && device.startsWith('ip18') && (opts.finish === 'silver' || opts.finish === 'glacier') ? 1.5 : 1
-  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { histRef: histDev, swapInAiHand, restoreHand, rigs, devGroup, defaultPose, resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle, exportPng, exportSvg }
+  if (import.meta.env.DEV) (window as unknown as { __omSet: unknown }).__omSet = { histRef: histDev, swapInAiHand, restoreHand, rigs, devGroup, defaultPose, resetView, goPreset, VIEW_PRESETS, setMediaTo, setPose, setLight, setBg1, setBgMode, violetScene, setStyle, setSk, setOpts, setDevice, setHands, setLook, setGesture, setHandRot, foldTo, playFold, stopFold, foldLive: foldLiveFor(D0.uid), S, setSbOn, setSb, setSpectral, setIdle, exportPng, exportSvg }
   const lx = Math.cos(light.elevation * Math.PI / 180) * Math.sin(light.azimuth * Math.PI / 180) * 5
   const ly = Math.sin(light.elevation * Math.PI / 180) * 5
   const lz = Math.cos(light.elevation * Math.PI / 180) * Math.cos(light.azimuth * Math.PI / 180) * 5
@@ -1178,7 +1178,7 @@ export default function App() {
       <label className="check"><input type="checkbox" checked={foldFollow} onChange={e => setFoldFollow(e.target.checked)} /> Camera follows the fold</label>
       <p className="hint">Switching screens swings the hinge in 0.9 s at 1×. Each screen frosts and darkens as it leaves its rest and is clear as the hinge settles. Untick Dissolve while folding for a sharp still at any angle.</p>
     </> }] : []),
-    { id: 'hand', side: 'device', title: 'Hand', icon: 'hand', settings: ['Show arm', 'Arm', 'Show nails', 'Nails', 'Reset nails', 'Mass', 'Inner glow', 'Rim light', 'Contours', 'Hand size', 'Build', 'Slender', 'Robust', 'Hand thickness', 'Nail length', 'Nail shape', 'Nail colour', ...NAIL_SHAPES.map(([, l]) => `${l} nails`), 'Grip', 'Gesture', ...HAND_POSES.map(([, l]) => l), 'Touch target', 'Show marker', 'Skin tone', ...tones.map(([, t]) => t.label), 'Tint', 'Transparency', 'Glimmer', 'Rotation', 'Tilt', 'Spin', 'Roll', 'Idle motion', 'Reset hand', 'Hand size', 'Nail length', 'Nail shape'], render: () => handOk ? <>
+    { id: 'hand', side: 'device', title: 'Hand', icon: 'hand', settings: ['Hand style', 'Realistic', 'Studio', 'Classic', 'Show arm', 'Arm', 'Show nails', 'Nails', 'Reset nails', 'Mass', 'Inner glow', 'Rim light', 'Contours', 'Hand size', 'Build', 'Slender', 'Robust', 'Hand thickness', 'Nail length', 'Nail shape', 'Nail colour', ...NAIL_SHAPES.map(([, l]) => `${l} nails`), 'Grip', 'Gesture', ...HAND_POSES.map(([, l]) => l), 'Touch target', 'Show marker', 'Skin tone', ...tones.map(([, t]) => t.label), 'Tint', 'Transparency', 'Glimmer', 'Rotation', 'Tilt', 'Spin', 'Roll', 'Idle motion', 'Reset hand', 'Hand size', 'Nail length', 'Nail shape'], render: () => handOk ? <>
       {!poseOk(fitNow, hands.pose) && <p className="hint warn">{HAND_POSES.find(([k]) => k === hands.pose)?.[1]} does not suit this device, so the hand is hidden. Pick another grip or gesture.</p>}
       <div className="om-sub"><h3>Grip</h3>
         <div className="seg wrap">{poses.filter(([k]) => !isGesture(k)).map(([k, l]) => <button key={k} className={hands.pose === k ? 'on' : ''} aria-pressed={hands.pose === k} onClick={() => setHands({ ...hands, pose: k })}>{l}</button>)}</div></div>
@@ -1218,6 +1218,12 @@ export default function App() {
         <button className="ghost" onClick={() => setHandRot(HAND_ROT0)}>Reset hand</button>
       </>}
       <div className="om-sub"><h3>Appearance</h3>
+        <div className="seg" role="group" aria-label="Hand style">
+          <button className={(look.style ?? 'realistic') === 'realistic' ? 'on' : ''} aria-pressed={(look.style ?? 'realistic') === 'realistic'} onClick={() => setLook(o => ({ ...o, style: 'realistic' }))}>Realistic</button>
+          <button className={look.style === 'studio' ? 'on' : ''} aria-pressed={look.style === 'studio'} onClick={() => setLook(o => ({ ...o, style: 'studio' }))}>Studio</button>
+          <button className={look.style === 'classic' ? 'on' : ''} aria-pressed={look.style === 'classic'} onClick={() => setLook(o => ({ ...o, style: 'classic' }))}>Classic</button>
+        </div>
+        <p className="hint">Realistic is a higher-detail hand with its own skin texture, and still follows the lighting controls. Studio uses the same hand with soft light baked in, so the lighting controls do not shade it, and the wrist fades out instead of growing an arm. Classic is the original smooth model. Silhouette keeps its own material on the original model. Spectral uses the higher-detail hand and keeps its see-through material.</p>
         <label className="check" title="Off: only the hand shows, fading out just past the wrist"><input type="checkbox" checked={look.arm !== false} onChange={e => setLook(o => ({ ...o, arm: e.target.checked }))} /> Show arm</label>
         <label className="check" title="Off: no nails, and the grip ignores nail clearance"><input type="checkbox" checked={look.nails !== false} onChange={e => setLook(o => ({ ...o, nails: e.target.checked }))} /> Show nails</label>
         {look.nails !== false && <button className="ghost" title="Back to a natural short nail" onClick={() => setLook(o => ({ ...o, nailLen: HAND_LOOK0.nailLen, nailShape: HAND_LOOK0.nailShape, nailColor: HAND_LOOK0.nailColor }))}>Reset nails</button>}
@@ -1316,6 +1322,7 @@ export default function App() {
     ...(sbSize ? [{ id: 'sb', group: 'device' as const, section: 'statusbar', label: 'Status bar › Show status bar', meta: 'TOGGLE' as const, run: () => setSbOn(v => !v) }] : []),
     ...(handOk ? poses.map(([k, l]) => ({ id: `pose-${k}`, group: 'device' as const, section: 'hand', label: `Hand › ${isGesture(k) ? 'Gesture' : 'Grip'} › ${l}`, meta: (hands.pose === k ? 'CURRENT' : 'APPLY') as Cmd['meta'], run: () => setHands(h => ({ ...h, pose: k })) })) : []),
     ...(handOk ? tones.map(([k, t]) => ({ id: `tone-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Skin tone › ${t.label}`, meta: 'APPLY' as const, run: () => setHands(h => ({ ...h, tone: k })) })) : []),
+    ...(handOk ? ([['realistic', 'Realistic'], ['studio', 'Studio'], ['classic', 'Classic']] as const).map(([k, l]) => ({ id: `style-${k}`, group: 'device' as const, section: 'hand', label: `Hand › Style › ${l}`, meta: ((look.style ?? 'realistic') === k ? 'CURRENT' : 'APPLY') as Cmd['meta'], run: () => setLook(o => ({ ...o, style: k })) })) : []),
     ...(device === 'studio' ? ([['tilt', 'Tilt stand'], ['height', 'Tilt and height stand'], ['vesa', 'VESA mount adapter']] as [SdStand, string][]).map(([k, l]) => ({ id: `sd-${k}`, group: 'device' as const, section: 'sdstand', label: `Stand › ${l}`, meta: (opts.sdStand ?? 'tilt') === k ? 'CURRENT' as const : 'APPLY' as const, run: () => setOpts(x => ({ ...x, sdStand: k })) })).concat([
       { id: 'sd-portrait', group: 'device' as const, section: 'sdstand', label: opts.sdPortrait ? 'Stand › Landscape' : 'Stand › Portrait (VESA)', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, sdStand: 'vesa', sdPortrait: !x.sdPortrait })) },
       { id: 'sd-cable', group: 'device' as const, section: 'sdstand', label: opts.sdCable ? 'Power cable › Hide' : 'Power cable › Show', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, sdCable: !x.sdCable })) },

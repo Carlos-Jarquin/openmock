@@ -40,7 +40,29 @@ The Hands section adds 3D hands holding the iPhone 18 Pro or 18 Pro Max: right h
 
 Each pose places the hand next to the phone, rests the palm on it, then bends each finger joint by joint until the skin touches the phone body, which is built from the phone's real measurements. That way the grip fits both sizes. Pose data lives in `src/hands/Hands.tsx`.
 
-The hand models are the MIT-licensed WebXR "generic-hand" assets (see CREDITS.md), so they ship in `public/hands/`. They are fairly low detail, so close-ups show some faceting.
+Classic hands are the MIT-licensed WebXR "generic-hand" assets (see CREDITS.md), in `public/hands/`. They are fairly low detail, so close-ups show some faceting. Realistic hands are a separate model, licensed CC BY-SA 4.0, in `public/hands/elena/`.
+
+### Realistic hands
+
+Hand → Appearance → Hand style switches between **Realistic** (the default), **Studio**, and **Classic** (the original generic-hand and its smooth material). Silhouette keeps its own material on the original model. Spectral uses the higher-detail hand and keeps its see-through material. Realistic is on by default.
+
+Realistic skin is a `MeshPhysicalMaterial` (`src/hands/realisticSkin.ts`) on Elena FF's mesh, so the orbit camera and the lighting controls (intensity, direction, height, contact shadow, the studio HDRI) still shade the hand. The roughness map is lifted, specular is low, clearcoat is off and the normal map is softened, so the skin stays dry and matte with a little warmth. Matte, in Sketch, still strips sheen, specular and the environment reflection. A wrapped diffuse lobe and a small warm backlight stand in for subsurface scatter. The skin-tone swatches scale the albedo: Fair leaves the texture as painted, and the other swatches shift it.
+
+Studio (`src/hands/studioSkin.ts`) uses the same mesh with a Cycles bake graded to a light peach (`public/hands/elena/studio.webp`). Pores, flexion creases and the nails stay, at a lower contrast than Realistic, and a warm rim stands in for light through the thin edges. The material is unlit on purpose: scene lights, the HDRI and the lighting controls do not shade it. The forearm is the same tube as Realistic and fades out over most of its length. The skin-tone swatch still tints the bake. Realistic stays the default. The dorsal knuckle swirls are softened with a wide feather, so the crease stays faint and the patch has no hard edge.
+
+The mesh is "Rigged hand" by Elena FF, about 15.5k vertices and 29k triangles after triangulation. In Blender the deform bones were unparented onto a flat armature (OpenMock poses each joint in armature space), renamed to the WebXR generic-hand bone names, and scaled so the wrist-to-middle-fingertip length matches the classic asset (178 mm). Control bones were dropped; they carried no skin weights. The thumb's extra middle phalanx is posed on its own: the curl is shared, the middle joint stays shallow (a little of its sculpted kink is opened so it does not fold into a slit), and the nail joint stays at a gentle bend so the tip does not fold into the phone. The short base bones stay near the sculpted rest so the knuckle does not collapse. The forearm is the same physical skin as the hand, tiled from a patch of these maps, flared over the cuff. Elena's fingers are thicker than the generic hand, so the contact spheres and the phone grips for that mesh are separate. Classic poses are unchanged. A left hand is the right hand mirrored on X, with the same bone names. See `public/hands/elena/README.md` for the conversion steps, the bake, and the CC BY-SA terms.
+
+The model's sculpted nails are the ones you see. Procedural nail plates stay on Classic only, so they are not stacked on top of the sculpt.
+
+| File | Contents |
+| --- | --- |
+| `public/hands/elena/right.glb`, `left.glb` | Meshopt-compressed glTF, flat skeleton, 27 joints. |
+| `albedo.webp` | The model's colour map. Dorsal knuckle swirls are softened in place. |
+| `normal.webp` | The model's tangent-space normal map, with those same knuckles faded. |
+| `roughness.webp` | The model's roughness map, lifted so the skin stays matte, and softened on those knuckles. |
+| `specular.webp` | The model's specular map. Shipped for reference; the material does not sample it. |
+| `studio.webp` | Light-peach Cycles bake, with softened pores, creases and nails. CC BY-SA, because it is derived from the model. |
+| `forearm-albedo.webp`, `forearm-normal.webp`, `forearm-roughness.webp` | Seamless skin tile for the forearm, cut from the hand maps. CC BY-SA. |
 
 ### Photoreal hands (ComfyUI)
 
