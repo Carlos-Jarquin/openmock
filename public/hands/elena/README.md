@@ -1,6 +1,8 @@
-# Realistic hand
+# Elena FF hand
 
 Rigged hand by Elena FF (https://sketchfab.com/elenaferfor), licensed under CC BY-SA 4.0, modified.
+
+Realistic and Studio shade this mesh. Spectral uses the same left and right rigs with its own see-through material. Silhouette stays on the original generic-hand.
 
 Source: [Rigged hand](https://sketchfab.com/3d-models/rigged-hand-eae97cc2a742413cb5338ab942b12c1e) by [Elena FF](https://sketchfab.com/elenaferfor), CC BY-SA 4.0. The original file is an FBX (`handRig_02.fbx`) with 2048×2048 maps `hand_Co` (colour), `hand_No` (normal), `hand_Ro` (roughness) and `hand_Sp` (specular). It is a single right hand, about 14.5k vertices. The original archive is not in this repository.
 

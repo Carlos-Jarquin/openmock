@@ -1,6 +1,6 @@
-// Procedurally posed hands that hold the device. Classic uses the WebXR "generic-hand" assets
-// (MIT, Amazon, github.com/immersive-web/webxr-input-profiles). Realistic uses Elena FF's "Rigged hand"
-// (CC BY-SA 4.0, public/hands/elena), re-rigged onto the same bone names. See CREDITS.md. Each pose places
+// Procedurally posed hands that hold the device. Classic and Silhouette use the WebXR "generic-hand" assets
+// (MIT, Amazon, github.com/immersive-web/webxr-input-profiles). Realistic, Studio, and Spectral use Elena FF's
+// "Rigged hand" (CC BY-SA 4.0, public/hands/elena), re-rigged onto the same bone names. See CREDITS.md. Each pose places
 // the wrist relative to the device, seats the palm on it, then closes each finger joint by joint until its
 // skin touches the device body (a rounded-box distance field built from the device's own measurements), so
 // the grip fits the 18 Pro and the 18 Pro Max at their real sizes. The hands sit inside the device group,
@@ -8,7 +8,7 @@
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useGLTF, useTexture } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
-import { spectralMaterials, buildSpectral, reskinSpectral, updateSpectral, addHull, removeHull, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
+import { spectralMaterials, buildSpectral, reskinSpectral, updateSpectral, addHull, removeHull, ensureSmooth, SPECTRAL_DEFAULTS, type SpectralOptions, type SpectralMats } from './spectral'
 import { LINE_LAYER } from '../sketch/Sketch'
 import * as THREE from 'three'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
@@ -472,16 +472,30 @@ function makeRig(src: THREE.Object3D): Rig {
  *  geometry from the asset's original positions, so caches keyed on the geometry (Spectral lines, edges) start fresh. */
 const NEXT: Record<string, string> = { wrist: 'middle-finger-phalanx-proximal', 'thumb-metacarpal': 'thumb-phalanx-proximal', 'thumb-phalanx-proximal': 'thumb-phalanx-distal', 'thumb-phalanx-distal': 'thumb-tip' }
 for (const f of FINGERS) for (let i = 0; i < 4; i++) NEXT[`${f}-${JOINTS[i]}`] = `${f}-${JOINTS[i + 1]}`
+/** Bone-to-bone segments for girth and Spectral mass. Elena's thumb has a middle phalanx the classic chain skips;
+ *  the cuff is skinned to `forearm`. Classic has neither bone, so its map stays the same. */
+function segmentMap(rig: Rig): Record<string, [THREE.Vector3, THREE.Vector3]> {
+  const m = rig.mesh, bones = m.skeleton.bones
+  const J = (n: string) => { const k = bones.findIndex(b => b.name === n); return new THREE.Vector3().setFromMatrixPosition(m.skeleton.boneInverses[k].clone().invert()) }
+  const next: Record<string, string> = { ...NEXT }
+  if (rig.bones['thumb-phalanx-intermediate']) {
+    next['thumb-phalanx-proximal'] = 'thumb-phalanx-intermediate'
+    next['thumb-phalanx-intermediate'] = 'thumb-phalanx-distal'
+  }
+  const seg: Record<string, [THREE.Vector3, THREE.Vector3]> = {}
+  for (const n of Object.keys(next)) if (rig.bones[n] && rig.bones[next[n]]) seg[n] = [J(n), J(next[n])]
+  if (rig.bones.forearm && rig.bones.wrist) seg.forearm = [J('forearm'), J('wrist')]
+  for (const f of [...FINGERS, 'thumb']) if (seg[`${f}-phalanx-distal`]) seg[`${f}-tip`] = seg[`${f}-phalanx-distal`]
+  return seg
+}
 function applyBuild(rig: Rig, build: number) {
   const m = rig.mesh, base = (m.userData.baseGeo ??= m.geometry) as THREE.BufferGeometry
   if ((m.userData.build ?? 1) === build && m.geometry !== base || build === 1 && m.geometry === base) return
   const geo = build === 1 ? base : base.clone()
   if (build !== 1) {
-    const pos = geo.getAttribute('position') as THREE.BufferAttribute, bones = m.skeleton.bones
-    const J = (n: string) => { const k = bones.findIndex(b => b.name === n); return new THREE.Vector3().setFromMatrixPosition(m.skeleton.boneInverses[k].clone().invert()) }
-    const seg: Record<string, [THREE.Vector3, THREE.Vector3]> = {}
-    for (const n of Object.keys(NEXT)) if (rig.bones[n] && rig.bones[NEXT[n]]) seg[n] = [J(n), J(NEXT[n])]
-    for (const f of [...FINGERS, 'thumb']) seg[`${f}-tip`] = seg[`${f}-phalanx-distal`]
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute
+    const seg = segmentMap(rig)
+    geo.deleteAttribute('smoothNormal'); geo.userData = { ...geo.userData, annotated: undefined }
     const inv = m.bindMatrix.clone().invert(), v = new THREE.Vector3(), c = new THREE.Vector3(), ab = new THREE.Vector3()
     for (let i = 0; i < pos.count; i++) { const s = seg[rig.owner[i]]; if (!s) continue
       v.fromBufferAttribute(pos, i).applyMatrix4(m.bindMatrix)
@@ -498,18 +512,25 @@ function applyBuild(rig: Rig, build: number) {
  *  at the wrist, left out of the Spectral outline so the hand runs straight into the forearm. */
 function annotate(rig: Rig) {
   const m = rig.mesh, geo = m.geometry; if (geo.userData.annotated) return
-  const pos = geo.getAttribute('position'), bones = m.skeleton.bones, n = pos.count, mass = new Float32Array(n), cut = new Float32Array(n)
+  const pos = geo.getAttribute('position'), n = pos.count, mass = new Float32Array(n), cut = new Float32Array(n), along = new Float32Array(n)
+  const bones = m.skeleton.bones
   const J = (k: string) => { const i = bones.findIndex(b => b.name === k); return new THREE.Vector3().setFromMatrixPosition(m.skeleton.boneInverses[i].clone().invert()) }
-  const seg: Record<string, [THREE.Vector3, THREE.Vector3]> = {}
-  for (const k of Object.keys(NEXT)) if (rig.bones[k] && rig.bones[NEXT[k]]) seg[k] = [J(k), J(NEXT[k])]
-  for (const f of [...FINGERS, 'thumb']) seg[`${f}-tip`] = seg[`${f}-phalanx-distal`]
+  const seg = segmentMap(rig)
   const W = J('wrist'), out = W.clone().sub(J('middle-finger-phalanx-proximal')).normalize(), v = new THREE.Vector3(), ab = new THREE.Vector3(), arm = new Float32Array(n)
+  let rim = -Infinity
   for (let i = 0; i < n; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(m.bindMatrix); const sg = seg[rig.owner[i]]
     if (sg) { ab.subVectors(sg[1], sg[0]); const t = Math.max(0, Math.min(1, v.clone().sub(sg[0]).dot(ab) / Math.max(1e-9, ab.lengthSq())))
       const r = v.distanceTo(sg[0].clone().addScaledVector(ab, t)); mass[i] = THREE.MathUtils.smoothstep(r, 0.007, 0.021) }
-    const d = v.clone().sub(W).dot(out); arm[i] = d * 10
-    cut[i] = rig.owner[i] === 'wrist' && d > -0.004 ? 1 : 0 }
+    const d = v.clone().sub(W).dot(out); arm[i] = d * 10; along[i] = d
+    if (rig.owner[i] === 'forearm' || rig.owner[i] === 'wrist') rim = Math.max(rim, d) }
+  // The open wrist rim is left out of the Spectral hull so the hand runs into the forearm. Classic's rim is
+  // wrist-owned. Elena's cuff is skinned to `forearm`, so the last few millimetres of that cuff are the rim.
+  for (let i = 0; i < n; i++) {
+    const o = rig.owner[i], d = along[i]
+    cut[i] = (o === 'wrist' && d > -0.004) || (o === 'forearm' && d > rim - 0.005) ? 1 : 0
+  }
   geo.setAttribute('aMass', new THREE.BufferAttribute(mass, 1)); geo.setAttribute('aCut', new THREE.BufferAttribute(cut, 1)); geo.setAttribute('aArm', new THREE.BufferAttribute(arm, 1)); geo.userData.annotated = true
+  ensureSmooth(geo)
 }
 
 const _m = new THREE.Matrix4(), _t = new THREE.Matrix4(), _r = new THREE.Matrix4(), _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3()
@@ -889,6 +910,7 @@ function forearmGeometry() {
   for (let i = 0; i < ap.count; i++) aa[i] = Math.max(0, ap.getY(i))
   armGeo.setAttribute('aArm', new THREE.BufferAttribute(aa, 1)); armGeo.setAttribute('aMass', new THREE.BufferAttribute(new Float32Array(ap.count).fill(0.85), 1))
   armGeo.setAttribute('aCut', new THREE.BufferAttribute(new Float32Array(ap.count), 1))
+  ensureSmooth(armGeo)
   return armGeo
 }
 /** Realistic forearm. Same silhouette at the wrist as the shared lathe, with a soft belly further down and UVs that repeat a skin tile. */
@@ -912,7 +934,10 @@ function forearmSkinGeometry() {
   ouv.needsUpdate = true
   g.computeVertexNormals()
   g.deleteAttribute('tangent')
+  g.deleteAttribute('smoothNormal')
   try { g.computeTangents() } catch { /* normal-mapped skin needs tangents; the preview still shades without them */ }
+  // The flare moved the vertices, so the cloned lathe's averaged normals no longer match. Spectral's body reads them.
+  ensureSmooth(g)
   armSkinGeo = g
   return g
 }
@@ -964,9 +989,10 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const photoSkin = tone !== 'spectral' && tone !== 'silhouette'
   const style = look.style ?? 'realistic'
   const studio = photoSkin && style === 'studio'
-  // Realistic and Studio share Elena's mesh. Classic keeps the generic hand.
-  const elena = photoSkin && style !== 'classic'
-  const realistic = elena && !studio
+  // Realistic, Studio, and Spectral share Elena's mesh. Spectral keeps its own see-through material.
+  // Silhouette stays on the generic hand. Classic (when the tone is a skin) keeps it too.
+  const elena = spectral || (photoSkin && style !== 'classic')
+  const realistic = photoSkin && style !== 'classic' && !studio
   const rigs = useMemo(() => elena
     ? { right: makeRig(elenaRight.scene), left: makeRig(elenaLeft.scene) }
     : { right: makeRig(classicRight.scene), left: makeRig(classicLeft.scene) },
@@ -1007,7 +1033,8 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     return { right: measureNails(rigs.right, 'right'), left: measureNails(rigs.left, 'left') } }, [rigs, build])
   const nailMat = useMemo(() => spm ? spm.body : nailMaterial(SKIN_TONES[tone]?.color ?? SKIN_TONES.fair.color, look.nailColor ?? (tone === 'silhouette' ? SKIN_TONES.silhouette?.color ?? null : null)), [spm, tone, look.nailColor])
   useEffect(() => () => { if (!spm) nailMat.dispose() }, [nailMat, spm])
-  // Elena's mesh already has sculpted nails, so the procedural plates stay off in Realistic. Classic is unchanged.
+  // Elena's mesh already has sculpted nails, so the procedural plates stay off. Spectral draws its own nail
+  // lines on that sculpt (see buildSpectral). Classic and Silhouette keep the procedural plates.
   const nailsOn = look.nails !== false && !elena, nailLen = nailsOn ? look.nailLen : 0
   const nails = useMemo(() => {
     const out = { right: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[]; outline: number[] }[], left: [] as { m: THREE.Mesh; bone: string; edge: THREE.Vector3[]; outline: number[] }[] }
@@ -1126,10 +1153,12 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
       // nails: a thin plate's inflated hull read as a solid patch, so each nail gets its own outline line instead
       for (const n of nails[side]) { const g = new LineSegmentsGeometry(); g.setPositions(n.outline)
         const l = new LineSegments2(g, spm.line); l.renderOrder = 12; l.layers.set(LINE_LAYER); l.frustumCulled = false; l.userData = { spectral: true, noBounds: true }; n.m.add(l) }
-      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm, true, armOff)
+      // Procedural plates are off on Elena, so the authored nail curves stay (they land on the sculpted nail).
+      // Show nails off drops them. Classic Spectral, if it were still on this mesh, would keep using the plates.
+      if (r.root.parent) buildSpectral(r.mesh, r.owner, spm, !(elena && look.nails !== false), armOff)
     }
     if (import.meta.env.DEV) (globalThis as { __omHands?: unknown }).__omHands = { rigs, arms }
-  }, [spm, rigs, arms, pose, fit, ges, rot, nails, nailMat, armOff])
+  }, [spm, rigs, arms, pose, fit, ges, rot, nails, nailMat, armOff, elena, look.nails])
   useEffect(() => () => { const g = group.current; for (const side of ['right', 'left'] as const) g?.remove(rigs[side].root, arms[side]); solved.current = {} }, [rigs, arms])
   return <group ref={group} userData={{ noBounds: true }} />
 }

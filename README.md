@@ -44,7 +44,7 @@ Classic hands are the MIT-licensed WebXR "generic-hand" assets (see CREDITS.md),
 
 ### Realistic hands
 
-Hand → Appearance → Hand style switches between **Realistic** (the default), **Studio**, and **Classic** (the original generic-hand and its smooth material). Silhouette and Spectral keep their own materials either way. Realistic is on by default.
+Hand → Appearance → Hand style switches between **Realistic** (the default), **Studio**, and **Classic** (the original generic-hand and its smooth material). Silhouette keeps its own material on the original model. Spectral uses the higher-detail hand and keeps its see-through material. Realistic is on by default.
 
 Realistic skin is a `MeshPhysicalMaterial` (`src/hands/realisticSkin.ts`) on Elena FF's mesh, so the orbit camera and the lighting controls (intensity, direction, height, contact shadow, the studio HDRI) still shade the hand. The roughness map is lifted, specular is low, clearcoat is off and the normal map is softened, so the skin stays dry and matte with a little warmth. Matte, in Sketch, still strips sheen, specular and the environment reflection. A wrapped diffuse lobe and a small warm backlight stand in for subsurface scatter. The skin-tone swatches scale the albedo: Fair leaves the texture as painted, and the other swatches shift it.
 

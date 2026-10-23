@@ -251,19 +251,25 @@ function prepare(mesh: THREE.SkinnedMesh, owner: string[]): Prepared {
   }
   for (const fg of FINGERS) finger(fg, `${fg}-phalanx-distal`, `${fg}-tip`, [`${fg}-phalanx-intermediate`, `${fg}-phalanx-distal`],
     [`${fg}-phalanx-proximal`, `${fg}-phalanx-intermediate`, `${fg}-phalanx-distal`])
-  finger('thumb', 'thumb-phalanx-distal', 'thumb-tip', ['thumb-phalanx-distal'], ['thumb-phalanx-proximal', 'thumb-phalanx-distal'])
+  const hasMid = bones.some(b => b.name === 'thumb-phalanx-intermediate')
+  finger('thumb', 'thumb-phalanx-distal', 'thumb-tip',
+    hasMid ? ['thumb-phalanx-proximal', 'thumb-phalanx-intermediate', 'thumb-phalanx-distal'] : ['thumb-phalanx-distal'],
+    hasMid ? ['thumb-phalanx-proximal', 'thumb-phalanx-intermediate', 'thumb-phalanx-distal'] : ['thumb-phalanx-proximal', 'thumb-phalanx-distal'])
   // two more stars by the knuckles of the index and ring fingers
   for (const b of ['index-finger-phalanx-proximal', 'ring-finger-phalanx-intermediate', 'wrist']) { const v = owner.indexOf(b); if (v >= 0) starV.push(v) }
-  // Thumb outline: on these meshes the thumb is fused into the palm, so there is no depth step or facing switch where it
-  // lies over the hand and the geometric silhouette finds nothing (checked with the phone hidden). Instead the thumb is
-  // treated as a bent tube: rings of skin points round its metacarpal (from where it leaves the palm), proximal and distal
-  // segments, each point cast from the bone axis and stored on the skin. Per frame, each ring's two contour points (where
-  // the skin turns away from the camera) are joined ring to ring into the thumb's two side edges.
+  // Thumb outline: on the classic mesh the thumb is fused into the palm, so there is no depth step or facing switch where it
+  // lies over the hand and the geometric silhouette finds nothing (checked with the phone hidden). Elena's thumb is its own
+  // digit, including a middle phalanx, and the same rings still trace the edge that sits against the palm. The thumb is
+  // treated as a bent tube: rings of skin points round each segment, each point cast from the bone axis and stored on the
+  // skin. Per frame, each ring's two contour points (where the skin turns away from the camera) are joined into the two side edges.
   const rings: Bary[][] = []
-  { const chain = ['thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-distal', 'thumb-tip'], spans = [[0.45, 1], [0, 1], [0, 0.8]]
+  { const chain = hasMid
+      ? ['thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-intermediate', 'thumb-phalanx-distal', 'thumb-tip']
+      : ['thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-distal', 'thumb-tip']
+    const spans = hasMid ? [[0.45, 1], [0, 1], [0, 1], [0, 0.8]] : [[0.45, 1], [0, 1], [0, 0.8]]
     const thumbish = new Set([...chain, 'wrist', 'index-finger-metacarpal']), idx = geo.index!, tt: number[] = []
     for (let t = 0; t < idx.count; t += 3) { const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2); if (thumbish.has(owner[a]) || thumbish.has(owner[b]) || thumbish.has(owner[c])) tt.push(a, b, c) }
-    for (let k = 0; k < 3; k++) { const A = J(chain[k]), Bj = J(chain[k + 1]), ax2 = Bj.clone().sub(A), L = ax2.length(); ax2.normalize()
+    for (let k = 0; k < chain.length - 1; k++) { const A = J(chain[k]), Bj = J(chain[k + 1]), ax2 = Bj.clone().sub(A), L = ax2.length(); ax2.normalize()
       const u = new THREE.Vector3(1, 0, 0); if (Math.abs(u.dot(ax2)) > 0.9) u.set(0, 1, 0); u.addScaledVector(ax2, -u.dot(ax2)).normalize()
       const w = new THREE.Vector3().crossVectors(ax2, u), steps = k === 0 ? 4 : 6
       for (let i = 0; i < steps; i++) { if (k > 0 && i === 0) continue
@@ -434,7 +440,7 @@ export function updateSpectral(mesh: THREE.SkinnedMesh, camera: THREE.Camera) {
 /** The opaque outer outline: an inverted hull sharing the hand's geometry and skeleton (or a plain mesh for the forearm). */
 /** The hand meshes have hard (split) normals at UV seams and low-poly creases, so a Fresnel rim from them shows flat facets
  *  and shards. Average the normals of every vertex sharing a position (0.05 mm grid) into 'smoothNormal' for the body shader. */
-function ensureSmooth(g: THREE.BufferGeometry) {
+export function ensureSmooth(g: THREE.BufferGeometry) {
   if (g.getAttribute('smoothNormal')) return
   if (!g.getAttribute('normal')) g.computeVertexNormals()
   const pos = g.getAttribute('position'), nor = g.getAttribute('normal'), n = pos.count
