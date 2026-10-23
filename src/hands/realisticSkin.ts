@@ -89,6 +89,7 @@ function compileSkin(shader: SkinShader, kind: 'hand' | 'arm', uniforms: Record<
     ? `uniform float uWrap;
 uniform vec3 uSSS;
 uniform float uFadeFrom;
+uniform float uFadeSpan;
 uniform float uMaskAmt;
 varying float vArm;
 float gThin;
@@ -112,7 +113,7 @@ float gThin;
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <dithering_fragment>',
       `#include <dithering_fragment>
-gl_FragColor.a *= mix( 1.0, gMask, uMaskAmt ) * ( 1.0 - smoothstep( uFadeFrom, uFadeFrom + 0.11, vArm ) );
+gl_FragColor.a *= mix( 1.0, gMask, uMaskAmt ) * ( 1.0 - smoothstep( uFadeFrom, uFadeFrom + uFadeSpan, vArm ) );
 if ( gl_FragColor.a < 0.01 ) discard;`,
     )
   }
@@ -143,6 +144,7 @@ function physical(tone: SkinTone, color: THREE.Color, extra: THREE.MeshPhysicalM
 export function realisticHandMaterial(tone: SkinTone, maps: THREE.Texture[]) {
   const [albedo, normal, roughness] = maps
   const fadeFrom = { value: 0.08 }
+  const fadeSpan = { value: 0.11 }
   const maskAmt = { value: 0 }
   const mat = physical(tone, toneGain(tone.color), {
     map: albedo,
@@ -153,12 +155,14 @@ export function realisticHandMaterial(tone: SkinTone, maps: THREE.Texture[]) {
   mat.transparent = true
   mat.depthWrite = true
   mat.userData.fadeFrom = fadeFrom
+  mat.userData.fadeSpan = fadeSpan
   mat.userData.maskAmt = maskAmt
   mat.onBeforeCompile = (shader) => compileSkin(shader as SkinShader, 'hand', {
     uFadeFrom: fadeFrom,
     uMaskAmt: maskAmt,
+    uFadeSpan: fadeSpan,
   })
-  mat.customProgramCacheKey = () => 'om-elena-hand-3'
+  mat.customProgramCacheKey = () => 'om-elena-hand-4'
   return mat
 }
 

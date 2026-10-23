@@ -121,10 +121,10 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
   const edge = (y: number, spread: number): FingerPlan => ({ curl: [0, 20, 6, 4], spread, tip: v3(-hw - 0.045, y, -ht * 0.25) })
   // Elena's fingers are thicker than the generic hand, and the thumb has an extra joint. The same targets
   // that suit Classic send those fingers through the phone and fold the thumb into one knuckle. This grip keeps the
-  // palm on the right edge, lays the thumb on the front bezel, and rests the fingertips on the back.
+  // palm on the right edge, lays the thumb across the glass, and rests the fingertips around the far side.
   const grip: HandPlan = sculpted ? {
-    // The palm sits against the right edge, close enough for the fingers to reach the far side. Their tips
-    // come around that edge into the front plane, so the wrap is visible head-on, and the thumb lies on the bezel.
+    // The palm sits against the right edge. The thumb reaches onto the glass, clear of the bezel,
+    // and the fingertips come around the far side.
     side: 'right', knuckle: v3(hw + 0.08, -hh * 0.3, -ht - 0.07), F: v3(-0.18, 0.88, -0.44), N: v3(-0.82, 0.04, 0.52), seat: 0.01,
     fingers: [
       { curl: [0, 30, 22, 12], spread: 5, tip: v3(-hw - 0.03, -hh * 0.04, 0.01) },
@@ -132,7 +132,9 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
       { curl: [0, 42, 30, 16], spread: -5, tip: v3(-hw - 0.02, -hh * 0.42, -0.02) },
       { curl: [0, 52, 36, 18], spread: -8, tip: v3(-hw * 0.05, -hh - 0.04, -0.01) },
     ],
-    thumb: { oppose: 8, abduct: 10, curl: [6, 12, 6], tip: v3(hw - 0.02, -hh * 0.04, ht + 0.1) },
+    // The thumb lies across the glass, pad down and the nail clear of the bezel. The tip
+    // target sits in from the right edge; poseThumb keeps the last joint at a gentle bend.
+    thumb: { oppose: 14, abduct: 8, curl: [4, 8, 6], tip: v3(hw - 0.26, 0.02, ht + 0.03) },
   } : {
     // The right edge rests in the palm, the thumb lies along the right frame, the fingertips reach the left edge
     // and the little finger supports the bottom.
@@ -738,9 +740,15 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       // of a grip's curl is sent to the intermediate and distal joints and the base stays near rest.
       const [cmc, mcp, ip] = curls
       angles.length = 0
-      angles.push(cmc * 0.35, cmc * 0.2 + mcp * 0.12, mcp * 0.88 + ip * 0.22, ip * 0.78)
-      const cap = [0.32, 0.22, 1.25, 1.2]
-      for (let i = 0; i < 3; i++) if (angles[i] > cap[i]) { angles[i + 1] += angles[i] - cap[i]; angles[i] = cap[i] }
+      // Most of a grip still goes to the intermediate joint. The nail joint only takes a
+      // gentle bend: the distal skin is rigid, and a hard hook there folds the tip into the phone.
+      // Overflow from the base may move forward. Overflow at the nail stays there, capped,
+      // so it is not pushed back onto the thenar.
+      angles.push(cmc * 0.35, cmc * 0.2 + mcp * 0.12, mcp * 0.88 + ip * 0.22, ip * 0.42)
+      const cap = [0.32, 0.22, 0.95, 0.36]
+      for (let i = 0; i < 2; i++) if (angles[i] > cap[i]) { angles[i + 1] += angles[i] - cap[i]; angles[i] = cap[i] }
+      if (angles[2] > cap[2]) angles[2] = cap[2]
+      if (angles[3] > cap[3]) angles[3] = cap[3]
     }
     const M = new THREE.Matrix4()
     hinge(M, P(names[0]), F0, deg(oppose) * -h); hinge(M, P(names[0]), N0, deg(abduct) * h)
@@ -990,10 +998,19 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   fadeFrom.value = armOff ? 0 : 0.08
   const realisticFade = mat.userData.fadeFrom as { value: number } | undefined
   const realisticMask = mat.userData.maskAmt as { value: number } | undefined
-  // Realistic: the cuff stays opaque while the forearm is on, and only fades when the arm is hidden.
   // Studio has no forearm. Its bake fades the cuff into the background instead.
+  // Realistic, arm on: the textured cuff fades over its last centimetre into the forearm
+  // tube (aArm is 0 at the wrist and about 0.12 at the rim). The palm stays opaque.
+  // Arm off fades from the wrist, as before. Classic keeps its own cloned fade material.
   if (studio) {
     if (realisticFade) realisticFade.value = 0
+    if (!mat.transparent) { mat.transparent = true; mat.depthWrite = true; mat.needsUpdate = true }
+  } else if (realistic) {
+    // aArm is about 0.12 at the rim. Fade the cuff once the forearm tube, shifted up
+    // into the wrist and widened, is behind it. The palm (aArm <= 0) stays opaque.
+    const realisticSpan = mat.userData.fadeSpan as { value: number } | undefined
+    if (realisticFade) realisticFade.value = armOff ? 0 : 0.02
+    if (realisticSpan) realisticSpan.value = armOff ? 0.11 : 0.09
     if (!mat.transparent) { mat.transparent = true; mat.depthWrite = true; mat.needsUpdate = true }
   } else {
     if (realisticFade) realisticFade.value = armOff ? 0 : 2
@@ -1029,7 +1046,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
         for (let k = 1, flat = nailLen; nailsOn && k <= 4 && (r.root.userData.nailClear ?? 1) < need; k++) {
           flat += 0.3; pl = { ...mk(flat)[li], thumbFace: 0.08 * k }; solve(r, pl, fit, look.size, nailLen); const sc = score(); if (sc < best.s) best = { s: sc, pl } }
         if (best.pl !== pl) { pl = best.pl; solve(r, pl, fit, look.size, nailLen) }
-        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r, realistic ? 0.16 : 0); arms[pl.side].scale.set(build * look.size, look.size, build * look.size); if (!armOff && !studio) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
+        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r, realistic ? -0.1 : 0); const wide = realistic ? 1.32 : 1; arms[pl.side].scale.set(build * look.size * wide, look.size, build * look.size * wide); if (!armOff && !studio) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
         const touching = new Set<string>([...(pl.thumb.touch ? ['thumb'] : []), ...pl.fingers.flatMap((f, i) => f.touch ? [FINGERS[i]] : [])])
         m.capture(r.root, r.bones, r.rest, touching, arms[pl.side], animate)
       }
