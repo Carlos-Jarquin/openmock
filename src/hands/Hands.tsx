@@ -63,7 +63,7 @@ export const posesFor = (f: HandFit | null | undefined): [HandPose, string][] =>
 export const poseOk = (f: HandFit | null | undefined, p: HandPose) => p === 'off' || posesFor(f).some(([k]) => k === p)
 
 import { HAND_LOOK0, nailGeometry, nailMaterial, type HandLook, type NailFit } from './nails'
-import { ELENA_URLS, prepareSkinMaps, realisticArmMaterial, realisticHandMaterial } from './realisticSkin'
+import { ARM_URLS, ELENA_URLS, prepareArmMaps, prepareSkinMaps, realisticArmMaterial, realisticHandMaterial } from './realisticSkin'
 import { STUDIO_URL, prepareStudioMap, studioHandMaterial } from './studioSkin'
 const URL_R = '/hands/right.glb', URL_L = '/hands/left.glb'
 const ELENA_R = '/hands/elena/right.glb', ELENA_L = '/hands/elena/left.glb'
@@ -275,7 +275,7 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
         { curl: [0, 46, 34, 18], spread: -5, tip: v3(-hw - 0.01, -hh * 0.2, ht * 0.1) },
         { curl: [0, 54, 38, 20], spread: -9, tip: v3(-hw * 0.1, -hh - 0.04, ht * 0.05) },
       ],
-      thumb: { oppose: 10, abduct: 10, curl: [6, 14, 6], tip: v3(hw - 0.05, hh * 0.16, ht + 0.008) }, ...(import.meta.env.DEV ? g : {}) }]
+      thumb: { oppose: 12, abduct: 8, curl: [4, 8, 4], tip: v3(hw - 0.16, hh * 0.08, ht + 0.045) }, ...(import.meta.env.DEV ? g : {}) }]
     return [{ ...grip, knuckle: v3(hw + 0.08, -hh * 0.3, -ht - 0.12), F: v3(-0.25, 0.9, -0.38), N: v3(-0.8, 0.05, 0.55), seat: 0.006,
       fingers: [hold(hh * 0.05, 3), hold(-hh * 0.15, 0), hold(-hh * 0.35, -3), hold(-hh * 0.55, -6)],
       thumb: { oppose: 0, abduct: 0, curl: [0, 0, 0], tip: v3(hw + 0.05, hh * 0.18, ht * 0.25) }, ...(import.meta.env.DEV ? g : {}) }]
@@ -740,15 +740,23 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       // of a grip's curl is sent to the intermediate and distal joints and the base stays near rest.
       const [cmc, mcp, ip] = curls
       angles.length = 0
-      // Most of a grip still goes to the intermediate joint. The nail joint only takes a
-      // gentle bend: the distal skin is rigid, and a hard hook there folds the tip into the phone.
-      // Overflow from the base may move forward. Overflow at the nail stays there, capped,
-      // so it is not pushed back onto the thenar.
-      angles.push(cmc * 0.35, cmc * 0.2 + mcp * 0.12, mcp * 0.88 + ip * 0.22, ip * 0.42)
-      const cap = [0.32, 0.22, 0.95, 0.36]
+      // The nail joint only takes a gentle bend: the distal skin is rigid, and a hard hook
+      // there folds the tip into the phone. Overflow from the base may move forward.
+      // Overflow at the nail stays there, capped, so it is not pushed back onto the thenar.
+      // The intermediate joint used to take almost all of the curl, which folded the
+      // skin into a deep crease and made the thumb look short and thick. The bend is
+      // shared, that middle joint stays shallow, and a little of the sculpted kink is
+      // opened back up. The nail joint stays on a gentle bend so the tip is not hooked
+      // into the bezel.
+      angles.push(cmc * 0.4, cmc * 0.16 + mcp * 0.2, mcp * 0.28 + ip * 0.06, ip * 0.4)
+      const cap = [0.26, 0.16, 0.2, 0.32]
       for (let i = 0; i < 2; i++) if (angles[i] > cap[i]) { angles[i + 1] += angles[i] - cap[i]; angles[i] = cap[i] }
       if (angles[2] > cap[2]) angles[2] = cap[2]
       if (angles[3] > cap[3]) angles[3] = cap[3]
+      // The sculpt already kinks this joint. Extra flexion folds that kink into a slit
+      // and shortens the thumb, so the pose opens it a little and keeps only a soft crease.
+      angles[2] -= 0.22
+      if (angles[2] < -0.36) angles[2] = -0.36
     }
     const M = new THREE.Matrix4()
     hinge(M, P(names[0]), F0, deg(oppose) * -h); hinge(M, P(names[0]), N0, deg(abduct) * h)
@@ -853,9 +861,11 @@ function armFrame(rig: Rig, F: THREE.Vector3, N: THREE.Vector3) {
 
 // ---------- forearm ----------
 // The hand models stop at the wrist, which shows as a flat cut whenever the arm points at the camera. A tapered,
-// slightly flattened tube continues the wrist back along the arm, out of frame. Classic shares the skin material;
-// realistic uses a flat colour taken from the hand albedo, because the lathe unwrap is not the hand atlas. Tagged as hand, so the AI hands mask covers it too.
+// slightly flattened tube continues the wrist back along the arm, out of frame. Classic shares the skin material
+// and the plain lathe. Realistic clones that lathe, gives it a soft forearm belly, and tiles a pore patch cut
+// from the hand maps so the tube is the same skin as the wrist. Tagged as hand, so the AI hands mask covers it too.
 let armGeo: THREE.BufferGeometry | null = null
+let armSkinGeo: THREE.BufferGeometry | null = null
 /** Side-to-side widening of the forearm tube at distance y past the wrist joint. */
 function armWide(y: number) { return 1 + 0.36 * (1 - THREE.MathUtils.smoothstep(y, 0.1, 1.0)) }
 /** Front-to-back deepening likewise (the hand's wrist is about 21 mm half-depth, the tube's 16). */
@@ -880,6 +890,31 @@ function forearmGeometry() {
   armGeo.setAttribute('aArm', new THREE.BufferAttribute(aa, 1)); armGeo.setAttribute('aMass', new THREE.BufferAttribute(new Float32Array(ap.count).fill(0.85), 1))
   armGeo.setAttribute('aCut', new THREE.BufferAttribute(new Float32Array(ap.count), 1))
   return armGeo
+}
+/** Realistic forearm. Same silhouette at the wrist as the shared lathe, with a soft belly further down and UVs that repeat a skin tile. */
+function forearmSkinGeometry() {
+  if (armSkinGeo) return armSkinGeo
+  const g = forearmGeometry().clone()
+  const pos = g.getAttribute('position') as THREE.BufferAttribute
+  const ouv = g.getAttribute('uv') as THREE.BufferAttribute
+  for (let k = 0; k < pos.count; k++) {
+    const y = pos.getY(k)
+    // Flare at the wrist so the tube covers the hand's open rim, then a soft belly down the forearm.
+    const flare = 1 + 0.2 * (1 - THREE.MathUtils.smoothstep(y, 0.0, 0.42))
+    const t = THREE.MathUtils.clamp((y - 0.08) / 2.1, 0, 1)
+    const belly = (1 + 0.05 * Math.sin(Math.PI * t)) * flare
+    pos.setX(k, pos.getX(k) * belly)
+    pos.setZ(k, pos.getZ(k) * belly)
+    // Five repeats around the arm and about 4 cm along it. The last column's u is an integer, so the lathe seam tiles.
+    ouv.setXY(k, ouv.getX(k) * 5, y / 0.42)
+  }
+  pos.needsUpdate = true
+  ouv.needsUpdate = true
+  g.computeVertexNormals()
+  g.deleteAttribute('tangent')
+  try { g.computeTangents() } catch { /* normal-mapped skin needs tangents; the preview still shades without them */ }
+  armSkinGeo = g
+  return g
 }
 const _ax = new THREE.Vector3(), _ay = new THREE.Vector3(), _az = new THREE.Vector3(), _mb = new THREE.Matrix4()
 function placeArm(mesh: THREE.Mesh, rig: Rig, shift = 0) {
@@ -912,14 +947,16 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const classicRight = useGLTF(URL_R), classicLeft = useGLTF(URL_L)
   const elenaRight = useGLTF(ELENA_R), elenaLeft = useGLTF(ELENA_L)
   const skinTex = useTexture(ELENA_URLS)
+  const armTex = useTexture(ARM_URLS)
   const studioTex = useTexture(STUDIO_URL)
   const { gl } = useThree()
   useLayoutEffect(() => {
     prepareSkinMaps(skinTex)
+    prepareArmMaps(armTex)
     prepareStudioMap(studioTex)
     const max = gl.capabilities.getMaxAnisotropy()
-    for (const t of [...skinTex, studioTex]) t.anisotropy = max
-  }, [skinTex, studioTex, gl])
+    for (const t of [...skinTex, ...armTex, studioTex]) t.anisotropy = max
+  }, [skinTex, armTex, studioTex, gl])
   const group = useRef<THREE.Group>(null)
   const spectral = tone === 'spectral'
   const spm = useMemo<SpectralMats | null>(() => spectral ? spectralMaterials(SPECTRAL_DEFAULTS) : null, [spectral])
@@ -941,7 +978,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     if (realistic) return realisticHandMaterial(toneRec, skinTex)
     return skinMaterial(tone)
   }, [tone, spm, realistic, studio, skinTex, studioTex, toneRec])
-  const armMat = useMemo(() => realistic ? realisticArmMaterial(toneRec) : null, [realistic, toneRec])
+  const armMat = useMemo(() => realistic ? realisticArmMaterial(toneRec, armTex) : null, [realistic, toneRec, armTex])
   useEffect(() => () => { if (!spm) mat.dispose() }, [mat, spm])
   useEffect(() => () => { armMat?.dispose() }, [armMat])
   // live uniforms: tint, transparency and the three effects
@@ -988,6 +1025,11 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const solved = useRef<Record<string, string>>({})
   const lastRep = useRef('')
   const arms = useMemo(() => ({ right: new THREE.Mesh(forearmGeometry()), left: new THREE.Mesh(forearmGeometry()) }), [])
+  useLayoutEffect(() => {
+    const geo = realistic ? forearmSkinGeometry() : forearmGeometry()
+    arms.right.geometry = geo
+    arms.left.geometry = geo
+  }, [arms, realistic])
   // Arm off: the forearm is hidden and the hand itself fades out over the 19 mm its mesh runs past the wrist joint
   // (aArm, 0 at the joint, 0.2 at the open rim), so there is no overlap band and the open rim is fully clear. Photo and
   // Sketch (whose hands keep the skin material) take a copy of the skin with that fade; Spectral fades by uniform.
@@ -999,18 +1041,19 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const realisticFade = mat.userData.fadeFrom as { value: number } | undefined
   const realisticMask = mat.userData.maskAmt as { value: number } | undefined
   // Studio has no forearm. Its bake fades the cuff into the background instead.
-  // Realistic, arm on: the textured cuff fades over its last centimetre into the forearm
-  // tube (aArm is 0 at the wrist and about 0.12 at the rim). The palm stays opaque.
-  // Arm off fades from the wrist, as before. Classic keeps its own cloned fade material.
+  // Realistic, arm on: the cuff stays opaque until its open rim, where it fades into
+  // the skinned forearm (aArm is 0 at the wrist and about 0.12 at the rim). The palm
+  // stays opaque. Arm off fades from the wrist, as before. Classic keeps its own cloned fade material.
   if (studio) {
     if (realisticFade) realisticFade.value = 0
     if (!mat.transparent) { mat.transparent = true; mat.depthWrite = true; mat.needsUpdate = true }
   } else if (realistic) {
-    // aArm is about 0.12 at the rim. Fade the cuff once the forearm tube, shifted up
-    // into the wrist and widened, is behind it. The palm (aArm <= 0) stays opaque.
+    // aArm is about 0.12 at the rim. Only that last few millimetres fade, where the
+    // flared tube is already behind the cuff. A longer fade drew the forearm through
+    // the wrist. Arm off still fades from the joint. The palm stays opaque.
     const realisticSpan = mat.userData.fadeSpan as { value: number } | undefined
-    if (realisticFade) realisticFade.value = armOff ? 0 : 0.02
-    if (realisticSpan) realisticSpan.value = armOff ? 0.11 : 0.09
+    if (realisticFade) realisticFade.value = armOff ? 0 : 0.09
+    if (realisticSpan) realisticSpan.value = armOff ? 0.11 : 0.03
     if (!mat.transparent) { mat.transparent = true; mat.depthWrite = true; mat.needsUpdate = true }
   } else {
     if (realisticFade) realisticFade.value = armOff ? 0 : 2
@@ -1046,7 +1089,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
         for (let k = 1, flat = nailLen; nailsOn && k <= 4 && (r.root.userData.nailClear ?? 1) < need; k++) {
           flat += 0.3; pl = { ...mk(flat)[li], thumbFace: 0.08 * k }; solve(r, pl, fit, look.size, nailLen); const sc = score(); if (sc < best.s) best = { s: sc, pl } }
         if (best.pl !== pl) { pl = best.pl; solve(r, pl, fit, look.size, nailLen) }
-        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r, realistic ? -0.1 : 0); const wide = realistic ? 1.32 : 1; arms[pl.side].scale.set(build * look.size * wide, look.size, build * look.size * wide); if (!armOff && !studio) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
+        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r, realistic ? -0.06 : 0); const wide = realistic ? 1.16 : 1; arms[pl.side].scale.set(build * look.size * wide, look.size, build * look.size * wide); if (!armOff && !studio) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
         const touching = new Set<string>([...(pl.thumb.touch ? ['thumb'] : []), ...pl.fingers.flatMap((f, i) => f.touch ? [FINGERS[i]] : [])])
         m.capture(r.root, r.bones, r.rest, touching, arms[pl.side], animate)
       }

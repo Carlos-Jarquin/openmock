@@ -6,7 +6,7 @@
 import * as THREE from 'three'
 import { toneGain, type SkinTone } from './realisticSkin'
 
-export const STUDIO_URL = '/hands/elena/studio.webp'
+export const STUDIO_URL = '/hands/elena/studio.webp?v=3'
 
 export function prepareStudioMap(map: THREE.Texture) {
   map.colorSpace = THREE.SRGBColorSpace
@@ -38,11 +38,13 @@ vStudioW = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
       '#include <dithering_fragment>',
       `#include <dithering_fragment>
 float studioNdV = clamp(dot(normalize(vStudioN), normalize(cameraPosition - vStudioW)), 0.0, 1.0);
-gl_FragColor.rgb += vec3(1.0, 0.95, 0.91) * pow(1.0 - studioNdV, 2.6) * 0.06;
+float studioRim = pow(1.0 - studioNdV, 1.7);
+gl_FragColor.rgb += vec3(1.0, 0.55, 0.40) * studioRim * 0.22;
+gl_FragColor.rgb += vec3(1.0, 0.78, 0.68) * studioRim * studioRim * 0.06;
 gl_FragColor.a *= 1.0 - smoothstep(uFadeFrom, uFadeFrom + 0.1, vArm);
 if (gl_FragColor.a < 0.02) discard;`,
     )
   }
-  mat.customProgramCacheKey = () => 'om-elena-studio-1'
+  mat.customProgramCacheKey = () => 'om-elena-studio-2'
   return mat
 }

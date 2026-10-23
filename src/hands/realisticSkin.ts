@@ -13,8 +13,6 @@ export const ELENA_URLS: string[] = [
 
 /** SKIN_TONES.fair. The albedo already is a skin colour, so fair leaves it unchanged and the other swatches scale it. */
 const FAIR = new THREE.Color('#dfa98a')
-/** Average of the albedo's skin texels, for the forearm lathe, which does not share the hand unwrap. */
-const CUFF = new THREE.Color('#8d624f')
 
 export function toneGain(color: string) {
   const c = new THREE.Color(color)
@@ -166,10 +164,34 @@ export function realisticHandMaterial(tone: SkinTone, maps: THREE.Texture[]) {
   return mat
 }
 
-/** Forearm lathe. Flat colour taken from the hand albedo, same sheen and backlight, no pore tile. */
-export function realisticArmMaterial(tone: SkinTone) {
-  const mat = physical(tone, CUFF.clone().multiply(toneGain(tone.color)), { roughness: 0.92, specularIntensity: 0.1, sheen: 0.12 })
+/** A tiled patch of the hand atlas, so the forearm lathe is the same skin as the hand. */
+export const ARM_URLS: string[] = [
+  '/hands/elena/forearm-albedo.webp',
+  '/hands/elena/forearm-normal.webp',
+  '/hands/elena/forearm-roughness.webp',
+]
+
+export function prepareArmMaps(maps: THREE.Texture[]) {
+  const [albedo, normal, roughness] = maps
+  albedo.colorSpace = THREE.SRGBColorSpace
+  albedo.wrapS = albedo.wrapT = THREE.RepeatWrapping
+  for (const t of [normal, roughness]) {
+    t.colorSpace = THREE.NoColorSpace
+    t.wrapS = t.wrapT = THREE.RepeatWrapping
+  }
+  for (const t of maps) { t.flipY = false; t.needsUpdate = true }
+}
+
+/** Forearm lathe. Same physical skin as the hand, sampling a pore tile cut from the atlas. */
+export function realisticArmMaterial(tone: SkinTone, maps: THREE.Texture[]) {
+  const [albedo, normal, roughness] = maps
+  const mat = physical(tone, toneGain(tone.color), {
+    map: albedo,
+    normalMap: normal,
+    normalScale: new THREE.Vector2(0.32, 0.32),
+    roughnessMap: roughness,
+  })
   mat.onBeforeCompile = (shader) => compileSkin(shader as SkinShader, 'arm', {})
-  mat.customProgramCacheKey = () => 'om-elena-arm-1'
+  mat.customProgramCacheKey = () => 'om-elena-arm-2'
   return mat
 }
