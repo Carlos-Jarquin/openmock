@@ -64,7 +64,7 @@ export const poseOk = (f: HandFit | null | undefined, p: HandPose) => p === 'off
 
 import { HAND_LOOK0, nailGeometry, nailMaterial, type HandLook, type NailFit } from './nails'
 import { ARM_URLS, ELENA_URLS, prepareArmMaps, prepareSkinMaps, realisticArmMaterial, realisticHandMaterial } from './realisticSkin'
-import { STUDIO_URL, prepareStudioMap, studioHandMaterial } from './studioSkin'
+import { STUDIO_URL, prepareStudioMap, studioArmMaterial, studioHandMaterial } from './studioSkin'
 const URL_R = '/hands/right.glb', URL_L = '/hands/left.glb'
 const ELENA_R = '/hands/elena/right.glb', ELENA_L = '/hands/elena/left.glb'
 const HAND_SCALE = 10 * 1.05   // asset is in metres; 1.05 gives an average adult hand, about 180 mm wrist to fingertip
@@ -978,7 +978,11 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
     if (realistic) return realisticHandMaterial(toneRec, skinTex)
     return skinMaterial(tone)
   }, [tone, spm, realistic, studio, skinTex, studioTex, toneRec])
-  const armMat = useMemo(() => realistic ? realisticArmMaterial(toneRec, armTex) : null, [realistic, toneRec, armTex])
+  const armMat = useMemo(() => {
+    if (studio) return studioArmMaterial(toneRec, armTex[0])
+    if (realistic) return realisticArmMaterial(toneRec, armTex)
+    return null
+  }, [studio, realistic, toneRec, armTex])
   useEffect(() => () => { if (!spm) mat.dispose() }, [mat, spm])
   useEffect(() => () => { armMat?.dispose() }, [armMat])
   // live uniforms: tint, transparency and the three effects
@@ -1026,10 +1030,10 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   const lastRep = useRef('')
   const arms = useMemo(() => ({ right: new THREE.Mesh(forearmGeometry()), left: new THREE.Mesh(forearmGeometry()) }), [])
   useLayoutEffect(() => {
-    const geo = realistic ? forearmSkinGeometry() : forearmGeometry()
+    const geo = elena ? forearmSkinGeometry() : forearmGeometry()
     arms.right.geometry = geo
     arms.left.geometry = geo
-  }, [arms, realistic])
+  }, [arms, elena])
   // Arm off: the forearm is hidden and the hand itself fades out over the 19 mm its mesh runs past the wrist joint
   // (aArm, 0 at the joint, 0.2 at the open rim), so there is no overlap band and the open rim is fully clear. Photo and
   // Sketch (whose hands keep the skin material) take a copy of the skin with that fade; Spectral fades by uniform.
@@ -1040,12 +1044,16 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
   fadeFrom.value = armOff ? 0 : 0.08
   const realisticFade = mat.userData.fadeFrom as { value: number } | undefined
   const realisticMask = mat.userData.maskAmt as { value: number } | undefined
-  // Studio has no forearm. Its bake fades the cuff into the background instead.
+  // Studio wears the same forearm tube and fades it over most of its length.
   // Realistic, arm on: the cuff stays opaque until its open rim, where it fades into
   // the skinned forearm (aArm is 0 at the wrist and about 0.12 at the rim). The palm
   // stays opaque. Arm off fades from the wrist, as before. Classic keeps its own cloned fade material.
   if (studio) {
-    if (realisticFade) realisticFade.value = 0
+    // Arm on: the hand stays opaque and the forearm carries the long fade. Arm off
+    // still dissolves the short cuff, because there is no tube to continue it.
+    const studioSpan = mat.userData.fadeSpan as { value: number } | undefined
+    if (realisticFade) realisticFade.value = armOff ? 0 : 0.09
+    if (studioSpan) studioSpan.value = armOff ? 0.12 : 0.03
     if (!mat.transparent) { mat.transparent = true; mat.depthWrite = true; mat.needsUpdate = true }
   } else if (realistic) {
     // aArm is about 0.12 at the rim. Only that last few millimetres fade, where the
@@ -1089,7 +1097,7 @@ function Hands({ pose, tone, fit, gesture, sp, rot, idle, look }: { pose: HandPo
         for (let k = 1, flat = nailLen; nailsOn && k <= 4 && (r.root.userData.nailClear ?? 1) < need; k++) {
           flat += 0.3; pl = { ...mk(flat)[li], thumbFace: 0.08 * k }; solve(r, pl, fit, look.size, nailLen); const sc = score(); if (sc < best.s) best = { s: sc, pl } }
         if (best.pl !== pl) { pl = best.pl; solve(r, pl, fit, look.size, nailLen) }
-        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r, realistic ? -0.06 : 0); const wide = realistic ? 1.16 : 1; arms[pl.side].scale.set(build * look.size * wide, look.size, build * look.size * wide); if (!armOff && !studio) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
+        solved.current[pl.side] = key; g.add(r.root); placeArm(arms[pl.side], r, elena ? -0.06 : 0); const wide = elena ? 1.16 : 1; arms[pl.side].scale.set(build * look.size * wide, look.size, build * look.size * wide); if (!armOff) g.add(arms[pl.side]); else arms[pl.side].removeFromParent()
         const touching = new Set<string>([...(pl.thumb.touch ? ['thumb'] : []), ...pl.fingers.flatMap((f, i) => f.touch ? [FINGERS[i]] : [])])
         m.capture(r.root, r.bones, r.rest, touching, arms[pl.side], animate)
       }

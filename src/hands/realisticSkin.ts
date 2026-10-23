@@ -5,9 +5,9 @@
 import * as THREE from 'three'
 
 export const ELENA_URLS: string[] = [
-  '/hands/elena/albedo.webp?v=2',
-  '/hands/elena/normal.webp?v=2',
-  '/hands/elena/roughness.webp?v=2',
+  '/hands/elena/albedo.webp?v=3',
+  '/hands/elena/normal.webp?v=3',
+  '/hands/elena/roughness.webp?v=3',
   '/hands/elena/specular.webp',
 ]
 
