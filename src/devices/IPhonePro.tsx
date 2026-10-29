@@ -315,7 +315,7 @@ export function LensStack({ r, order = 0 }: { r: number; order?: number }) {
 /** Rear camera, built in true 3D on the plateau (local +y = out of the back, 0 = plateau surface).
  * Polished ring with chamfered lips, a dark recessed barrel, three glass elements at different depths with AR
  * coatings, an iris ring and a domed sapphire cover. All sizes not on the drawing are estimates. */
-export function RearLens({ d, rise, frame, ring: ringMm = 1.25 }: { d: number; rise: number; frame: string; ring?: number }) {
+export function RearLens({ d, rise, frame, ring: ringMm = 1.25, polished = false }: { d: number; rise: number; frame: string; ring?: number; polished?: boolean }) {
   // Ring: outer edge at the drawn 16.58 diameter; width 1.25 mm, measured from Apple's hero photo along the unforeshortened axis (ring/diameter ~0.075).
   const R = d / 2, w = mm(ringMm), ri = R - w, c = mm(0.32), floor = mm(0.12)
   // Sketch style: outer edge, inner lip and the front element as circles, in this group's local space (y is up).
@@ -352,11 +352,13 @@ export function RearLens({ d, rise, frame, ring: ringMm = 1.25 }: { d: number; r
   const ar = (col: string, t: [number, number]) => <meshPhysicalMaterial color={col} metalness={0.2} roughness={0.04} transparent opacity={0.4}
     iridescence={1} iridescenceIOR={1.4} iridescenceThicknessRange={t} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.5} depthWrite={false} />
   const h = rise - c
+  const ringCol = polished ? '#d8dbe2' : frame
+  const wallCol = polished ? '#b4b8c2' : frame
   return (
     <group rotation={[-Math.PI / 2, 0, 0]} userData={{ sketchNoEdges: true }}>
-      <mesh geometry={ring} castShadow userData={{ sketchLines: circles, sketchTone: 'fill' }}><meshPhysicalMaterial color={frame} metalness={0.3} roughness={0.56} roughnessMap={frostRoughness()} envMapIntensity={0.85} side={THREE.DoubleSide} /></mesh>
-      <mesh geometry={wall} castShadow userData={{ sketchTone: 'fill' }}><meshPhysicalMaterial color={frame} metalness={0.3} roughness={0.7} envMapIntensity={0.45} side={THREE.DoubleSide} /></mesh>
-      <mesh geometry={lip} userData={{ sketchTone: 'fill' }}><meshPhysicalMaterial color={frame} metalness={0.85} roughness={0.2} envMapIntensity={1.1} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={ring} castShadow userData={{ sketchLines: circles, sketchTone: 'fill' }}><meshPhysicalMaterial color={ringCol} metalness={polished ? 0.95 : 0.3} roughness={polished ? 0.12 : 0.56} roughnessMap={polished ? undefined : frostRoughness()} envMapIntensity={polished ? 1.5 : 0.85} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={wall} castShadow userData={{ sketchTone: 'fill' }}><meshPhysicalMaterial color={wallCol} metalness={polished ? 0.9 : 0.3} roughness={polished ? 0.22 : 0.7} envMapIntensity={polished ? 0.95 : 0.45} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={lip} userData={{ sketchTone: 'fill' }}><meshPhysicalMaterial color={ringCol} metalness={polished ? 1 : 0.85} roughness={polished ? 0.08 : 0.2} envMapIntensity={polished ? 1.7 : 1.1} side={THREE.DoubleSide} /></mesh>
       <mesh geometry={barrel}><meshPhysicalMaterial color="#07080b" metalness={0.4} roughness={0.55} side={THREE.DoubleSide} /></mesh>
       {disc(ri * 0.98, floor + E / 3, 'floor', <meshPhysicalMaterial color="#010103" roughness={0.3} clearcoat={0.6} envMapIntensity={0.6} />)}
       {disc(ri * 0.42, floor + h * 0.12, 'e3', ar('#11121c', [300, 480]))}

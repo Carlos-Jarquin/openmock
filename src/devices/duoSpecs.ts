@@ -89,19 +89,25 @@ export const DUO = {
   /** Bottom mics, sheet 1 Detail C. */
   mics: { x: [38.42, 46.99] },
   /**
-   * Rear camera plateau, sheet 1 Detail D (closed back, free edge on the left) and sheet 1 side view.
-   * bx / y are from the free edge and the top of the closed back. Rise is from the back plate.
+   * Rear camera plateau. Centres and diameters from sheet 1 Detail D (closed back, free edge on
+   * the left) and the side-view rise (3.64 back plate to plateau, 5.72 back plate to rear camera
+   * glass). The visible bump is a horizontal stadium with fully rounded ends, as in Apple's
+   * product photo; Detail D's 60.58 / 69.37 figures are accessory keep-outs, not the island.
+   * bx / y are from the free edge and the top of the closed back.
    */
   plateau: {
-    /** Camera 1 and 2 centres. */
+    /** Camera 1 and 2 centres, Ø16.20. */
     lens: { d: 16.20, at: [[15.25, 15.25], [32.98, 15.25]] as [number, number][] },
     flash: { bx: 49.58, y: 19.70, d: 3.75 },
-    mic: { bx: 49.58, y: 10.95, d: 1.50 },
-    /** Pill covering the two lenses and the flash lobe; left follows the body corner. */
-    w: 64.43,
+    /** Visible slot from the photo and Detail D's 3.32 length; Ø1.50 on the sheet is a keep-out. */
+    mic: { bx: 49.58, y: 10.95, w: 3.32, h: 1.05 },
+    /**
+     * Stadium: left edge 4.94 (Detail D), height 24.20 so the Ø16.20 lenses sit on the
+     * centreline at y = 15.25, right end a semicircle about the flash/mic column (49.58).
+     */
+    w: 56.74,
     h: 24.20,
-    /** Centre from the free edge and the top. */
-    bx: 37.16,
+    bx: 33.31,
     cy: 15.25,
     rise: 3.64,
     glass: 5.72,
