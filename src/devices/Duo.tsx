@@ -5,26 +5,29 @@ import { toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.j
 import type { DeviceProps } from '../types'
 import { DEFAULT_LOGO_TINT } from './shared'
 import { RearLens, Pressable } from './IPhonePro'
-// iPhone Duo: unofficial procedural model. Overall size and screen sizes from Apple's published specs;
-// details (bezels, island, buttons, camera) are estimates from Apple's product imagery.
-// Scale: 1 unit = 100 mm. Open 164.6 x 117.8 x 5.2 mm, closed 84.1 x 117.8 x 11.3 mm.
-// Layout (matches Apple's spec drawings, viewed from the inner screen): right half is fixed and has
-// the camera plateau, logo spot, volume buttons (top edge), side button and Camera Control (free edge).
-// Left half swings on the hinge at x = 0, carries the outer display on its back and the USB-C port.
-// Measurements taken from apple.com/iphone-duo/specs drawings scaled to 164.6 x 117.8 mm.
-const W = 0.823, H = 1.178, T = 0.052, GAP = 0.0012
-const CR = 0.127      // outer body corner radius, about 12.7 mm
-const HR = 0.008      // body corner radius at the hinge
-export const INNER_PX = { w: 2670, h: 1878 }
-export const OUTER_PX = { w: 1398, h: 2034 }
+import { DUO, DUO_GAP_MM, DUO_HALF_W_MM } from './duoSpecs'
+// iPhone Duo: unofficial procedural model. Millimetres from Apple's "iPhone Duo Dimensional Drawings"
+// (2026-09-09); see duoSpecs.ts. Scale: 1 unit = 100 mm.
+// Layout (inner-screen view): right half is fixed and has the camera plateau, logo spot, volume
+// buttons (top edge), side button and Camera Control (free edge). Left half swings on the hinge
+// at x = 0, carries the outer display on its back and the USB-C port.
+const mm = (v: number) => v / 100
+const W = mm(DUO_HALF_W_MM), H = mm(DUO.open.h), T = mm(DUO.t), GAP = mm(DUO_GAP_MM)
+const CR = mm(DUO.cornerR)       // free-corner profile, sheet 1 Detail A (17.31 mm)
+const HR = mm(DUO.hingeCornerR)  // hinge-corner profile, sheet 1 Detail AY (3.72 mm)
+export const INNER_PX = DUO.px.inner
+export const OUTER_PX = DUO.px.outer
 export const INNER_ASPECT = INNER_PX.w / INNER_PX.h
 export const OUTER_ASPECT = OUTER_PX.w / OUTER_PX.h
-const SH = 1.11, SW = (SH * INNER_ASPECT) / 2   // one half of the inner screen (bezel about 3.4 mm)
-const SCR = 0.113                                // inner screen outer corner radius, about 11.3 mm
-// outer display (after Carlos's closed front reference): about 2 mm bezel all round, large 9.8 mm corners on the free
-// side and near-square 0.8 mm corners on the hinge side, so the glass runs close to the hinge
-const OH = 1.136, OW = OH * OUTER_ASPECT, OCR = 0.098, OCR_H = 0.008
-const ISL = { w: 0.056, h: 0.085 }               // outer Dynamic Island: vertical pill near the top free corner
+const SH = mm(DUO.inner.active.h), SW = mm(DUO.inner.active.w) / 2
+const SCR = mm(Math.max(0.3, DUO.cornerR - DUO.inner.inset))
+const OH = mm(DUO.outer.active.h), OW = mm(DUO.outer.active.w)
+const OUTER_FREE_INSET = (DUO.closed.w - DUO.outer.hingeToActive - DUO.outer.active.w)
+const OUTER_HINGE_FROM_AXIS = DUO.outer.hingeToActive - DUO.hingeOverhang
+const OCR = mm(Math.max(0.3, DUO.cornerR - (DUO.open.h - DUO.outer.active.h) / 2))
+const OCR_H = mm(Math.max(0.03, DUO.hingeCornerR - DUO.outer.hingeToActive))
+const OUTER_SHIFT = mm((OUTER_HINGE_FROM_AXIS - OUTER_FREE_INSET) / 2)
+const OUTER_CAM = { x: mm(DUO_HALF_W_MM / 2 - (DUO.closed.w - DUO.outerCam.x)), y: mm(DUO.open.h / 2 - DUO.outerCam.y), r: mm(DUO.outerCam.keepout / 2) }
 export const FINISHES = {
   night: { frame: '#3a3f4b', back: '#1d212b', label: 'Night Sky' },
   star: { frame: '#d8d4cc', back: '#ece9e3', label: 'Star White' },
@@ -49,8 +52,9 @@ function slab(shape: THREE.Shape, depth: number, bevel: number) {
   const g = new THREE.ExtrudeGeometry(shape, { depth: depth - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel * 0.8, bevelSegments: 3, curveSegments: 24 })
   g.translate(0, 0, -(depth - bevel * 2) / 2); return g
 }
-/** The body's outer edge sits this far outside its outline (the slab bevel grows outward); edge parts sit on it. */
-const EO = 0.006 * 0.8
+/** Slab bevel: capped so both faces still have a flat on the 5.48 mm half. EO is the hinge exterior past the axis (sheet 1 Detail E, 1.80 mm). */
+const BEV = mm(Math.min(DUO.edge, DUO.t / 2 - 0.4))
+const EO = mm(DUO.hingeOverhang)
 const pill = (w: number, h: number) => { const r = Math.min(w, h) / 2; return rrect(w, h, [r, r, r, r]) }
 const E = 0.0004 // z separation between stacked flat layers
 
@@ -93,8 +97,8 @@ function seamMaterial(frame: string) {
   return m
 }
 /** Pill (stadium) face of length len and height h, extruded d out of the surface along +z with a soft edge. */
-/** Button sizes from our iPhone 18 Pro (iphoneSpecs btn): width, protrusion, sink into the frame, press travel. */
-const BTN = { w: 0.0266, prot: 0.0045, sink: 0.003, press: 0.003 }
+/** Button width from the 18 Pro spec (2.66 mm); protrusion 0.45 mm from sheet 1. */
+const BTN = { w: mm(DUO.btn.w), prot: mm(DUO.vol.protrude), sink: 0.003, press: 0.003 }
 const pillCache = new Map<string, THREE.BufferGeometry>()
 function pillGeo(len: number, h: number, d: number) {
   const k = `${len}|${h}|${d}`, hit = pillCache.get(k); if (hit) return hit
@@ -110,8 +114,8 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
     // Right half spans x 0..W, left half spans -W..0 (in its own frame before swinging).
     // the slabs stop RAIL.k short of the hinge; the rail (a bar along y with a fully rounded back corner) forms the
     // hinge-side frame edge, so closed the two rails frame the recessed spine panel
-    const rightBody = slab(rrect(W - RAIL.k, H, [HR, CR, CR, HR], (W + RAIL.k) / 2), T, 0.006)
-    const leftBody = slab(rrect(W - RAIL.k, H, [CR, HR, HR, CR], -(W + RAIL.k) / 2), T, 0.006)
+    const rightBody = slab(rrect(W - RAIL.k, H, [HR, CR, CR, HR], (W + RAIL.k) / 2), T, BEV)
+    const leftBody = slab(rrect(W - RAIL.k, H, [CR, HR, HR, CR], -(W + RAIL.k) / 2), T, BEV)
     const railR = railGeo(1), railL = railGeo(-1)
     // bezels run right up to the hinge line (square there) so the open device has no notch or strip between halves
     const bezelR = flat(rrect(W - 0.002, H - 0.004, [0.0003, CR - 0.004, CR - 0.004, 0.0003], W / 2 - 0.001), W, H, 0, 1, W / 2)
@@ -121,9 +125,9 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
     const FO = FC - 0.0005, hw = SW - FO, uF = FO / (2 * SW)
     const scrR = flat(rrect(hw, SH, [0.0001, SCR, SCR, 0.0001], FO + hw / 2), hw, SH, 0.5 + uF, 1, FO + hw / 2)
     const scrL = flat(rrect(hw, SH, [SCR, 0.0001, 0.0001, SCR], -FO - hw / 2), hw, SH, 0, 0.5 - uF, -FO - hw / 2)
-    const outer = flat(rrect(OW, OH, [OCR_H, OCR, OCR, OCR_H]), OW, OH)   // [bl, br, tr, tl]: local -x is the hinge side
-    const island = new THREE.ShapeGeometry(pill(ISL.w, ISL.h), 16)
-    const udc = new THREE.CircleGeometry(0.014, 24)
+    const outer = flat(rrect(OW, OH, [OCR_H, OCR, OCR, OCR_H], OUTER_SHIFT), OW, OH, 0, 1, OUTER_SHIFT)   // [bl, br, tr, tl]: local -x is the hinge side
+    const island = new THREE.CircleGeometry(OUTER_CAM.r, 32)
+    const udc = new THREE.CircleGeometry(mm(DUO.innerCam.d / 2), 24)
     const seal = sealGeo()
     return { seal, rightBody, leftBody, railR, railL, bezelR, bezelL, scrR, scrL, outer, island, udc }
   }, [])
@@ -174,7 +178,7 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
   // x in [0, SW] to u in [0.5, 1].
   if (!textureOuter || textureOuter === texture) {
     const ri = mats.fixed.uniforms.rep.value, oi = mats.fixed.uniforms.off.value, uo = mats.outer.uniforms
-    const ax = 0.5 + (W / 2 - OW / 2) / (2 * SW), bx = OW / (2 * SW), ay = 0.5 - OH / (2 * SH), by = OH / SH
+    const ax = 0.5 + mm(OUTER_HINGE_FROM_AXIS) / (2 * SW), bx = OW / (2 * SW), ay = 0.5 - OH / (2 * SH), by = OH / SH
     uo.rep.value.set(bx * ri.x, by * ri.y); uo.off.value.set(ax * ri.x + oi.x, ay * ri.y + oi.y)
   }
   for (const t of [texture, textureOuter]) if (t) { t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; if (t.minFilter !== THREE.LinearMipmapLinearFilter) { t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.needsUpdate = true } }
@@ -244,11 +248,6 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
     }
   })
   const zf = T / 2 + E          // front face layers
-  // Free edge buttons (right half, x = W, viewed with the outer screen facing you they sit on the right).
-  const btn = (y: number, len: number, key: string, extra = 0) => (
-    <mesh key={key} position={[W + 0.0015 + extra / 2, y, 0]} castShadow>
-      <boxGeometry args={[0.006 + extra, len, T * 0.42]} />{frameMat}
-    </mesh>)
   const logo = opts.logo
   return (
     <group ref={root} position={[-(W / 2) * (1 - opts.fold / 180), 0, -(T / 2 + GAP) * (1 - opts.fold / 180)]}>
@@ -260,61 +259,56 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
       {/* the screen's bent fold region: rebuilt per frame from the hinge angle, joins both halves without a seam */}
       <mesh name="screen" geometry={strip} frustumCulled={false}><primitive object={mats.strip} attach="material" /></mesh>
       {/* hinge-side frame edges keep the body's rounded edge (no square fill): they are the rails either side of the spine */}
-      {/* inner under-display FaceTime camera (Dynamic Island area): 34 mm from hinge, 12.7 mm from top */}
-      <mesh geometry={g.udc} position={[0.34, H / 2 - 0.127, zf + E * 3]} renderOrder={2}>
+      {/* inner under-display FaceTime camera, sheet 4: 107.25 mm from the open left edge (24.95 mm from the hinge on the right half), 15.80 mm from the top */}
+      <mesh geometry={g.udc} position={[mm(DUO.innerCam.x - DUO_HALF_W_MM), H / 2 - mm(DUO.innerCam.y), zf + E * 3]} renderOrder={2}>
         <meshBasicMaterial color="#000" transparent opacity={0.45} polygonOffset polygonOffsetFactor={-2} /></mesh>
       {/* back glass */}
       <mesh position={[0, 0, -T / 2 - E]} rotation={[0, Math.PI, 0]}>
         <shapeGeometry args={[rrC(W - 0.0025, H - 0.004, [CR - 0.004, 0.0003, 0.0003, CR - 0.004], -(W - 0.0015) / 2), 24]} />{glassBack}
       </mesh>
-      {/* camera plateau (after Carlos's iPhone Duo reference): a pill-shaped raised plateau in the back finish, about
-          59 x 26 mm, 1.8 mm in from the top and free edges, holding two large lenses side by side (the iPhone 18 Pro lens
-          build, 17 mm) next to the free edge, and a small flash/sensor slot at its inner end. */}
-      {/* plateau after Carlos's Duo reference renders: 59 x 22.5 mm, 2.5 mm in from the top and free edges, with a soft
-          wide shoulder (a low skirt under a well rounded top) so it blends into the back as a fillet */}
-      <group position={[W - 0.32, H / 2 - 0.1375, -T / 2]}>
-        <mesh rotation={[Math.PI, 0, 0]} castShadow><extrudeGeometry args={[pill(0.562, 0.197), { depth: 0.005, bevelEnabled: true, bevelThickness: 0.009, bevelSize: 0.014, bevelSegments: 10, curveSegments: 48 }]} />{plateauMat}</mesh>
-        <mesh rotation={[Math.PI, 0, 0]}><extrudeGeometry args={[pill(0.57, 0.205), { depth: 0.0001, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.022, bevelSegments: 8, curveSegments: 48 }]} />{glassBack}</mesh>
-        {[0.176, -0.005].map(x => (
-          <group key={x} position={[x, -0.003, -0.0139]}><RearLens d={0.165} rise={0.0211} frame={f.frame} ring={0.7} /></group>))}
-        <mesh position={[-0.175, 0.045, -0.0141]} rotation={[Math.PI, 0, 0]}><shapeGeometry args={[pill(0.028, 0.012), 12]} />
-          <meshPhysicalMaterial color="#1a1b1f" roughness={0.25} clearcoat={1} /></mesh>
+      {/* camera plateau, sheet 1 Detail D and side view: 3.64 mm rise from the back plate, two Ø16.20 lenses, Ø3.75 flash. */}
+      <group position={[W - mm(DUO.plateau.bx), H / 2 - mm(DUO.plateau.cy), -T / 2]}>
+        <mesh rotation={[Math.PI, 0, 0]} castShadow><extrudeGeometry args={[pill(mm(DUO.plateau.w), mm(DUO.plateau.h)), { depth: mm(DUO.plateau.rise) * 0.35, bevelEnabled: true, bevelThickness: mm(DUO.plateau.rise) * 0.65, bevelSize: mm(4), bevelSegments: 10, curveSegments: 48 }]} />{plateauMat}</mesh>
+        <mesh rotation={[Math.PI, 0, 0]}><extrudeGeometry args={[pill(mm(DUO.plateau.w + 0.8), mm(DUO.plateau.h + 0.8)), { depth: 0.0001, bevelEnabled: true, bevelThickness: mm(1.2), bevelSize: mm(5), bevelSegments: 8, curveSegments: 48 }]} />{glassBack}</mesh>
+        {DUO.plateau.lens.at.map(([bx, y], i) => (
+          <group key={i} position={[mm(DUO.plateau.bx - bx), mm(DUO.plateau.cy - y), -mm(DUO.plateau.rise)]}><RearLens d={mm(DUO.plateau.lens.d)} rise={mm(DUO.plateau.glass - DUO.plateau.rise)} frame={f.frame} ring={0.7} /></group>))}
+        <mesh position={[mm(DUO.plateau.bx - DUO.plateau.flash.bx), mm(DUO.plateau.cy - DUO.plateau.flash.y), -mm(DUO.plateau.rise)]} rotation={[Math.PI, 0, 0]}><circleGeometry args={[mm(DUO.plateau.flash.d / 2), 24]} />
+          <meshPhysicalMaterial color="#efe6cf" roughness={0.3} clearcoat={1} /></mesh>
+        <mesh position={[mm(DUO.plateau.bx - DUO.plateau.mic.bx), mm(DUO.plateau.cy - DUO.plateau.mic.y), -mm(DUO.plateau.rise)]} rotation={[Math.PI, 0, 0]}><circleGeometry args={[mm(DUO.plateau.mic.d / 2), 16]} />
+          <meshBasicMaterial color="#111" /></mesh>
       </group>
-      {/* logo spot: centre of the right half's back; user-supplied art only */}
+      {/* logo spot: sheet 1 back, 16.29 x 20.00, centre 41.40 mm from the bottom; user-supplied art only */}
       {logo && (
-        <mesh position={[W / 2, 0, -T / 2 - E * 3]} rotation={[0, Math.PI, 0]}>
+        <mesh position={[W / 2, -H / 2 + mm(DUO.logo.fromBottom), -T / 2 - E * 3]} rotation={[0, Math.PI, 0]}>
           <planeGeometry args={[opts.logoSize, opts.logoSize / logo.aspect]} />
           <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : f.back} metalness={0.55} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.6}
             alphaMap={logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
         </mesh>)}
-      {/* Buttons as on our iPhone 18 Pro: 2.66 mm wide pills standing 0.45 mm proud (0.3 mm sunk into the frame so no gap
-          shows), clickable with the 18 Pro's press (Pressable: 0.3 mm in, spring back). Local +x of each Pressable is
-          outward. Volume up/down on the top edge (reference): 38.9 to 49.9 mm and 53.4 to 64.8 mm from the hinge. */}
-      {[[0.444, 0.11], [0.591, 0.114]].map(([x, len]) => (
-        <Pressable key={x} depth={BTN.press} position={[x, H / 2 + EO, 0]} rotation={[0, 0, Math.PI / 2]}>
-          <mesh position={[-BTN.sink, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, len, BTN.prot + BTN.sink)} castShadow>{frameMat}</mesh>
+      {/* Volume buttons, sheet 1 front: centres 44.35 and 57.73 mm from the hinge, each 10.88 mm, 0.45 mm proud. */}
+      {[[DUO.vol.downX, DUO.vol.len], [DUO.vol.upX, DUO.vol.len]].map(([xMm, lenMm]) => (
+        <Pressable key={xMm} depth={BTN.press} position={[mm(xMm), H / 2 + EO, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <mesh position={[-BTN.sink, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, mm(lenMm), BTN.prot + BTN.sink)} castShadow>{frameMat}</mesh>
         </Pressable>))}
-      {/* free edge (reference): the side button, 31.8 to 50.6 mm from the top, a dark pill proud like the 18 Pro's buttons;
-          and Camera Control, 77 to 95.2 mm from the top, flush as on the 18 Pro (dark crystal in a thin frame-coloured
-          ring, 0.1 mm press) */}
-      <Pressable depth={BTN.press} position={[W + EO, H / 2 - 0.412, 0]}>
-        <mesh position={[-BTN.sink, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, 0.188, BTN.prot + BTN.sink)} castShadow>
+      {/* Free edge, sheet 1 side view: side button centre 42.87 mm from the top, 18.68 mm long, 0.45 mm proud;
+          Camera Control centre 84.97 mm from the top, 17.10 mm housing / 15.67 mm crystal, 0.075 mm proud. */}
+      <Pressable depth={BTN.press} position={[W + EO, H / 2 - mm(DUO.sideBtn.cy), 0]}>
+        <mesh position={[-BTN.sink, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, mm(DUO.sideBtn.len), BTN.prot + BTN.sink)} castShadow>
           <meshPhysicalMaterial color="#0c0d10" metalness={0.2} roughness={0.12} clearcoat={1} /></mesh>
       </Pressable>
-      <Pressable depth={0.001} position={[W + EO, H / 2 - 0.861, 0]}>
-        <mesh position={[-0.0002, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w + 0.006, 0.188, 0.0004)}>{frameMat}</mesh>
-        <mesh position={[-0.0002, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, 0.182, 0.0005)}><meshPhysicalMaterial color="#0c0d10" metalness={0.2} roughness={0.06} clearcoat={1} /></mesh>
+      <Pressable depth={0.001} position={[W + EO, H / 2 - mm(DUO.cameraControl.cy), 0]}>
+        <mesh position={[-0.0002, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w + 0.006, mm(DUO.cameraControl.len), 0.0004)}>{frameMat}</mesh>
+        <mesh position={[-0.0002, 0, 0]} rotation={[0, Math.PI / 2, 0]} geometry={pillGeo(BTN.w, mm(DUO.cameraControl.crystal), 0.0005)}><meshPhysicalMaterial color="#0c0d10" metalness={0.2} roughness={0.06} clearcoat={1} /></mesh>
       </Pressable>
       {/* black seal around the closed gap: a ribbon standing across it just inside the fixed half's outline (top, the rounded
           free corners, the free edge, bottom), so the eye never sees down the gap; closed only */}
       <mesh ref={sealM} geometry={g.seal} visible={opts.fold < 1}><meshBasicMaterial color="#030304" side={THREE.DoubleSide} /></mesh>
       {/* antenna bands on both halves (see BANDS) */}
       <mesh geometry={g.rightBody} material={bandMat} renderOrder={1} />
-      {/* bottom edge speaker grilles, 16 to 23 mm and 60 to 68 mm from the hinge: bored holes (see boreMaterial) */}
-      {[0.16, 0.60].flatMap(x0 => [0, 1, 2, 3].map(i => (
-        <mesh key={`${x0}${i}`} position={[x0 + 0.01 + i * 0.022, -H / 2 - EO - 0.0001, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={BORE_GEO} material={boreMat} />)))}
-      {/* bottom edge mic holes (reference), 35 and 51 mm from the hinge, on both halves */}
-      {[0.354, 0.51].map(x => <Screw key={x} x={x} />)}
+      {/* bottom edge speaker holes, sheet 1 Detail C: 8x Ø1.53 in two groups of four */}
+      {DUO.speakers.x.map(xMm => (
+        <mesh key={xMm} position={[mm(xMm), -H / 2 - EO - 0.0001, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={BORE_GEO} material={boreMat} />))}
+      {/* bottom screws, sheet 1 Detail C: 2x 35.35 and 2x 50.04 from the hinge, both halves */}
+      {DUO.screws.x.map(xMm => <Screw key={xMm} x={mm(xMm)} />)}
       {/* internal hinge spine: a rounded cover on the pivot axis, revealed between the halves as they fold (see spineGeo) */}
       <mesh ref={spineM} position={[0, 0, T / 2 + GAP]} castShadow><meshPhysicalMaterial color={f.frame} metalness={0.85} roughness={0.42} clearcoat={0.15} /></mesh>
       {/* ---------- left half (swings) ---------- */}
@@ -323,24 +317,23 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
           <mesh geometry={g.leftBody} castShadow material={bodyMat} />
           <mesh geometry={g.railL} castShadow material={bodyMat} />
           <mesh geometry={g.leftBody} material={bandMat} renderOrder={1} />
-          {[-0.354, -0.51].map(x => <Screw key={x} x={x} />)}
-          {/* USB-C on the bottom edge, about 43 mm from the hinge */}
-          <mesh position={[-0.43, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          {DUO.screws.x.map(xMm => <Screw key={-xMm} x={-mm(xMm)} />)}
+          {/* USB-C on the bottom of the outer-display half, sheet 1 Detail C: 42.70 mm from the hinge, 8.59 x 3.24 */}
+          <mesh position={[-mm(DUO.usbc.x), -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}>
             <shapeGeometry args={[USB_SHAPE]} /><meshBasicMaterial color="#050506" side={THREE.DoubleSide} /></mesh>
-          {/* the port's metal tongue inside the black outline, as in the reference (not a solid black slot) */}
-          <mesh position={[-0.43, -H / 2 - EO - 0.0005, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          <mesh position={[-mm(DUO.usbc.x), -H / 2 - EO - 0.0005, 0]} rotation={[Math.PI / 2, 0, 0]}>
             <shapeGeometry args={[USB_TONGUE]} /><meshStandardMaterial color={f.frame} metalness={0.85} roughness={0.3} side={THREE.DoubleSide} /></mesh>
-          {/* top edge speaker grille, 36 to 51 mm from the hinge: bored holes (see boreMaterial) */}
-          {[0, 1, 2, 3, 4, 5].map(i => (
-            <mesh key={i} position={[-0.365 - i * 0.028, H / 2 + EO + 0.0001, 0]} rotation={[-Math.PI / 2, 0, 0]} geometry={BORE_GEO} material={boreMat} />))}
+          {/* bottom mics, sheet 1 Detail C, mirrored onto this half */}
+          {DUO.mics.x.map(xMm => (
+            <mesh key={xMm} position={[-mm(xMm), -H / 2 - EO - 0.0001, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={BORE_GEO} material={boreMat} />))}
           <mesh geometry={g.bezelL} position={[0, 0, zf]}><meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
           <mesh name="screen" geometry={g.scrL} position={[0, 0, zf + E]}><primitive object={mats.moving} attach="material" /></mesh>
           {/* outer display on the back, cover glass then screen */}
           <group position={[-W / 2, 0, -T / 2]} rotation={[0, Math.PI, 0]}>
-            <mesh position={[0, 0, E]}><shapeGeometry args={[rrC(W - 0.03, H - 0.03, [HR, CR - 0.012, CR - 0.012, HR]), 24]} />
+            <mesh position={[OUTER_SHIFT, 0, E]}><shapeGeometry args={[rrC(mm(DUO.outer.glass.w), mm(DUO.outer.glass.h), [mm(Math.max(0.3, DUO.hingeCornerR - DUO.outer.glassInset)), mm(Math.max(0.3, DUO.cornerR - DUO.outer.glassInset)), mm(Math.max(0.3, DUO.cornerR - DUO.outer.glassInset)), mm(Math.max(0.3, DUO.hingeCornerR - DUO.outer.glassInset))], OUTER_SHIFT), 24]} />
               <meshPhysicalMaterial color="#050506" roughness={0.12} clearcoat={1} /></mesh>
             <mesh name="screen" geometry={g.outer} position={[0, 0, E * 2]}><primitive object={mats.outer} attach="material" /></mesh>
-            <group position={[W / 2 - 0.105, H / 2 - 0.103, 0]}><Overlay geo={g.island} z={E * 8} /></group>
+            <group position={[OUTER_CAM.x, OUTER_CAM.y, 0]}><Overlay geo={g.island} z={E * 8} /></group>
           </group>
         </group>
       </group>
@@ -534,8 +527,8 @@ function smooth(g: THREE.BufferGeometry, snap = true) {
   if (snap) for (let i = 0; i < n.count; i++) if (Math.abs(n.getY(i)) > 0.9) n.setXYZ(i, 0, Math.sign(n.getY(i)), 0)
   return m
 }
-/** Hinge-side rails: RB back-corner radius, k slab inset, c how far the closed spine panel is pulled in from each back. */
-const RAIL = { RB: 0.019, k: 0.015 }
+/** Hinge-side rails: RB is a fully rounded end (half the 5.48 mm half-thickness); k is how far the slab stops short of the axis. */
+const RAIL = { RB: T / 2, k: mm(4) }
 /** Closed, the spine's long sides sit this far inside the backs; negative: the spine is 0.5 mm wider than the stack on each
  *  side, so it overhangs both halves' outer faces (refs 13 and the white end-on reference). */
 const SPINE_IN = -0.005
@@ -580,7 +573,7 @@ function sealGeo() {
 /** Speaker grille hole, bored 1.2 mm into the frame: drawn on a disc lying on the edge face, the fragment shader casts
  *  the view ray into a 0.62 mm radius cylinder, so the hole shows its lit metal wall darkening with depth and a black
  *  floor, shifting with the viewing angle like a real bore; a narrow chamfered rim (lighter towards the top) rings it. */
-const BORE = { r: 0.0062, rim: 0.0011, depth: 0.012 }
+const BORE = { r: mm(DUO.speakers.d / 2), rim: 0.0011, depth: 0.012 }
 const BORE_GEO = new THREE.CircleGeometry(BORE.r + BORE.rim, 32)
 function boreMaterial(frame: string) {
   return new THREE.ShaderMaterial({
@@ -607,7 +600,7 @@ function boreMaterial(frame: string) {
       }`,
   })
 }
-const USB_SHAPE = pill(0.09, 0.028), USB_TONGUE = pill(0.078, 0.017)
+const USB_SHAPE = pill(mm(DUO.usbc.w), mm(DUO.usbc.h)), USB_TONGUE = pill(mm(DUO.usbc.w - 1.2), mm(DUO.usbc.h - 1.1))
 /** Bottom edge screw (reference): a frame-coloured head in a thin dark ring, 1.1 mm across. */
 function Screw({ x }: { x: number }) {
   return <group position={[x, -H / 2 - EO - 0.0003, 0]} rotation={[Math.PI / 2, 0, 0]}>
