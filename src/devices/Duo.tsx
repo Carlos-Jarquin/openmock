@@ -100,25 +100,6 @@ function seamMaterial(frame: string) {
 /** Button width from the 18 Pro spec (2.66 mm); protrusion 0.45 mm from sheet 1. */
 const BTN = { w: mm(DUO.btn.w), prot: mm(DUO.vol.protrude), sink: 0.003, press: 0.003 }
 const pillCache = new Map<string, THREE.BufferGeometry>()
-/** Tone-on-tone Apple mark: white artwork on black, used as an alpha map. */
-let appleLogoTex: THREE.CanvasTexture | null = null
-function appleLogoMask() {
-  if (appleLogoTex) return appleLogoTex
-  const w = 814, h = 1000
-  const c = document.createElement('canvas'); c.width = w; c.height = h
-  const ctx = c.getContext('2d')!
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h)
-  ctx.fillStyle = '#fff'
-  // Font Awesome apple paths, viewBox 0 0 384 512, fitted into the 16.29 x 20.00 drawing box.
-  const vbW = 384, vbH = 512, pad = 0.06
-  const sc = Math.min(w * (1 - 2 * pad) / vbW, h * (1 - 2 * pad) / vbH)
-  ctx.translate((w - vbW * sc) / 2, (h - vbH * sc) / 2)
-  ctx.scale(sc, sc)
-  ctx.fill(new Path2D('M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 50.4 31.2 105.4c23.2 42.6 54.5 90.4 94.7 88.6 37.2-1.9 50.8-24.3 94.7-24.3 43.3 0 55.9 24.3 94.7 23.4 40.8-.9 66.7-43.3 89.9-85.9-51.8-30.7-81.1-90.4-81.5-111.9z'))
-  ctx.fill(new Path2D('M212.1 118.8c20.7-24.9 34.6-59.6 30.8-94.8-29.8 1.2-65.6 19.9-86.9 44.7-19.1 21.9-35.8 57.1-31.3 90.8 33.1 2.6 67.1-16.8 87.4-40.7z'))
-  const t = new THREE.CanvasTexture(c); t.anisotropy = 8; t.colorSpace = THREE.NoColorSpace; t.needsUpdate = true
-  appleLogoTex = t; return t
-}
 
 function pillGeo(len: number, h: number, d: number) {
   const k = `${len}|${h}|${d}`, hit = pillCache.get(k); if (hit) return hit
@@ -169,12 +150,10 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
   const glassBack = <meshPhysicalMaterial color={f.back} metalness={0.1} roughness={0.55} clearcoat={0.6} clearcoatRoughness={0.4} />
   // Body-coloured stadium, same glass as the back with a slightly tighter clearcoat so the bevel reads.
   const plateauMat = <meshPhysicalMaterial color={f.back} metalness={0.08} roughness={0.48} clearcoat={0.7} clearcoatRoughness={0.32} />
-  const appleMask = useMemo(() => appleLogoMask(), [])
-  const logoDark = useMemo(() => new THREE.Color(f.back).getHSL({ h: 0, s: 0, l: 0 }).l < 0.45, [f.back])
   const logoCol = useMemo(() => {
     if (opts.logo && opts.logoTint !== DEFAULT_LOGO_TINT) return opts.logoTint
-    return '#' + new THREE.Color(f.back).lerp(new THREE.Color(logoDark ? '#ffffff' : '#1a1a1c'), logoDark ? 0.1 : 0.07).getHexString()
-  }, [f.back, logoDark, opts.logo, opts.logoTint])
+    return f.back
+  }, [f.back, opts.logo, opts.logoTint])
   // The fold is applied every frame from refs (no React state per frame): the hinge angle, the self-centring shift,
   // the spine and the three screen materials all read one eased timeline while a transition runs (foldLive.anim),
   // else the Fold slider.
@@ -273,7 +252,6 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
     }
   })
   const zf = T / 2 + E          // front face layers
-  const logoMask = opts.logo?.mask ?? appleMask
   return (
     <group ref={root} position={[-(W / 2) * (1 - opts.fold / 180), 0, -(T / 2 + GAP) * (1 - opts.fold / 180)]}>
       {/* ---------- right half (fixed) ---------- */}
@@ -307,12 +285,19 @@ function Duo({ texture, mediaAspect, opts, textureOuter, mediaAspectOuter, uid }
           <extrudeGeometry args={[pill(mm(DUO.plateau.mic.w), mm(DUO.plateau.mic.h)), { depth: mm(0.35), bevelEnabled: true, bevelThickness: mm(0.08), bevelSize: mm(0.12), bevelSegments: 2, curveSegments: 12 }]} />
           <meshBasicMaterial color="#07080a" /></mesh>
       </group>
-      {/* Apple logo: sheet 1 back, 16.29 x 20.00, centre 41.40 mm from the bottom, centred on the back half. */}
-      <mesh position={[W / 2, -H / 2 + mm(DUO.logo.fromBottom), -T / 2 - E * 3]} rotation={[0, Math.PI, 0]}>
-        <planeGeometry args={[mm(DUO.logo.w), mm(DUO.logo.h)]} />
-        <meshPhysicalMaterial color={logoCol} metalness={0.05} roughness={0.72} clearcoat={0.15} clearcoatRoughness={0.6} envMapIntensity={0.35}
-          alphaMap={logoMask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
-      </mesh>
+      {/* Logo spot: sheet 1 back, 16.29 x 20.00 box, centre 41.40 mm from the bottom, centred on the back half. User SVG only. */}
+      {opts.logo && (() => {
+        const boxW = mm(DUO.logo.w), boxH = mm(DUO.logo.h)
+        const logoAspect = opts.logo.aspect, boxAspect = boxW / boxH
+        const [w, h] = logoAspect > boxAspect ? [boxW, boxW / logoAspect] : [boxH * logoAspect, boxH]
+        return (
+          <mesh position={[W / 2, -H / 2 + mm(DUO.logo.fromBottom), -T / 2 - E * 3]} rotation={[0, Math.PI, 0]}>
+            <planeGeometry args={[w, h]} />
+            <meshPhysicalMaterial color={logoCol} metalness={0.55} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={1.6}
+              alphaMap={opts.logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
+          </mesh>
+        )
+      })()}
       {/* Volume buttons, sheet 1 front: centres 44.35 and 57.73 mm from the hinge, each 10.88 mm, 0.45 mm proud. */}
       {[[DUO.vol.downX, DUO.vol.len], [DUO.vol.upX, DUO.vol.len]].map(([xMm, lenMm]) => (
         <Pressable key={xMm} depth={BTN.press} position={[mm(xMm), H / 2 + EO, 0]} rotation={[0, 0, Math.PI / 2]}>
