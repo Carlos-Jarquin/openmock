@@ -9,6 +9,7 @@ import * as THREE from 'three'
 import { DEVICES } from './devices'
 import type { DeviceId, DeviceOptions } from './types'
 import { INNER_PX, OUTER_PX, foldLiveFor, FOLD_MS } from './devices/Duo'
+import { DUO, DUO_GAP_MM, DUO_HALF_W_MM } from './devices/duoSpecs'
 import { sceneHit } from './devices/shared'
 import { MBP, mbpKey } from './devices/MacBookPro'
 import { IMAC, imacFrame } from './devices/IMacG4'
@@ -94,12 +95,13 @@ const fitOf = (s: BodySpec, scale = 3, kind: HandFit['kind'] = 'phone'): HandFit
   SW: s.active.w / 100, SH: s.active.h / 100, PW: Math.round(s.px.w / scale), PH: Math.round(s.px.h / scale), kind })
 const HAND_FITS: Partial<Record<DeviceId, HandFit>> = { ip18: fitOf(IPHONE_18_PRO), ip18max: fitOf(IPHONE_18_PRO_MAX),
   ipmini: fitOf(IPAD_MINI, 2, 'tablet'), ippro11: fitOf(IPAD_PRO_11, 2, 'tablet'), ippro13: fitOf(IPAD_PRO_129, 2, 'tablet') }
-// iPhone Duo (devices/Duo.tsx): open 164.6 x 117.8 x 5.2 mm, centred on the hinge, the inner screen across both halves;
-// closed 82.3 x 117.8 mm, two halves (10.5 mm) with the outer display in front. With the fold camera off the closed
+// iPhone Duo (devices/duoSpecs.ts): open 164.60 x 117.80 x 5.48 mm, centred on the hinge, the inner screen across both halves;
+// closed 84.10 x 117.80 x 11.30 mm, with the outer display in front. With the fold camera off the closed
 // stack is not re-centred, so its centre sits half a width right of the hinge and half a body forward.
-const DUO_T = 0.052, DUO_GAP = 0.0012, DUO_W = 0.823
-const DUO_OPEN: HandFit = { W: 2 * DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005, SW: 1.11 * INNER_PX.w / INNER_PX.h, SH: 1.11, PW: Math.round(INNER_PX.w / 3), PH: Math.round(INNER_PX.h / 3), kind: 'tablet', extra: ['bottom'] }
-const DUO_CLOSED: HandFit = { W: DUO_W, H: 1.178, T: 2 * DUO_T + DUO_GAP, R: 0.127, E: 0.005, SW: 1.136 * OUTER_PX.w / OUTER_PX.h, SH: 1.136, PW: Math.round(OUTER_PX.w / 3), PH: Math.round(OUTER_PX.h / 3), kind: 'phone' }
+const mm = (v: number) => v / 100
+const DUO_T = mm(DUO.t), DUO_GAP = mm(DUO_GAP_MM), DUO_W = mm(DUO_HALF_W_MM), DUO_H = mm(DUO.open.h), DUO_R = mm(DUO.cornerR), DUO_E = mm(Math.min(DUO.edge, DUO.t / 2 - 0.4))
+const DUO_OPEN: HandFit = { W: 2 * DUO_W, H: DUO_H, T: DUO_T, R: DUO_R, E: DUO_E, SW: mm(DUO.inner.active.w), SH: mm(DUO.inner.active.h), PW: Math.round(INNER_PX.w / 3), PH: Math.round(INNER_PX.h / 3), kind: 'tablet', extra: ['bottom'] }
+const DUO_CLOSED: HandFit = { W: mm(DUO.closed.w), H: DUO_H, T: mm(DUO.closedT), R: DUO_R, E: DUO_E, SW: mm(DUO.outer.active.w), SH: mm(DUO.outer.active.h), PW: Math.round(OUTER_PX.w / 3), PH: Math.round(OUTER_PX.h / 3), kind: 'phone' }
 const DUO_CLOSED_OFF: HandFit = { ...DUO_CLOSED, cx: DUO_W / 2, cz: DUO_T / 2 + DUO_GAP }
 // Part folded: the hands hold the fixed (right) half and touch its half of the inner screen, the one that faces the
 // viewer; the swinging half stands clear of it. The half sits where the Duo's self-centring puts it at this angle
@@ -108,7 +110,7 @@ const duoHalfCache = new Map<string, HandFit>()
 function duoHalf(fold: number, follow: boolean): HandFit {
   const k = Math.round(fold), key = `${k}|${follow}`, hit = duoHalfCache.get(key); if (hit) return hit
   const kc = follow ? 1 - k / 180 : 0, SW = DUO_OPEN.SW! / 2
-  const f: HandFit = { W: DUO_W, H: 1.178, T: DUO_T, R: 0.127, E: 0.005, SW, SH: DUO_OPEN.SH, PW: Math.round(DUO_OPEN.PW! / 2), PH: DUO_OPEN.PH,
+  const f: HandFit = { W: DUO_W, H: DUO_H, T: DUO_T, R: DUO_R, E: DUO_E, SW, SH: DUO_OPEN.SH, PW: Math.round(DUO_OPEN.PW! / 2), PH: DUO_OPEN.PH,
     OX: SW / 2 - DUO_W / 2, kind: 'phone', without: ['landscape'], extra: ['bottom'], cx: DUO_W / 2 - (DUO_W / 2) * kc, cz: -(DUO_T / 2 + DUO_GAP) * kc,
     // the swinging half: its own centre frame turned (180 - fold) degrees about the hinge axis (x = -W/2 here, z = T/2 + gap)
     book: (() => { const P = DUO_T / 2 + DUO_GAP, m = new THREE.Matrix4().makeTranslation(-DUO_W / 2, 0, P)

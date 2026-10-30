@@ -3,3 +3,5 @@ dist
 .DS_Store
 local/
 public/local/
+tsconfig.tsbuildinfo
+.camctl
