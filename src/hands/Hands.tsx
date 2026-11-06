@@ -92,7 +92,7 @@ function sdfBox(p: THREE.Vector3, f: HandFit) {
  * proximal to distal joints keep closing past those angles until contact (up to max). spread turns the finger about the palm normal. */
 /** tip: where the fingertip pad should rest (device space). When set, the finger's spread and curls are solved to reach it. */
 /** touch: tip is a point on the glass; the solver lands the fingertip pad there, resting on the surface. */
-interface FingerPlan { curl: [number, number, number, number]; close?: boolean; max?: [number, number, number]; spread?: number; tip?: THREE.Vector3; touch?: boolean }
+interface FingerPlan { curl: [number, number, number, number]; close?: boolean; max?: [number, number, number]; spread?: number; tip?: THREE.Vector3; touch?: boolean; /** keep the planned curl as the start, so a fingertip already behind the phone is not walked onto the glass */ stay?: boolean }
 interface ThumbPlan { oppose: number; abduct: number; curl: [number, number, number]; close?: boolean; max?: [number, number]; tip?: THREE.Vector3; touch?: boolean }
 /** follow: the whole hand (wrist and arm) moves so its touching digits reach their points without strain. */
 /** knuckle: where the middle finger's knuckle (MCP joint) goes. F: palm direction, wrist to knuckles. N: out of the palm. */
@@ -248,7 +248,12 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
       // the bottom edge, and the thumb reaches its key. The left hand is the mirror of the right.
       // Elena's fingertips rest further behind the glass, and the thumb starts already across the palm.
       const side = (t: THREE.Vector3): HandPlan => sculpted ? { side: 'right', knuckle: v3(hw + 0.01, -hh * 0.28, -ht - 0.115), F: v3(-0.22, 0.88, -0.42), N: v3(-0.82, 0.06, 0.55), seat: 0.012, follow: 'y',
-        fingers: [0, 1, 2, 3].map(i => ({ curl: [0, 28, 20, 10] as [number, number, number, number], spread: [4, 0, -4, -8][i], tip: v3([hw * 0.2, hw * 0.14, hw * 0.18, hw * 0.26][i], [hh * 0.1, -hh * 0.04, -hh * 0.22, -hh * 0.4][i], -ht - 0.09) })),
+        fingers: [
+          { curl: [0, 22, 16, 6], spread: 4, stay: true, tip: v3(hw * 0.15, -hh * 0.02, -ht - 0.015) },
+          { curl: [0, 24, 16, 6], spread: 0, stay: true, tip: v3(hw * 0.05, -hh * 0.16, -ht - 0.015) },
+          { curl: [0, 18, 12, 6], spread: -3, close: true },
+          { curl: [0, 22, 14, 8], spread: -6, close: true },
+        ],
         thumb: { oppose: 18, abduct: 18, curl: [6, 10, 6], tip: t, touch: true } }
         : { side: 'right', knuckle: v3(hw + 0.12, -hh * 0.3, -ht - 0.1), F: v3(-0.2, 0.9, -0.4), N: v3(-0.85, 0.05, 0.5), seat: 0.006, follow: 'y',
           fingers: [back(hw * 0.25, hh * 0.15, 2), back(hw * 0.2, -hh * 0.02, 0), back(hw * 0.25, -hh * 0.2, -3), back(hw * 0.35, -hh * 0.38, -6)],
@@ -264,7 +269,7 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
       const t = P(a.x, a.y)
       return [{ side: 'right', knuckle: v3(hw + 0.1, t.y - 0.62 * size, -ht - 0.12), F: v3(-0.3, 0.92, -0.25), N: v3(-0.85, 0.05, 0.5), seat: sculpted ? 0.01 : 0.004, follow: 'y',
         fingers: sculpted
-          ? [0, 1, 2, 3].map(i => ({ curl: [0, 28, 20, 10] as [number, number, number, number], spread: [4, 0, -4, -7][i], tip: v3([-hw * 0.15, -hw * 0.2, -hw * 0.16, -hw * 0.08][i], [t.y - 0.28, t.y - 0.42, t.y - 0.56, t.y - 0.68][i], -ht - 0.09) }))
+          ? [0, 1, 2, 3].map(i => ({ curl: [0, 28, 20, 10] as [number, number, number, number], spread: [4, 0, -4, -7][i], tip: v3([-hw * 0.15, -hw * 0.2, -hw * 0.16, -hw * 0.08][i], [t.y - 0.28, t.y - 0.42, t.y - 0.56, t.y - 0.68][i], -ht - 0.02) }))
           : [back(-hw * 0.2, t.y - 0.3, 3), back(-hw * 0.25, t.y - 0.45, 0), back(-hw * 0.2, t.y - 0.58, -3), back(-hw * 0.1, t.y - 0.7, -6)],
         thumb: sculpted ? { oppose: 16, abduct: 18, curl: [6, 10, 6], tip: t, touch: true } : { oppose: 0, abduct: 15, curl: [0, 0, 0], tip: t, touch: true } }]
     }
@@ -305,12 +310,12 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     // a tablet rests on the palm the same way; the hand keeps its own size, so offsets are capped at a hand's span
     const fw = Math.min(hw, 0.36), fh = Math.min(hh, 0.75)
     if (sculpted) {
-      // No fingertip targets: a target on the back sends the thick fingers around the near edge and they
-      // stop on the glass. An open curl from a knuckle behind the phone lays them along the back instead.
-      const under = (spread: number): FingerPlan => ({ curl: [0, 14, 10, 6], spread })
-      return [{ side: 'right', knuckle: v3(-hw * 0.05, -hh * 0.02, -ht - 0.1), F: v3(0.05, 1, 0), N: v3(0.25, 0.05, 1), seat: 0.012,
-        fingers: [under(3), under(0), under(-3), under(-6)],
-        thumb: { oppose: 18, abduct: 8, curl: [6, 10, 6], tip: v3(fw * 0.72, -hh * 0.02, ht * 0.15) } }]
+      // Fingertips rest just behind the back, where the hand already is, and the thumb meets the right
+      // edge. A target on the front sends these fingers through the body.
+      const lay = (x: number, y: number, spread: number): FingerPlan => ({ curl: [0, 10, 8, 4], spread, stay: true, tip: v3(x, y, -ht - 0.015) })
+      return [{ side: 'right', knuckle: v3(-hw * 0.02, -hh * 0.16, -ht - 0.02), F: v3(0.02, 1, -0.05), N: v3(0.08, 0, 1), seat: 0.004,
+        fingers: [lay(fw * 0.22, fh * 0.08, 3), lay(fw * 0.02, fh * 0.16, 0), lay(-fw * 0.18, fh * 0.08, -3), lay(-fw * 0.32, -hh * 0.02, -6)],
+        thumb: { oppose: 14, abduct: 22, curl: [6, 10, 6], tip: v3(hw + 0.012, -hh * 0.12, 0.01) } }]
     }
     // Flat in the palm: the phone lies face up on an open right hand, palm under the lower back, fingers relaxed
     // along the back and the thumb curled in against the right frame. Best seen from above.
@@ -332,12 +337,13 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     // The rig turns the device 90 degrees, so its bottom end is on the right. Each hand cups one end from below:
     // thumb on the end frame, fingers spread across its own half of the back, little finger under the long edge.
     if (sculpted) {
-      const cup = (x: number, y: number, spread: number): FingerPlan => ({ curl: [0, 32, 24, 12], spread, tip: v3(x, y, -ht - 0.08) })
+      const cup = (x: number, y: number, spread: number): FingerPlan => ({ curl: [0, 26, 18, 10], spread, stay: true, tip: v3(x, y, -ht - 0.015) })
       const r: HandPlan = {
-        side: 'right', knuckle: v3(-hw * 0.08, -hh + 0.04, -ht - 0.08), F: v3(0.9, -0.1, -0.42), N: v3(0, 1, 0), seat: 0.012,
-        fingers: [cup(hw * 0.62, -hh + 0.5, 3), cup(hw * 0.18, -hh + 0.52, 0), cup(-hw * 0.22, -hh + 0.46, -4),
-          { curl: [0, 46, 34, 16], spread: -7, tip: v3(-hw - 0.02, -hh + 0.16, -ht * 0.1) }],
-        thumb: { oppose: 12, abduct: 26, curl: [4, 8, 6], tip: v3(hw * 0.22, -hh - 0.03, ht + 0.03) },
+        side: 'right', knuckle: v3(-hw * 0.08, -hh + 0.04, -ht - 0.08), F: v3(0.9, -0.1, -0.42), N: v3(0, 1, 0), seat: 0.008,
+        fingers: [cup(hw * 0.28, -hh + 0.32, 4), cup(hw * 0.02, -hh + 0.34, 0),
+          { curl: [0, 18, 12, 6], spread: -3, close: true },
+          { curl: [0, 22, 14, 8], spread: -6, close: true }],
+        thumb: { oppose: 18, abduct: 18, curl: [4, 8, 6], tip: v3(0.02, -hh - 0.012, 0.004) },
       }
       const fy = (v: THREE.Vector3) => v3(v.x, -v.y, v.z)
       const ft = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && fy(o.tip) })
@@ -756,7 +762,9 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
         rig.bones[names[k]].getWorldPosition(wp); rig.bones[names[k - 1]].getWorldPosition(wq)
         for (const t of [0, 0.33, 0.66]) {
           if (k === 1 && t > 0.5) continue   // the knuckle itself may rest on the edge
-          const q = wp.clone().lerp(wq, t), r = radius * (k === names.length - 1 ? 0.8 : 1), pen = r - sdf(q, fit)
+          // The shaft stays on the fat sphere, or the thick skin buries itself. The tip is thinner on the
+          // side that meets the phone, so a touching fingertip may come closer than that sphere.
+          const q = wp.clone().lerp(wq, t), r = radius * (k === names.length - 1 ? (hasMid && !free && radius < thumbR ? 0.48 : 0.8) : 1), pen = r - sdf(q, fit)
           if (pen > 0) c += (hasMid ? 900 : 200) * pen * pen
         }
       }
@@ -775,6 +783,30 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       }
     }
     apply(x); update()
+    return x
+  }
+  // The bone sphere keeps the shaft out, and it also holds a fingertip that should rest on the phone a few
+  // millimetres clear of it. Curl the outer joint until the skin meets the body, and open it if the skin has sunk in.
+  const settle = (names: string[], x: number[], at: number, apply: (x: number[]) => void, lo: number, hi: number) => {
+    if (!hasMid) return
+    const own = new Set(names.slice(-2))
+    const gap = () => minDist(b => own.has(b), null)
+    let g = gap()
+    const dir = g > 0.0008 ? 1 : g < -0.0012 ? -1 : 0
+    if (!dir) return
+    for (let n = 0; n < 8; n++) {
+      const prev = x[at]
+      x[at] = Math.min(hi, Math.max(lo, prev + dir * 2.5))
+      if (x[at] === prev) break
+      apply(x); update()
+      const g2 = gap()
+      if (dir > 0 && (g2 < -0.0004 || g2 > g - 0.0002)) { x[at] = prev; apply(x); update(); break }
+      if (dir < 0 && g2 < g) { x[at] = prev; apply(x); update(); break }
+      if (dir < 0 && g2 > -0.0003) break
+      g = g2
+      if (dir > 0 && g <= 0.0005) break
+      if (dir < 0 && g >= -0.0004) break
+    }
   }
   // Touching digits, placed after the rest of the hand by the contact pass.
   // bend: extra extension (degrees) of the digit's outer joint, raised after the contact pass while its nail edge sits
@@ -807,7 +839,7 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       // Elena's skin is thick enough that the contact wrap plants the finger on the near edge, and the
       // reach cannot climb back out to the far side. Start that hand from the planned curl instead.
       chainPose(names, axes, angles, pre0); update(); if (!hasMid) close(names, axes, angles, 1, fp.max ?? [95, 95, 70], pre0)
-      else {
+      else if (!fp.stay) {
         // Pick a starting curl whose tip is near the target and whose bones stay outside the phone,
         // so the wrap can come around the far edge instead of stopping on the near one.
         let bestD = Infinity, best = angles.slice()
@@ -826,7 +858,8 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
       }
       const apply = (x: number[]) => { lastMcp = x[1]; chainPose(names, axes, [0, x[1], x[2], x[2] * DIP_K].map(deg), M => hinge(M, P(names[1]), N0, deg(x[0]) * h)) }
       const x0 = [fp.spread ?? 0, ...angles.slice(1, 3).map(a => Math.min(MCP_HI[1], a * 180 / Math.PI))]
-      reach(names.slice(1), fp.tip, [Math.max(-SPREAD[i], Math.min(SPREAD[i], x0[0])), Math.max(MCP_LO[0], x0[1]), x0[2]], [-SPREAD[i], ...MCP_LO], [SPREAD[i], ...MCP_HI], apply, fingerR, false, couple)
+      const solved = reach(names.slice(1), fp.tip, [Math.max(-SPREAD[i], Math.min(SPREAD[i], x0[0])), Math.max(MCP_LO[0], x0[1]), x0[2]], [-SPREAD[i], ...MCP_LO], [SPREAD[i], ...MCP_HI], apply, fingerR, false, couple)
+      settle(names, solved, 2, apply, MCP_LO[1], MCP_HI[1])
       mcpOf[i] = lastMcp
       return
     }
@@ -901,7 +934,8 @@ function solve(rig: Rig, plan: HandPlan, fit: HandFit, size = 1, nail = 0) {
     touches.push(tt)
   } else if (tp.tip) {
     const apply = (x: number[]) => poseThumb([x[2], x[3], x[4]].map(deg), x[0], x[1])
-    reach(THUMB, tp.tip, [tp.oppose, tp.abduct, ...tp.curl], [-60, -60, -20, -20, -10], [90, 70, 60, 70, 80], apply, thumbR)
+    const solved = reach(THUMB, tp.tip, [tp.oppose, tp.abduct, ...tp.curl], [-60, -60, -20, -20, -10], [90, 70, 60, 70, 80], apply, thumbR)
+    settle(thumbNames, solved, 4, apply, -10, 80)
     update()
   } else if (!hasMid) {
     const preT = (M: THREE.Matrix4) => { hinge(M, P(THUMB[0]), F0, deg(tp.oppose) * -h); hinge(M, P(THUMB[0]), N0, deg(tp.abduct) * h) }
