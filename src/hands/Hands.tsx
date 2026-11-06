@@ -187,7 +187,10 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
   if (isGesture(pose) || pose === 'crown') {
     const P = (x: number, y: number) => ptToDevice(f, x, y), u = screenOf(f).unit
     // Middle, ring and little finger loosely closed into the palm, clear of the glass.
-    const fist: FingerPlan[] = [{ curl: [0, 62, 80, 45], spread: -1 }, { curl: [0, 70, 85, 45], spread: -4 }, { curl: [0, 76, 85, 45], spread: -8 }]
+    // Elena's fingers are thick enough that the generic fist buries them in the palm, so that hand stays more open.
+    const fist: FingerPlan[] = sculpted
+      ? [{ curl: [0, 36, 46, 20], spread: 4 }, { curl: [0, 42, 50, 22], spread: -1 }, { curl: [0, 48, 54, 24], spread: -6 }]
+      : [{ curl: [0, 62, 80, 45], spread: -1 }, { curl: [0, 70, 85, 45], spread: -4 }, { curl: [0, 76, 85, 45], spread: -8 }]
     // Pointing: the right hand comes in from the lower right, palm towards the glass, index angled down onto the
     // point and the thumb resting against the side of the middle finger. The wrist sits a fixed reach behind the point.
     // long nails: the finger comes in flatter, so it lands on its pad with the nail tip clear of the glass
@@ -200,7 +203,10 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     // on the watch the right hand comes from the near side (below), clear of the wearing hand on the right
     const ap = watch ? approach(-0.25, -1, 0.9596 * size, 46.85, 0.1, 1, 35.2) : approach(0.35, -0.55, 0.9596 * size, 46.85, -0.3, 0.72, 35.2), apZ = approach(0.3, -0.75, 0.9772 * size, 34.25, -0.35, 0.7, 35.1)
     const pointer = (t: THREE.Vector3): HandPlan => ({ side: 'right', knuckle: t.clone().add(ap.off), F: ap.F, N: v3(0.15, 0.5, -1), follow: true,
-      fingers: [{ curl: [0, 18, 22, 12], tip: t, touch: true }, ...fist], thumb: { oppose: -20, abduct: -10, curl: [10, 30, 30] } })
+      fingers: [{ curl: [0, 18, 22, 12], tip: t, touch: true }, ...fist],
+      // The sculpted thumb barely curls (the base is already bent, and more flexion folds the thenar), so it
+      // crosses the palm by opposition instead of the generic hand's sideways tuck.
+      thumb: sculpted ? { oppose: 30, abduct: 24, curl: [6, 12, 6] } : { oppose: -20, abduct: -10, curl: [10, 30, 30] } })
     const tw = import.meta.env.DEV ? (globalThis as { __gestTweak?: (p: HandPlan[], v: typeof v3) => HandPlan[] }).__gestTweak : undefined
     if (tw) return tw([...gesturePlans(), ...wearing], v3)
     return [...gesturePlans(), ...wearing]
@@ -209,22 +215,28 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
       // index pad on the top of the Digital Crown, rolling it; the hand comes in from the near side
       // from the lower right, so the hand stays off the display
       const c = v3(f.W / 2 + (f.crown?.x ?? 0.03), f.crown?.y ?? 0.045, (f.crown?.r ?? 0.042)), ac = approach(0.55, -1, 0.9596 * size, 46.85, -0.15, 1, 35.2)
-      const pl: HandPlan = { side: 'right', knuckle: c.clone().add(ac.off), F: ac.F, N: v3(0.15, 0.5, -1), follow: true, fingers: [], thumb: { oppose: -20, abduct: -10, curl: [10, 30, 30] } }
+      const pl: HandPlan = { side: 'right', knuckle: c.clone().add(ac.off), F: ac.F, N: v3(0.15, 0.5, -1), follow: true, fingers: [],
+        thumb: sculpted ? { oppose: 30, abduct: 24, curl: [6, 12, 6] } : { oppose: -20, abduct: -10, curl: [10, 30, 30] } }
       return [{ ...pl, fingers: [{ curl: [0, 18, 22, 12], tip: c, touch: true }, ...fist] }]
     }
     if (pose === 'tap') return [pointer(P(ges.x, ges.y))]
     if (pose === 'swipe') { const a = swipeAt(ges); return [pointer(P(a.x, a.y))] }
     if (pose === 'holdtap') return [book ? bookL() : mirror(tablet ? tabHold(hw, -hh * 0.1, ht) : grip), pointer(P(ges.x, ges.y))]
     // on a surface: the device lies on a table (HandRig tips it back) and the hand comes in from the near side to tap
-    if (pose === 'rest') { const pl = pointer(P(ges.x, ges.y)); return [{ ...pl, thumb: { oppose: 40, abduct: -15, curl: [20, 55, 45] } }] }   // thumb tucked, clear of the table
+    if (pose === 'rest') { const pl = pointer(P(ges.x, ges.y)); return [{ ...pl, thumb: sculpted ? { oppose: 34, abduct: 12, curl: [8, 14, 8] } : { oppose: 40, abduct: -15, curl: [20, 55, 45] } }] }   // thumb tucked, clear of the table
     if (pose === 'zoom') {
       // Thumb and index spread on the glass about the centre, along the pinch axis (the thumb on the lower left end).
       const a = deg(ges.angle), dx = Math.cos(a) * ges.spread / 2, dy = -Math.sin(a) * ges.spread / 2
-      const ti = P(ges.x + dx, ges.y + dy), tt = P(ges.x - dx, ges.y - dy), c = ti.clone().add(tt).multiplyScalar(0.5)
+      const ti = P(ges.x + dx, ges.y + dy), tt = P(ges.x - dx, ges.y - dy)
       // the knuckle is placed from the index pad (not the pinch centre), so the index lies flat enough to land on its pad
-      return [{ side: 'right', knuckle: ti.clone().add(apZ.off), F: apZ.F, N: v3(0.1, 0.45, -1), follow: true,
+      // Elena's thumb fell about 9 mm short of the glass from the generic approach: the palm has to sit a little
+      // closer and flatter, or the pad faces the air while the index lands.
+      const kn = ti.clone().add(apZ.off)
+      if (sculpted) kn.z -= 0.05
+      const Fz = sculpted ? v3(apZ.F.x, apZ.F.y, -0.15) : apZ.F
+      return [{ side: 'right', knuckle: kn, F: Fz, N: sculpted ? v3(0.1, 0.45, -0.4) : v3(0.1, 0.45, -1), follow: true,
         fingers: [{ curl: [0, 20, 20, 10], spread: 4, tip: ti, touch: true }, ...fist],
-        thumb: { oppose: 20, abduct: 40, curl: [0, 10, 10], tip: tt, touch: true } }]
+        thumb: sculpted ? { oppose: 34, abduct: 38, curl: [8, 12, 8], tip: tt, touch: true } : { oppose: 20, abduct: 40, curl: [0, 10, 10], tip: tt, touch: true } }]
     }
     if (pose === 'hover') {
       // Point / hover: the tap hand, with the index pad about 8 mm above the glass and nothing touching.
@@ -234,9 +246,13 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     if (pose === 'type') {
       // Two-thumb typing: each hand cradles its lower corner, fingers on its own half of the back, little finger under
       // the bottom edge, and the thumb reaches its key. The left hand is the mirror of the right.
-      const side = (t: THREE.Vector3): HandPlan => ({ side: 'right', knuckle: v3(hw + 0.12, -hh * 0.3, -ht - 0.1), F: v3(-0.2, 0.9, -0.4), N: v3(-0.85, 0.05, 0.5), seat: 0.006, follow: 'y',
-        fingers: [back(hw * 0.25, hh * 0.15, 2), back(hw * 0.2, -hh * 0.02, 0), back(hw * 0.25, -hh * 0.2, -3), back(hw * 0.35, -hh * 0.38, -6)],
-        thumb: { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: t, touch: true } })
+      // Elena's fingertips rest further behind the glass, and the thumb starts already across the palm.
+      const side = (t: THREE.Vector3): HandPlan => sculpted ? { side: 'right', knuckle: v3(hw + 0.01, -hh * 0.28, -ht - 0.115), F: v3(-0.22, 0.88, -0.42), N: v3(-0.82, 0.06, 0.55), seat: 0.012, follow: 'y',
+        fingers: [0, 1, 2, 3].map(i => ({ curl: [0, 28, 20, 10] as [number, number, number, number], spread: [4, 0, -4, -8][i], tip: v3([hw * 0.2, hw * 0.14, hw * 0.18, hw * 0.26][i], [hh * 0.1, -hh * 0.04, -hh * 0.22, -hh * 0.4][i], -ht - 0.09) })),
+        thumb: { oppose: 18, abduct: 18, curl: [6, 10, 6], tip: t, touch: true } }
+        : { side: 'right', knuckle: v3(hw + 0.12, -hh * 0.3, -ht - 0.1), F: v3(-0.2, 0.9, -0.4), N: v3(-0.85, 0.05, 0.5), seat: 0.006, follow: 'y',
+          fingers: [back(hw * 0.25, hh * 0.15, 2), back(hw * 0.2, -hh * 0.02, 0), back(hw * 0.25, -hh * 0.2, -3), back(hw * 0.35, -hh * 0.38, -6)],
+          thumb: { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: t, touch: true } }
       return [side(P(ges.kx, ges.ky)), mirror(side(mx(P(ges.kx2, ges.ky2))))]
     }
     // Thumb tap and thumb scroll: the one-handed grip slides up or down the frame to follow the point, and the thumb
@@ -246,8 +262,11 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
       // Siri Remote: held in the fingers, the palm behind its lower half, fingers wrapping the back and the thumb
       // reaching up onto the clickpad. The hand slides up or down with the thumb's point.
       const t = P(a.x, a.y)
-      return [{ side: 'right', knuckle: v3(hw + 0.1, t.y - 0.62 * size, -ht - 0.12), F: v3(-0.3, 0.92, -0.25), N: v3(-0.85, 0.05, 0.5), seat: 0.004, follow: 'y',
-        fingers: [back(-hw * 0.2, t.y - 0.3, 3), back(-hw * 0.25, t.y - 0.45, 0), back(-hw * 0.2, t.y - 0.58, -3), back(-hw * 0.1, t.y - 0.7, -6)], thumb: { oppose: 0, abduct: 15, curl: [0, 0, 0], tip: t, touch: true } }]
+      return [{ side: 'right', knuckle: v3(hw + 0.1, t.y - 0.62 * size, -ht - 0.12), F: v3(-0.3, 0.92, -0.25), N: v3(-0.85, 0.05, 0.5), seat: sculpted ? 0.01 : 0.004, follow: 'y',
+        fingers: sculpted
+          ? [0, 1, 2, 3].map(i => ({ curl: [0, 28, 20, 10] as [number, number, number, number], spread: [4, 0, -4, -7][i], tip: v3([-hw * 0.15, -hw * 0.2, -hw * 0.16, -hw * 0.08][i], [t.y - 0.28, t.y - 0.42, t.y - 0.56, t.y - 0.68][i], -ht - 0.09) }))
+          : [back(-hw * 0.2, t.y - 0.3, 3), back(-hw * 0.25, t.y - 0.45, 0), back(-hw * 0.2, t.y - 0.58, -3), back(-hw * 0.1, t.y - 0.7, -6)],
+        thumb: sculpted ? { oppose: 16, abduct: 18, curl: [6, 10, 6], tip: t, touch: true } : { oppose: 0, abduct: 15, curl: [0, 0, 0], tip: t, touch: true } }]
     }
     const t = P(a.x, a.y), dy = Math.min(hh * 0.5, Math.max(-hh * 0.5, t.y + hh * 0.05 + 0.35 * (hw - t.x))) - (-hh * 0.05), sh = (v?: THREE.Vector3) => v && v.clone().setY(v.y + dy)
     // The little finger supports the bottom edge only while the hand is low enough to reach it; as the grip slides up it
@@ -261,7 +280,7 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
     // and its fingers, too short to reach round the far edge, lie on the back instead of wrapping it
     const fb = Math.min(1, sm * 2), onBack = (v?: THREE.Vector3) => v && v.set(THREE.MathUtils.lerp(v.x, hw * 0.1, fb), v.y, THREE.MathUtils.lerp(v.z, -ht - 0.05, fb))
     return [{ ...grip, knuckle: sh(grip.knuckle)!.add(v3(-sm * tk[0], 0, sm * tk[1])), follow: 'y', fingers: grip.fingers.map((fp, i) => i === 3 ? pinky(fp) : { ...fp, tip: onBack(sh(fp.tip)) }),
-      thumb: { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: t, touch: true } }]
+      thumb: sculpted ? { oppose: 20, abduct: 14, curl: [6, 10, 6], tip: t, touch: true } : { oppose: 0, abduct: 10, curl: [0, 0, 0], tip: t, touch: true } }]
     }
   }
   if (pose === 'hold') {
@@ -285,6 +304,14 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
   if (pose === 'flat') {
     // a tablet rests on the palm the same way; the hand keeps its own size, so offsets are capped at a hand's span
     const fw = Math.min(hw, 0.36), fh = Math.min(hh, 0.75)
+    if (sculpted) {
+      // No fingertip targets: a target on the back sends the thick fingers around the near edge and they
+      // stop on the glass. An open curl from a knuckle behind the phone lays them along the back instead.
+      const under = (spread: number): FingerPlan => ({ curl: [0, 14, 10, 6], spread })
+      return [{ side: 'right', knuckle: v3(-hw * 0.05, -hh * 0.02, -ht - 0.1), F: v3(0.05, 1, 0), N: v3(0.25, 0.05, 1), seat: 0.012,
+        fingers: [under(3), under(0), under(-3), under(-6)],
+        thumb: { oppose: 18, abduct: 8, curl: [6, 10, 6], tip: v3(fw * 0.72, -hh * 0.02, ht * 0.15) } }]
+    }
     // Flat in the palm: the phone lies face up on an open right hand, palm under the lower back, fingers relaxed
     // along the back and the thumb curled in against the right frame. Best seen from above.
     const under = (x: number, y: number, spread: number): FingerPlan => ({ curl: [0, 8, 6, 4], spread, tip: v3(x, y, -ht - 0.04) })
@@ -304,6 +331,18 @@ function plans(pose: HandPose, f: HandFit, ges: Gesture = GESTURE_DEFAULT, nail 
   if (pose === 'landscape') {
     // The rig turns the device 90 degrees, so its bottom end is on the right. Each hand cups one end from below:
     // thumb on the end frame, fingers spread across its own half of the back, little finger under the long edge.
+    if (sculpted) {
+      const cup = (x: number, y: number, spread: number): FingerPlan => ({ curl: [0, 32, 24, 12], spread, tip: v3(x, y, -ht - 0.08) })
+      const r: HandPlan = {
+        side: 'right', knuckle: v3(-hw * 0.08, -hh + 0.04, -ht - 0.08), F: v3(0.9, -0.1, -0.42), N: v3(0, 1, 0), seat: 0.012,
+        fingers: [cup(hw * 0.62, -hh + 0.5, 3), cup(hw * 0.18, -hh + 0.52, 0), cup(-hw * 0.22, -hh + 0.46, -4),
+          { curl: [0, 46, 34, 16], spread: -7, tip: v3(-hw - 0.02, -hh + 0.16, -ht * 0.1) }],
+        thumb: { oppose: 12, abduct: 26, curl: [4, 8, 6], tip: v3(hw * 0.22, -hh - 0.03, ht + 0.03) },
+      }
+      const fy = (v: THREE.Vector3) => v3(v.x, -v.y, v.z)
+      const ft = <T extends { tip?: THREE.Vector3 }>(o: T): T => ({ ...o, tip: o.tip && fy(o.tip) })
+      return [r, { ...r, side: 'left', knuckle: fy(r.knuckle), F: fy(r.F), N: fy(r.N), fingers: r.fingers.map(ft), thumb: ft(r.thumb) }]
+    }
     const r: HandPlan = {
       side: 'right', knuckle: v3(-hw * 0.1, -hh + 0.02, -ht - 0.09), F: v3(0.9, -0.1, -0.42), N: v3(0, 1, 0), seat: 0.004,
       fingers: [back(hw * 0.7, -hh + 0.48, 2), back(hw * 0.25, -hh + 0.5, 0), back(-hw * 0.25, -hh + 0.44, -3),
