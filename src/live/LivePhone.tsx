@@ -104,22 +104,49 @@ function settled() {
   return Math.abs(drag.yaw - Math.round(drag.yaw / (Math.PI * 2)) * Math.PI * 2) + Math.abs(drag.pitch)
 }
 
+const _p = new THREE.Vector3(), _n = new THREE.Vector3(), _q = new THREE.Quaternion(), _dir = new THREE.Vector3()
+const _ray = new THREE.Raycaster()
+
+/** The page is a DOM layer, so it would paint over the chassis and through the back.
+ *  Show it only when this group's +Z faces the camera and nothing (the frame, the back glass) sits in front.
+ *  A private raycaster: useThree's is shared with the canvas and would be aimed elsewhere. */
+function glassClear(group: THREE.Object3D, camera: THREE.Camera, scene: THREE.Object3D) {
+  group.updateWorldMatrix(true, false)
+  group.getWorldPosition(_p)
+  _n.set(0, 0, 1).applyQuaternion(group.getWorldQuaternion(_q))
+  _dir.copy(camera.position).sub(_p)
+  const dist = _dir.length()
+  if (!(dist > 0.001 && _n.dot(_dir) / dist > 0.12)) return false
+  _ray.set(camera.position, _dir.multiplyScalar(1 / dist))
+  return !_ray.intersectObject(scene, true).some(h => h.distance < dist - 0.03)
+}
+
 function PhoneScreen({ s, src, interactive, sb, portal }: { s: IPhoneSpec; src: string; interactive: boolean; sb: SbCfg; portal: React.RefObject<HTMLElement> }) {
   const css = phoneCss(s)
   const pxPerMm = css.w / s.active.w
   const radius = (s.body.cornerR - s.active.inset) * pxPerMm
   const scale = mm(s.active.w) / (css.w / PX_PER_UNIT)
+  // Front face is +Z. The group is scaled to the active area and sits a hair in front of the glass.
   const z = mm(s.body.t) / 2 + 0.0003 * 6
+  const group = useRef<THREE.Group>(null)
+  const shell = useRef<HTMLDivElement>(null)
   const frame = useRef<HTMLIFrameElement>(null)
+  const { camera, scene } = useThree()
   const tone = useTone(frame, sb.mode, css.w)
   const homeTone = useTone(frame, sb.mode, css.w, css.h - 10)
   const clock = useClock(sb.time)
+  useFrame(() => {
+    const g = group.current, el = shell.current
+    if (!g || !el) return
+    // visibility keeps the iframe loaded. display:none (drei occlude) would tear it down.
+    el.style.visibility = glassClear(g, camera, scene) ? 'visible' : 'hidden'
+  })
   return (
-    <group position={[0, 0, z]} scale={scale}>
+    <group ref={group} position={[0, 0, z]} scale={scale}>
       <Html transform portal={portal} zIndexRange={[10, 0]} pointerEvents={interactive ? 'auto' : 'none'}>
-        <div style={{ width: css.w, height: css.h, borderRadius: radius, overflow: 'hidden', position: 'relative', background: '#000',
+        <div ref={shell} style={{ width: css.w, height: css.h, borderRadius: radius, overflow: 'hidden', position: 'relative', background: '#000',
           backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
-          <iframe ref={frame} src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', pointerEvents: interactive ? 'auto' : 'none' }} />
+          <iframe ref={frame} src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#000', pointerEvents: interactive ? 'auto' : 'none' }} />
           <Island sb={sb} w={css.w} look={SKETCH ? ISLAND_LOOK : undefined} />
           {sb.mode !== 'off' && <StatusBar tone={tone} sb={sb} w={css.w} time={clock} />}
           {sb.homeBar && <HomeBar tone={homeTone} w={css.w} h={css.h} />}
@@ -149,9 +176,6 @@ function PhoneRig({ spec, finish, src, faceOn, onFaceOn, sb, logo, portal }: { s
   )
 }
 
-const _p = new THREE.Vector3(), _n = new THREE.Vector3(), _q = new THREE.Quaternion(), _dir = new THREE.Vector3()
-const _ray = new THREE.Raycaster()
-
 function MacScreen({ src, interactive, portal }: { src: string; interactive: boolean; portal: React.RefObject<HTMLElement> }) {
   const pxPerMm = MBP_CSS_W / MBP.disp.w
   const radius = MBP.disp.r * pxPerMm
@@ -159,32 +183,18 @@ function MacScreen({ src, interactive, portal }: { src: string; interactive: boo
   const group = useRef<THREE.Group>(null)
   const shell = useRef<HTMLDivElement>(null)
   const { camera, scene } = useThree()
-  // The page is a DOM layer, so it would paint over the chassis and through the lid's back.
-  // Hide it unless the glass faces the camera and nothing (the base, the lid back) sits in front.
+  // Same rule as the phone: the page stays loaded, and hides when the lid's back or the base is in front.
   useFrame(() => {
     const g = group.current, el = shell.current
     if (!g || !el) return
-    g.updateWorldMatrix(true, false)
-    g.getWorldPosition(_p)
-    _n.set(0, 0, 1).applyQuaternion(g.getWorldQuaternion(_q))
-    _dir.copy(camera.position).sub(_p)
-    const dist = _dir.length()
-    const facing = dist > 0.001 && _n.dot(_dir) / dist > 0.12
-    let blocked = false
-    if (facing) {
-      _ray.set(camera.position, _dir.multiplyScalar(1 / dist))
-      const hits = _ray.intersectObject(scene, true)
-      blocked = hits.some(h => h.distance < dist - 0.03)
-    }
-    const show = facing && !blocked
-    el.style.visibility = show ? 'visible' : 'hidden'
+    el.style.visibility = glassClear(g, camera, scene) ? 'visible' : 'hidden'
   })
   return (
     <group ref={group}>
       <Html transform portal={portal} distanceFactor={MBP_DISTANCE} zIndexRange={[10, 0]} pointerEvents={interactive ? 'auto' : 'none'}>
         <div ref={shell} style={{ width: MBP_CSS_W, height: MBP_CSS_H, borderRadius: `${radius}px ${radius}px 0 0`, overflow: 'hidden', position: 'relative', background: '#000',
           backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
-          <iframe src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', pointerEvents: interactive ? 'auto' : 'none' }} />
+          <iframe src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#000', pointerEvents: interactive ? 'auto' : 'none' }} />
           {/* camera housing, so the page does not draw through the notch */}
           <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: notchW, height: notchH, background: '#050506',
             borderBottomLeftRadius: notchH / 2, borderBottomRightRadius: notchH / 2, pointerEvents: 'auto' }} />
@@ -376,7 +386,7 @@ export default function LivePhone() {
       <p style={{ position: 'absolute', bottom: 16, width: '100%', textAlign: 'center', margin: 0, color: '#6e6e73', pointerEvents: 'none' }}>
         {mbp
           ? (stayOn ? 'Drag around the MacBook to spin it. It stays where you leave it. The page stays on the glass, and you can use it when the screen faces you.' : 'Drag around the MacBook to spin it. Let go and it turns back so you can use the page.')
-          : (stayOn ? 'Drag around the phone to spin it. It stays where you leave it, and the app works at any angle.' : 'Drag around the phone to spin it. Let go and it turns back so you can use the app.')}
+          : (stayOn ? 'Drag around the phone to spin it. It stays where you leave it. The page stays on the glass, and you can use it when the screen faces you.' : 'Drag around the phone to spin it. Let go and it turns back so you can use the app.')}
       </p>
       <label onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: 6, alignItems: 'center', zIndex: 5,
         font: '13px -apple-system, system-ui, sans-serif', color: '#1d1d1f', background: 'rgba(255,255,255,0.8)', padding: '6px 10px', borderRadius: 8 }}>
