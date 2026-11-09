@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import * as THREE from 'three'
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js'
 import IPhonePro, { IP18_FINISHES } from '../devices/IPhonePro'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX, type IPhoneSpec } from '../devices/iphoneSpecs'
 import MacBookPro, { MBP, MBP_FINISHES, mbpScreenAnchor } from '../devices/MacBookPro'
@@ -15,6 +16,8 @@ import { type SbCfg, parseSb, writeSb } from '../statusbar/config'
 import { StatusPanel } from '../statusbar/Panel'
 import { Island, StatusBar, HomeBar, useClock, islandSketch } from '../statusbar/StatusBar'
 import { SketchStyle, SKETCH_PAPER, SKETCH_DEFAULTS } from '../sketch/Sketch'
+
+RectAreaLightUniformsLib.init()
 
 const mm = (v: number) => v / 100 // same unit as the device models
 const PX_PER_UNIT = 40 // drei <Html transform> maps 40 CSS px to 1 world unit (distanceFactor 10)
@@ -34,7 +37,7 @@ const fallbackFinish = (k: Kind) => (k === 'mbp' ? 'spacegrey' : 'black')
 const FINISH0 = params.get('finish')
 const START_FINISH = FINISH0 && FINISH0 in finishesOf(KIND0) ? FINISH0 : fallbackFinish(KIND0)
 const lidParam = Number(params.get('lid'))
-const LID0_LIVE = lidParam >= 70 && lidParam <= 130 ? lidParam : 110
+const LID0_LIVE = lidParam >= 70 && lidParam <= 130 ? lidParam : 90
 const DEMO_SRC = params.get('src') || '/live-demo/index.html'
 const START_YAW = Number(params.get('yaw') ?? 0) * Math.PI / 180, START_PITCH = Number(params.get('pitch') ?? 0) * Math.PI / 180
 const HOLD = params.has('hold') // keep the starting angle (for tilted screenshots)
@@ -49,6 +52,9 @@ function phoneCss(s: IPhoneSpec) {
 }
 const MBP_CSS_W = 1512
 const MBP_CSS_H = MBP_CSS_W * MBP.disp.h / MBP.disp.w
+// drei maps (400 / distanceFactor) CSS px to one world unit. Match the display with no mesh scale,
+// so a spin stays a rigid page instead of a scaled matrix that spills over the body.
+const MBP_DISTANCE = 400 * mm(MBP.disp.w) / MBP_CSS_W
 
 /** Light or dark status bar for 'auto': reads the app's top background when it is same-origin, otherwise dark text. */
 function useTone(frame: React.RefObject<HTMLIFrameElement | null>, mode: SbCfg['mode'], width: number, y = 20): 'dark' | 'light' {
@@ -143,15 +149,40 @@ function PhoneRig({ spec, finish, src, faceOn, onFaceOn, sb, logo, portal }: { s
   )
 }
 
+const _p = new THREE.Vector3(), _n = new THREE.Vector3(), _q = new THREE.Quaternion(), _dir = new THREE.Vector3()
+const _ray = new THREE.Raycaster()
+
 function MacScreen({ src, interactive, portal }: { src: string; interactive: boolean; portal: React.RefObject<HTMLElement> }) {
-  const scale = mm(MBP.disp.w) / (MBP_CSS_W / PX_PER_UNIT)
   const pxPerMm = MBP_CSS_W / MBP.disp.w
   const radius = MBP.disp.r * pxPerMm
   const notchW = MBP.notch.w * pxPerMm, notchH = MBP.notch.h * pxPerMm
+  const group = useRef<THREE.Group>(null)
+  const shell = useRef<HTMLDivElement>(null)
+  const { camera, scene } = useThree()
+  // The page is a DOM layer, so it would paint over the chassis and through the lid's back.
+  // Hide it unless the glass faces the camera and nothing (the base, the lid back) sits in front.
+  useFrame(() => {
+    const g = group.current, el = shell.current
+    if (!g || !el) return
+    g.updateWorldMatrix(true, false)
+    g.getWorldPosition(_p)
+    _n.set(0, 0, 1).applyQuaternion(g.getWorldQuaternion(_q))
+    _dir.copy(camera.position).sub(_p)
+    const dist = _dir.length()
+    const facing = dist > 0.001 && _n.dot(_dir) / dist > 0.12
+    let blocked = false
+    if (facing) {
+      _ray.set(camera.position, _dir.multiplyScalar(1 / dist))
+      const hits = _ray.intersectObject(scene, true)
+      blocked = hits.some(h => h.distance < dist - 0.03)
+    }
+    const show = facing && !blocked
+    el.style.visibility = show ? 'visible' : 'hidden'
+  })
   return (
-    <group scale={scale}>
-      <Html transform portal={portal} zIndexRange={[10, 0]} pointerEvents={interactive ? 'auto' : 'none'}>
-        <div style={{ width: MBP_CSS_W, height: MBP_CSS_H, borderRadius: `${radius}px ${radius}px 0 0`, overflow: 'hidden', position: 'relative', background: '#000',
+    <group ref={group}>
+      <Html transform portal={portal} distanceFactor={MBP_DISTANCE} zIndexRange={[10, 0]} pointerEvents={interactive ? 'auto' : 'none'}>
+        <div ref={shell} style={{ width: MBP_CSS_W, height: MBP_CSS_H, borderRadius: `${radius}px ${radius}px 0 0`, overflow: 'hidden', position: 'relative', background: '#000',
           backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
           <iframe src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', pointerEvents: interactive ? 'auto' : 'none' }} />
           {/* camera housing, so the page does not draw through the notch */}
@@ -260,6 +291,10 @@ export default function LivePhone() {
     addEventListener('pointerup', up); addEventListener('pointermove', move)
     return () => { removeEventListener('pointerup', up); removeEventListener('pointermove', move) }
   }, [])
+  function frontPose() {
+    setLid(90)
+    drag.yaw = 0; drag.pitch = 0; drag.vYaw = 0
+  }
   function pickDevice(k: Kind) {
     setDevice(k)
     setFinish(f => (f in finishesOf(k) ? f : fallbackFinish(k)))
@@ -277,9 +312,22 @@ export default function LivePhone() {
     <div data-live={device} style={{ position: 'fixed', inset: 0, background: SKETCH ? SKETCH_PAPER : 'radial-gradient(circle at 50% 40%, #f5f5f7, #d9dae0)', touchAction: 'none', userSelect: 'none' }}
       onPointerDown={e => { drag.active = true; drag.x = e.clientX; drag.y = e.clientY; drag.vYaw = 0; setFaceOn(false) }}>
       <Canvas gl={{ antialias: true, alpha: true, toneMapping: THREE.NeutralToneMapping }} camera={{ fov: 30, position: [0, 0, mbp ? 9.2 : 4.2] }} data-face-on={faceOn ? '1' : '0'}>
-        {!SKETCH && <Env intensity={1} />}
-        <ambientLight intensity={0.4} />
-        <directionalLight position={[2, 3, 4]} intensity={1.2} />
+        {!SKETCH && <Env intensity={mbp ? 0.55 : 1} mode="soft" />}
+        {mbp ? (
+          <>
+            {/* Same idea as the studio softboxes: a wide key over the deck, strips on the edges. */}
+            <ambientLight intensity={0.36} />
+            <directionalLight position={[1.5, 4.5, 5]} intensity={0.55} color="#ffffff" />
+            <rectAreaLight args={['#ffffff', 6, 5, 2.6]} position={[0, 3.4, 1.6]} onUpdate={l => l.lookAt(0, -0.8, 0.4)} />
+            <rectAreaLight args={['#f7f8fa', 3, 0.45, 3.4]} position={[3.4, 0.4, 0.8]} onUpdate={l => l.lookAt(0, -0.5, 0)} />
+            <rectAreaLight args={['#f7f8fa', 3, 0.45, 3.4]} position={[-3.4, 0.4, 0.8]} onUpdate={l => l.lookAt(0, -0.5, 0)} />
+          </>
+        ) : (
+          <>
+            <ambientLight intensity={0.4} />
+            <directionalLight position={[2, 3, 4]} intensity={1.2} />
+          </>
+        )}
         <Cam mbp={mbp} lid={lid} />
         {mbp
           ? <MacRig finish={finish} src={src} lid={lid} faceOn={faceOn} onFaceOn={setFaceOn} logo={logo} portal={portal} />
@@ -314,16 +362,20 @@ export default function LivePhone() {
             onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(f); e.currentTarget.value = '' }} />
           <span style={{ fontSize: 11, color: '#6e6e73', maxWidth: 240 }}>A self-contained file. Images and scripts beside it will not load.</span>
           {mbp && (
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
-              Lid
-              <input id="live-lid" type="range" min={70} max={130} step={1} value={lid} onChange={e => setLid(Number(e.target.value))} style={{ flex: 1 }} />
-            </label>
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
+              <button id="live-front" style={textBtn} onClick={frontPose}>Front</button>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1 }}>
+                Lid
+                <input id="live-lid" type="range" min={70} max={130} step={1} value={lid} onChange={e => setLid(Number(e.target.value))} style={{ flex: 1 }} />
+                <span style={{ width: 28, textAlign: 'right' }}>{Math.round(lid)}°</span>
+              </label>
+            </span>
           )}
         </div>
       </div>
       <p style={{ position: 'absolute', bottom: 16, width: '100%', textAlign: 'center', margin: 0, color: '#6e6e73', pointerEvents: 'none' }}>
         {mbp
-          ? (stayOn ? 'Drag around the MacBook to spin it. It stays where you leave it, and the page works at any angle.' : 'Drag around the MacBook to spin it. Let go and it turns back so you can use the page.')
+          ? (stayOn ? 'Drag around the MacBook to spin it. It stays where you leave it. The page stays on the glass, and you can use it when the screen faces you.' : 'Drag around the MacBook to spin it. Let go and it turns back so you can use the page.')
           : (stayOn ? 'Drag around the phone to spin it. It stays where you leave it, and the app works at any angle.' : 'Drag around the phone to spin it. Let go and it turns back so you can use the app.')}
       </p>
       <label onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: 6, alignItems: 'center', zIndex: 5,
