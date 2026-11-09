@@ -120,7 +120,7 @@ function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps
         <mesh geometry={g.lid} castShadow userData={{ sketchHull: true }}>{metal}</mesh>
         <mesh geometry={g.front} position={[0, 0, E]} name="mbp-bezel"><meshPhysicalMaterial color="#050506" roughness={0.2} clearcoat={1} clearcoatRoughness={0.05} /></mesh>
         <mesh geometry={g.screen} position={[0, 0, E * 2]} name="screen">
-          {texture ? <meshBasicMaterial key="tex" map={texture} toneMapped={false} /> : <meshBasicMaterial key="idle" color={liveScreen ? '#000' : '#07080b'} />}</mesh>
+          {texture ? <meshBasicMaterial key="tex" map={texture} toneMapped={false} /> : <meshBasicMaterial key="idle" color="#07080b" />}</mesh>
         <mesh geometry={g.notch} position={[0, 0, E * 3]}><meshBasicMaterial color="#020203" /></mesh>
         <mesh position={[0, g.dy + g.dh / 2 - mm(3.2), E * 4]}><circleGeometry args={[mm(1.1), 20]} /><meshBasicMaterial color="#14161c" /></mesh>
         {liveScreen && <group position={[0, g.dy, E * 5]}>{liveScreen}</group>}

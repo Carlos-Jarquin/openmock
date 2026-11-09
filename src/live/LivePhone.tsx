@@ -50,13 +50,11 @@ function phoneCss(s: IPhoneSpec) {
   const max = s === IPHONE_18_PRO_MAX
   return { w: max ? 440 : 402, h: max ? 956 : 874 }
 }
-// Half of the 3456×2234 panel, the same ratio as the glass (345.6×223.4 mm). A page built at
-// 1728×1117 then fills the iframe with no fractional pixel left over.
-const MBP_CSS_W = 1728
-const MBP_CSS_H = 1117
-// drei maps (400 / distanceFactor) CSS px to one world unit. Two extra pixels tuck the edge under
-// the black bezel so a hairline of the page backdrop cannot show.
-const MBP_DISTANCE = 400 * mm(MBP.disp.w) * (MBP_CSS_W + 2) / MBP_CSS_W / MBP_CSS_W
+const MBP_CSS_W = 1512
+const MBP_CSS_H = MBP_CSS_W * MBP.disp.h / MBP.disp.w
+// drei maps (400 / distanceFactor) CSS px to one world unit. Match the display with no mesh scale,
+// so a spin stays a rigid page instead of a scaled matrix that spills over the body.
+const MBP_DISTANCE = 400 * mm(MBP.disp.w) / MBP_CSS_W
 
 /** Light or dark status bar for 'auto': reads the app's top background when it is same-origin, otherwise dark text. */
 function useTone(frame: React.RefObject<HTMLIFrameElement | null>, mode: SbCfg['mode'], width: number, y = 20): 'dark' | 'light' {
@@ -186,7 +184,7 @@ function MacScreen({ src, interactive, portal }: { src: string; interactive: boo
       <Html transform portal={portal} distanceFactor={MBP_DISTANCE} zIndexRange={[10, 0]} pointerEvents={interactive ? 'auto' : 'none'}>
         <div ref={shell} style={{ width: MBP_CSS_W, height: MBP_CSS_H, borderRadius: `${radius}px ${radius}px 0 0`, overflow: 'hidden', position: 'relative', background: '#000',
           backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
-          <iframe src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#000', colorScheme: 'dark', pointerEvents: interactive ? 'auto' : 'none' }} />
+          <iframe src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', pointerEvents: interactive ? 'auto' : 'none' }} />
           {/* camera housing, so the page does not draw through the notch */}
           <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: notchW, height: notchH, background: '#050506',
             borderBottomLeftRadius: notchH / 2, borderBottomRightRadius: notchH / 2, pointerEvents: 'auto' }} />
@@ -362,7 +360,7 @@ export default function LivePhone() {
           </span>
           <input id="live-html" ref={fileRef} type="file" accept=".html,.htm,text/html" hidden
             onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(f); e.currentTarget.value = '' }} />
-          <span style={{ fontSize: 11, color: '#6e6e73', maxWidth: 240 }}>{mbp ? 'The screen is 1728×1117. A self-contained file; images and scripts beside it will not load.' : 'A self-contained file. Images and scripts beside it will not load.'}</span>
+          <span style={{ fontSize: 11, color: '#6e6e73', maxWidth: 240 }}>A self-contained file. Images and scripts beside it will not load.</span>
           {mbp && (
             <span style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
               <button id="live-front" style={textBtn} onClick={frontPose}>Front</button>
