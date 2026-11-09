@@ -9,7 +9,7 @@ import IPhonePro from '../devices/IPhonePro'
 import { IPHONE_18_PRO, IPHONE_18_PRO_MAX, type IPhoneSpec } from '../devices/iphoneSpecs'
 import { Env } from '../Env'
 import type { DeviceOptions, LogoArt } from '../types'
-import { loadLocalLogo } from '../localLogo'
+import { loadLocalLogo, builtinLogo } from '../localLogo'
 import { type SbCfg, parseSb, writeSb } from '../statusbar/config'
 import { StatusPanel } from '../statusbar/Panel'
 import { Island, StatusBar, HomeBar, useClock, ISL, islandSketch } from '../statusbar/StatusBar'
@@ -90,7 +90,7 @@ function Screen({ s, interactive, sb }: { s: IPhoneSpec; interactive: boolean; s
 
 function Rig({ onFaceOn, faceOn, sb }: { onFaceOn: (v: boolean) => void; faceOn: boolean; stayOn: boolean; sb: SbCfg }) {
   const [logo, setLogo] = useState<LogoArt | null>(null)
-  useEffect(() => { let live = true; loadLocalLogo().then(l => { if (live) setLogo(l) }); return () => { live = false } }, [])
+  useEffect(() => { let live = true; (async () => { const l = (await loadLocalLogo()) ?? (await builtinLogo()); if (live) setLogo(l) })(); return () => { live = false } }, [])
   const ref = useRef<THREE.Group>(null)
   const last = useRef(true)
   useFrame((_, dt) => {

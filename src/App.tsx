@@ -17,7 +17,7 @@ import { REMOTE, REMOTE_HELD } from './devices/AppleTV'
 import { LID0, TILT0, RISE0, LID_RANGE, TILT_RANGE, SD_TILT0, SD_RISE0, SD_TILT_RANGE } from './devices/mech'
 import { SD, sdFrame, type SdStand } from './devices/StudioDisplay'
 import { ErrorBoundary } from './ErrorBoundary'
-import { loadLogo, loadLocalLogo } from './localLogo'
+import { loadLogo, loadLocalLogo, builtinLogo, type LogoArt } from './localLogo'
 import { Env, retryEnvironment } from './Env'
 import { renderPasses, runComfy, composite, downloadPasses, comfyReachable, handLayer, type Guide, type AiResult } from './hands/aiHands'
 import { IDLE_LEVELS } from './hands/motion'
@@ -635,12 +635,28 @@ export default function App() {
   const three = useRef<Grab | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const drag = useRef<{ x: number; y: number; pan: boolean } | null>(null)
-  // Optional local logo: public/local/logo.svg or logo.png (git-ignored). Loaded once; the Logo control can override or clear it.
+  // The bundled mark, unless public/local/logo.svg or logo.png (git-ignored) is present. A file the user picks replaces it; Clear lasts for that device.
+  const mark = useRef<LogoArt | null>(null)
+  const marked = useRef(new Set<string>())
+  const placeMark = useCallback((logo: LogoArt) => {
+    for (const d of S.get().devices) {
+      if (marked.current.has(d.uid)) continue
+      marked.current.add(d.uid)
+      if (!DEVICES.find(x => x.id === d.model)?.logoSpot || d.opts.logo) continue
+      S.devAt(d.uid, 'opts', o => (o.logo ? o : { ...o, logo }))
+    }
+  }, [])
   useEffect(() => {
     let live = true
-    loadLocalLogo().then(logo => { if (live && logo) setOpts(o => (o.logo ? o : { ...o, logo })) })
+    ;(async () => {
+      const logo = (await loadLocalLogo()) ?? (await builtinLogo())
+      if (!live || !logo) return
+      mark.current = logo
+      placeMark(logo)
+    })()
     return () => { live = false }
-  }, [])
+  }, [placeMark])
+  useEffect(() => { if (mark.current) placeMark(mark.current) }, [S.scene.devices, placeMark])
   const def = DEVICES.find(d => d.id === device)!
   const screenAspect = typeof def.screenAspect === 'function' ? def.screenAspect(opts) : def.screenAspect
   // Screen in iPhone points for the status bar: Pro 402x874, Pro Max 440x956
@@ -1104,7 +1120,7 @@ export default function App() {
         {slider('Logo size', opts.logoSize, 0.05, 0.4, 0.01, n => setOpts({ ...opts, logoSize: n }))}
         <label className="row"><span>Logo tint</span><input type="color" value={opts.logoTint} onChange={e => setOpts({ ...opts, logoTint: e.target.value })} /><button className="ghost" onClick={() => setOpts({ ...opts, logo: null })}>Clear</button></label>
       </>}
-      <p className="hint">The logo sits centred on the back. Use your own SVG or PNG.</p>
+      <p className="hint">A polished mark in the colour of that surface. Replace it with your own SVG or PNG, or clear it.</p>
       {(device === 'ip18' || device === 'ip18max') && <>
         <label className="check"><input type="checkbox" checked={opts.simTray} onChange={e => setOpts({ ...opts, simTray: e.target.checked })} /> SIM tray</label>
         <p className="hint">Click a button to press it. Click the SIM tray or its pinhole to eject it, and again to put it back.</p>

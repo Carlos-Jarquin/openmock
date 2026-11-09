@@ -72,8 +72,11 @@ function AppleTV({ opts }: DeviceProps) {
       <mesh geometry={g.body} position={[0, by, 0]} castShadow receiveShadow name="atv-box" userData={{ sketchHull: true }}><primitive object={matte} attach="material" /></mesh>
       <mesh geometry={g.top} position={[0, ty + E, 0]}><primitive object={gloss} attach="material" /></mesh>
       <mesh geometry={g.foot} position={[0, -H / 2 + (foot + mm(1)) / 2, 0]}><meshStandardMaterial color="#0a0a0b" roughness={0.9} /></mesh>
-      {opts.logo && <mesh position={[0, ty + E * 3, 0]} rotation={[-Math.PI / 2, 0, 0]}><planeGeometry args={[0.2 + opts.logoSize, (0.2 + opts.logoSize) / opts.logo.aspect]} />
-        <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : '#2a2a2e'} roughness={0.5} alphaMap={opts.logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} /></mesh>}
+      {opts.logo && <mesh position={[0, ty + E * 6, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={2}>
+        <planeGeometry args={[0.2 + opts.logoSize, (0.2 + opts.logoSize) / opts.logo.aspect]} />
+        <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : '#0d0d0f'} metalness={0.75} roughness={0.04} clearcoat={1} clearcoatRoughness={0.02} envMapIntensity={2}
+          alphaMap={opts.logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} />
+      </mesh>}
       {/* front: status light */}
       <mesh position={[mm(ATV.led.x), -H / 2 + mm(ATV.led.y), z + E]}><circleGeometry args={[mm(1.2), 20]} /><meshBasicMaterial color="#e8f6ea" toneMapped={false} /></mesh>
       {/* back: power (figure eight), Ethernet, HDMI */}

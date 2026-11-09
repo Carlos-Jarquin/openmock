@@ -185,7 +185,7 @@ function StudioDisplay({ texture, mediaAspect, opts, uid }: DeviceProps) {
     if (panel.current) { panel.current.position.copy(f.centre); panel.current.rotation.x = f.rx }
     if (link.current) { link.current.position.copy(f.p1); link.current.rotation.x = -f.a } })
   const logo = opts.logo && <mesh position={[0, ph * 0.17, -PT / 2 - E * 2]} rotation={[0, Math.PI, 0]}><planeGeometry args={[0.36 + opts.logoSize * 1.4, (0.36 + opts.logoSize * 1.4) / opts.logo.aspect]} />
-    <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : '#1a1a1c'} roughness={0.2} clearcoat={1} alphaMap={opts.logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} /></mesh>
+    <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : fin.body} metalness={0.75} roughness={0.1} clearcoat={1} clearcoatRoughness={0.05} envMapIntensity={1.2} alphaMap={opts.logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} /></mesh>
   // ports on the back, lower left seen from behind: USB-C, USB-C, Thunderbolt 5, Thunderbolt 5 (upstream, with a dot)
   const port = (i: number) => { const x = mm(-217 + i * 15), y = -ph / 2 + mm(26)
     return <group key={i} position={[x, y, 0]}>

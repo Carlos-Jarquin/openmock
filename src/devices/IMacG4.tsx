@@ -56,7 +56,7 @@ function IMacG4({ texture, mediaAspect, opts, uid }: DeviceProps) {
   const L = mm(IMAC.arm.len), ar = mm(IMAC.arm.r)
   const logo = (pos: [number, number, number], rot: [number, number, number], s: number) => opts.logo && (
     <mesh position={pos} rotation={rot}><planeGeometry args={[s, s / opts.logo.aspect]} />
-      <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : '#d6d7d9'} metalness={0.5} roughness={0.1} clearcoat={1} alphaMap={opts.logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} /></mesh>)
+      <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : fin.body} metalness={0.15} roughness={0.08} clearcoat={1} clearcoatRoughness={0.06} envMapIntensity={0.7} alphaMap={opts.logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} /></mesh>)
   // front logo on the dome, set on its surface 84 mm off the floor
   const lh = mm(84) - band, lz = R * Math.sqrt(1 - (lh / dome) ** 2), ln = Math.atan2(lh / (sq * sq), lz)
   return (
