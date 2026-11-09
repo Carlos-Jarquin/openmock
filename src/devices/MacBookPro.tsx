@@ -52,16 +52,11 @@ function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps
   const fin = MBP_FINISHES[opts.finish] ?? MBP_FINISHES.spacegrey
   const W = mm(MBP.w), D = mm(MBP.d), TB = mm(MBP.tb), TL = mm(MBP.tl), DL = D - TL / 2
   const p = mm(MBP.kb.pitch), kgap = mm(MBP.kb.gap)
-  const fullBezel = Boolean(liveScreen)
   const g = useMemo(() => {
     const base = once('base', () => slab(rrect(W, D, all(mm(MBP.r))), TB, mm(MBP.edge)))
     const lid = once('lid', () => { const s = slab(rrect(W, DL, all(mm(MBP.r))), TL, mm(MBP.edge) * 0.8); s.translate(0, DL / 2, -TL / 2); return s })
     // black glass inside the lid's lip: inset by the lid's bevel width, its corner concentric with the lid's (r minus the lip)
-    const lip = mm(MBP.edge) * 0.8
-    // Live: the black glass runs to the lid's outline, so the bevel cannot flash a white line around the page.
-    const front = once(fullBezel ? 'front-live' : 'front', () => new THREE.ShapeGeometry(rrect(
-      W - (fullBezel ? 0 : 2 * lip), DL - (fullBezel ? 0 : 2 * lip),
-      all(Math.max(mm(0.4), mm(MBP.r) - (fullBezel ? 0 : lip))), 0, DL / 2), 48))
+    const lip = mm(MBP.edge) * 0.8, front = once('front', () => new THREE.ShapeGeometry(rrect(W - 2 * lip, DL - 2 * lip, all(mm(MBP.r) - lip), 0, DL / 2), 48))
     const dw = mm(MBP.disp.w), dh = mm(MBP.disp.h), dy = MBP_SCREEN_Y
     const screen = once('screen', () => { const s = new THREE.ShapeGeometry(rrect(dw, dh, [0, 0, mm(MBP.disp.r), mm(MBP.disp.r)], 0, dy), 24)
       const pos = s.attributes.position, uv = s.attributes.uv
@@ -91,7 +86,7 @@ function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps
         const c = new THREE.CircleGeometry(mm(0.45), 6); c.translate(side * (7.5 * p + mm(14) + j * mm(2.6)), y0 + mm(3) + i * mm(2.4), 0); parts.push(c) }
       return mergeAll(parts) })
     return { base, lid, front, screen, notch, keys, well, pad, grille, dy, dh }
-  }, [W, D, TB, TL, DL, p, kgap, fullBezel])
+  }, [W, D, TB, TL, DL, p, kgap])
   useMemo(() => fitTexture(texture, mediaAspect, MBP_ASPECT), [texture, mediaAspect])
   const bR = brushedRoughness()
   const alu = useMemo(() => new THREE.MeshPhysicalMaterial({ color: fin.body, metalness: 0.35, roughness: 0.55, roughnessMap: bR, envMapIntensity: 0.32, specularIntensity: 0.35 }), [fin.body, bR])
@@ -123,11 +118,7 @@ function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps
       {/* lid: turns about the hinge at the back edge; 0 is closed, 90 upright */}
       <group ref={lid} position={[0, TB, -D / 2 + TL / 2]}>
         <mesh geometry={g.lid} castShadow userData={{ sketchHull: true }}>{metal}</mesh>
-        <mesh geometry={g.front} position={[0, 0, E]} name="mbp-bezel">
-          {liveScreen
-            ? <meshBasicMaterial color="#000" />
-            : <meshPhysicalMaterial color="#050506" roughness={0.2} clearcoat={1} clearcoatRoughness={0.05} />}
-        </mesh>
+        <mesh geometry={g.front} position={[0, 0, E]} name="mbp-bezel"><meshPhysicalMaterial color="#050506" roughness={0.2} clearcoat={1} clearcoatRoughness={0.05} /></mesh>
         <mesh geometry={g.screen} position={[0, 0, E * 2]} name="screen">
           {texture ? <meshBasicMaterial key="tex" map={texture} toneMapped={false} /> : <meshBasicMaterial key="idle" color={liveScreen ? '#000' : '#07080b'} />}</mesh>
         <mesh geometry={g.notch} position={[0, 0, E * 3]}><meshBasicMaterial color="#020203" /></mesh>
