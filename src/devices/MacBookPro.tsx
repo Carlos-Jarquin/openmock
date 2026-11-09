@@ -40,7 +40,15 @@ export function mbpKey(row: number, col: number) {
 const geoCache = new Map<string, THREE.BufferGeometry>()
 const once = (k: string, f: () => THREE.BufferGeometry) => { let g = geoCache.get(k); if (!g) geoCache.set(k, g = f()); return g }
 
-function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
+/** Centre of the display in the lid group (model units), the hinge at the origin. */
+export const MBP_SCREEN_Y = mm(MBP.d - MBP.tl / 2) - mm(MBP.disp.top) - mm(MBP.disp.h) / 2
+/** Where the screen's centre sits in the device, for a lid angle in degrees, so a view can keep the page centred. */
+export function mbpScreenAnchor(lidDeg: number): [number, number, number] {
+  const a = (90 - lidDeg) * Math.PI / 180
+  return [0, mm(MBP.tb) + MBP_SCREEN_Y * Math.cos(a), -mm(MBP.d) / 2 + mm(MBP.tl) / 2 + MBP_SCREEN_Y * Math.sin(a)]
+}
+
+function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps) {
   const fin = MBP_FINISHES[opts.finish] ?? MBP_FINISHES.spacegrey
   const W = mm(MBP.w), D = mm(MBP.d), TB = mm(MBP.tb), TL = mm(MBP.tl), DL = D - TL / 2
   const p = mm(MBP.kb.pitch), kgap = mm(MBP.kb.gap)
@@ -49,7 +57,7 @@ function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
     const lid = once('lid', () => { const s = slab(rrect(W, DL, all(mm(MBP.r))), TL, mm(MBP.edge) * 0.8); s.translate(0, DL / 2, -TL / 2); return s })
     // black glass inside the lid's lip: inset by the lid's bevel width, its corner concentric with the lid's (r minus the lip)
     const lip = mm(MBP.edge) * 0.8, front = once('front', () => new THREE.ShapeGeometry(rrect(W - 2 * lip, DL - 2 * lip, all(mm(MBP.r) - lip), 0, DL / 2), 48))
-    const dw = mm(MBP.disp.w), dh = mm(MBP.disp.h), dy = DL - mm(MBP.disp.top) - dh / 2
+    const dw = mm(MBP.disp.w), dh = mm(MBP.disp.h), dy = MBP_SCREEN_Y
     const screen = once('screen', () => { const s = new THREE.ShapeGeometry(rrect(dw, dh, [0, 0, mm(MBP.disp.r), mm(MBP.disp.r)], 0, dy), 24)
       const pos = s.attributes.position, uv = s.attributes.uv
       for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / dw + 0.5, (pos.getY(i) - dy) / dh + 0.5)
@@ -115,6 +123,7 @@ function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
           {texture ? <meshBasicMaterial key="tex" map={texture} toneMapped={false} /> : <meshBasicMaterial key="idle" color="#07080b" />}</mesh>
         <mesh geometry={g.notch} position={[0, 0, E * 3]}><meshBasicMaterial color="#020203" /></mesh>
         <mesh position={[0, g.dy + g.dh / 2 - mm(3.2), E * 4]}><circleGeometry args={[mm(1.1), 20]} /><meshBasicMaterial color="#14161c" /></mesh>
+        {liveScreen && <group position={[0, g.dy, E * 5]}>{liveScreen}</group>}
         {opts.logo && (
           <mesh position={[0, DL / 2, -TL - E]} rotation={[0, Math.PI, 0]}>
             <planeGeometry args={[opts.logoSize * 2.2, opts.logoSize * 2.2 / opts.logo.aspect]} />
