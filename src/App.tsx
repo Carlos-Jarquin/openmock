@@ -162,7 +162,7 @@ const imacFit0 = (o: DeviceOptions): HandFit => { const f = imacFrame(o.tilt ?? 
 function fitFor(d: Pick<DeviceState, 'model' | 'opts' | 'foldFollow' | 'look'>): HandFit | null {
   if (d.model === 'watchu') return watchFit(handBuild(d.look))
   if (d.model === 'atv4k') return d.opts.remote === false ? null : REMOTE_FIT
-  if (d.model === 'mbp16') return MBP_FIT
+  if (d.model === 'mbp16') return d.opts.lidOnly ? null : MBP_FIT
   if (d.model === 'imacg4') return imacFit(d.opts)
   if (d.model === 'studio') return studioFit(d.opts)
   if (d.model !== 'duo') return HAND_FITS[d.model] ?? null
@@ -339,7 +339,7 @@ const DeviceRig = memo(function DeviceRig({ d, active, sketch, sk, islandLook, s
   return (
     <group ref={ref} position={pos} rotation={rot}
       onPointerDown={e => { if (e.button !== 0 || e.shiftKey || e.altKey || e.intersections.some(i => onGizmo(i.object))) return; e.stopPropagation(); sceneHit.current = true; onGrab(d.uid, e.nativeEvent) }}>
-      <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, opts.lid, opts.tilt, opts.rise, opts.sdStand, opts.sdPortrait, screenTex.texture, d.hands.pose]}><group scale={scale}>
+      <Centred off={device === 'duo'} deps={[device, opts.fold, opts.screen, opts.lid, opts.lidOnly, opts.tilt, opts.rise, opts.sdStand, opts.sdPortrait, screenTex.texture, d.hands.pose]}><group scale={scale}>
         <MatteStyle on={sketch && sk.matte !== false}><HandRig pose={d.hands.pose} tone={d.hands.tone} spectral={d.spectral} fit={fitFor(d)} gesture={d.gesture} onGesture={active ? onGesture : undefined} rot={d.handRot} idle={d.idle} look={d.look}>
           <SketchStyle on={sketch} o={sk}><D uid={d.uid} texture={screenTex.texture} mediaAspect={screenTex.aspect ?? screenAspect} opts={devOpts}
             {...(device === 'duo' ? { textureOuter: shownOuter?.texture ?? null, mediaAspectOuter: shownOuter?.aspect } : {})} /></SketchStyle>
@@ -1078,7 +1078,7 @@ export default function App() {
       <p className="hint">{swap ? 'The AI hand is a still picture over the live scene, so the camera, devices and hand are locked. The screen stays live. Video shows the 3D scene without it.' : 'Paints a realistic hand from this exact view and puts only the hand back over the live scene.'}</p>
       <button className="ghost" onClick={exportAiPasses}>Export for AI hands</button>
       <p className="hint">Uses ComfyUI on this Mac to repaint only the hands. The phone stays exactly as rendered.</p>
-    </> : <p className="hint">Turn on a hand under Device › Hand first. {handOk ? '' : device === 'duo' ? 'Hands hold the iPhone Duo fully open or closed. Finish the fold to see them.' : 'Hands are available for the iPhones and iPads, and the iPhone Duo open or closed.'}</p> },
+    </> : <p className="hint">Turn on a hand under Device › Hand first. {handOk ? '' : device === 'duo' ? 'Hands hold the iPhone Duo fully open or closed. Finish the fold to see them.' : device === 'mbp16' && opts.lidOnly ? 'Lid only has no keyboard, so the hands stay off.' : 'Hands are available for the iPhones and iPads, and the iPhone Duo open or closed.'}</p> },
     // DEVICE rail
     ...(multi || moved ? [{ id: 'place', side: 'device' as const, title: 'Position', icon: 'move', settings: ['Across', 'Up and down', 'Depth', 'Turn', 'Tilt', 'Roll', 'Reset position'], render: () => { const xf = D0.xf, set = (k: keyof Xf) => (n: number) => S.dev.xf(o => ({ ...o, [k]: n }))
       return <>
@@ -1155,10 +1155,12 @@ export default function App() {
       <label className="check"><input type="checkbox" checked={opts.remote !== false} onChange={e => { const on = e.target.checked; setOpts(x => ({ ...x, remote: on })) }} /> Show the Siri Remote</label>
       <p className="hint">Apple TV has no screen of its own. Pick a hand grip to hold the remote, or Thumb tap to press the clickpad.</p>
     </> }] : []),
-    ...(device === 'mbp16' ? [{ id: 'lid', side: 'device' as const, title: 'Lid', icon: 'lid', settings: ['Lid angle', 'Close lid', 'Open lid'], render: () => <>
+    ...(device === 'mbp16' ? [{ id: 'lid', side: 'device' as const, title: 'Lid', icon: 'lid', settings: ['Lid angle', 'Close lid', 'Open lid', 'Lid only'], render: () => <>
       {slider('Lid angle', Math.round(opts.lid ?? LID0), LID_RANGE[0], LID_RANGE[1], 1, n => setOpts(x => ({ ...x, lid: n })), '°')}
       <p className="hint">0 is closed, 90 is upright. Add keyframes at different angles to animate the lid.</p>
       <div className="seg"><button onClick={() => setOpts(x => ({ ...x, lid: 0 }))}>Close lid</button><button onClick={() => setOpts(x => ({ ...x, lid: LID0 }))}>Open lid</button></div>
+      <label className="check"><input type="checkbox" checked={!!opts.lidOnly} onChange={e => setOpts(x => ({ ...x, lidOnly: e.target.checked }))} /> Lid only</label>
+      <p className="hint">The screen and its lid, without the keyboard and base.</p>
     </> }] : []),
     ...(device === 'imacg4' ? [{ id: 'stand', side: 'device' as const, title: 'Stand', icon: 'stand', settings: ['Display tilt', 'Stand height', 'Reset stand'], render: () => <>
       {slider('Display tilt', Math.round(opts.tilt ?? TILT0), TILT_RANGE[0], TILT_RANGE[1], 1, n => setOpts(x => ({ ...x, tilt: n })), '°')}
@@ -1232,7 +1234,7 @@ export default function App() {
           <input type="color" aria-label="Custom nail colour" value={look.nailColor ?? '#f2d4cf'} onChange={e => setLook(o => ({ ...o, nailColor: e.target.value }))} /></div>
         <button className="ghost" onClick={() => setLook(HAND_LOOK0)}>Reset appearance</button>
         <p className="hint">Size and nails belong to this device's hand and go into keyframes. Long nails keep clear of the glass; the finger lands on its pad.</p></div>
-    </> : <p className="hint">{device === 'duo' ? 'Hands hold the iPhone Duo fully open or closed. Finish the fold to see them.' : 'Hands are available for the iPhones and iPads, and the iPhone Duo open or closed.'}</p> },
+    </> : <p className="hint">{device === 'duo' ? 'Hands hold the iPhone Duo fully open or closed. Finish the fold to see them.' : device === 'mbp16' && opts.lidOnly ? 'Lid only has no keyboard, so the hands stay off.' : 'Hands are available for the iPhones and iPads, and the iPhone Duo open or closed.'}</p> },
   ]
 
   // Palette commands that apply straight away
@@ -1324,7 +1326,8 @@ export default function App() {
     ...(device === 'watchu' ? Object.entries(WATCH_BANDS).map(([k, b]) => ({ id: `band-${k}`, group: 'device' as const, section: 'band', label: `Band › ${b.label}`, meta: (opts.band ?? 'orange') === k ? 'CURRENT' as const : 'APPLY' as const, run: () => setOpts(x => ({ ...x, band: k })) })) : []),
     ...(device === 'atv4k' ? [{ id: 'remote-toggle', group: 'device' as const, section: 'remote', label: opts.remote === false ? 'Remote › Show' : 'Remote › Hide', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, remote: x.remote === false })) }] : []),
     ...(device === 'mbp16' ? [{ id: 'lid-close', group: 'device' as const, section: 'lid', label: 'Lid › Close', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, lid: 0 })) },
-      { id: 'lid-open', group: 'device' as const, section: 'lid', label: 'Lid › Open', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, lid: LID0 })) }] : []),
+      { id: 'lid-open', group: 'device' as const, section: 'lid', label: 'Lid › Open', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, lid: LID0 })) },
+      { id: 'lid-only', group: 'device' as const, section: 'lid', label: opts.lidOnly ? 'Lid › Show keyboard' : 'Lid › Lid only', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, lidOnly: !x.lidOnly })) }] : []),
     ...(device === 'imacg4' ? [{ id: 'stand-low', group: 'device' as const, section: 'stand', label: 'Stand › Lowest', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, rise: 0 })) },
       { id: 'stand-high', group: 'device' as const, section: 'stand', label: 'Stand › Highest', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, rise: 1 })) },
       { id: 'stand-reset', group: 'device' as const, section: 'stand', label: 'Stand › Reset', meta: 'APPLY' as const, run: () => setOpts(x => ({ ...x, tilt: TILT0, rise: RISE0 })) }] : []),

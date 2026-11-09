@@ -91,10 +91,11 @@ function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
     <mesh key={key} position={[side * (W / 2 + E), TB / 2, -y]} rotation={[0, side * Math.PI / 2, 0]}>
       {round ? <circleGeometry args={[w / 2, 24]} /> : <shapeGeometry args={[rrect(w, h, all(h / 2 - 0.0001)), 12]} />}
       <meshBasicMaterial color="#0b0b0d" /></mesh>)
+  const body = !opts.lidOnly
   return (
     <group>
-      {/* base: lying flat, top face (keyboard) up */}
-      <group position={[0, TB / 2, 0]} rotation={[-Math.PI / 2, 0, 0]} name="mbp-base">
+      {/* base: lying flat, top face (keyboard) up. Lid only leaves the screen and its housing. */}
+      {body && <group position={[0, TB / 2, 0]} rotation={[-Math.PI / 2, 0, 0]} name="mbp-base">
         <mesh geometry={g.base} castShadow receiveShadow userData={{ sketchHull: true }}>{metal}</mesh>
         <mesh geometry={g.well} position={[0, 0, TB / 2 + E]}><meshStandardMaterial color="#141416" roughness={0.8} /></mesh>
         <mesh geometry={g.keys} position={[0, 0, TB / 2 + mm(0.4)]} userData={{ sketchTone: 'dark' }}><meshStandardMaterial color="#1c1c1f" roughness={0.55} /></mesh>
@@ -103,10 +104,12 @@ function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
         {/* front thumb scoop and four feet */}
         <mesh position={[0, -D / 2 - E, TB / 2 - mm(1.6)]} rotation={[Math.PI / 2, 0, 0]}><shapeGeometry args={[rrect(mm(64), mm(1.6), all(mm(0.79))), 8]} /><meshBasicMaterial color="#2a2b2e" side={THREE.DoubleSide} /></mesh>
         {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy], i) => <mesh key={i} position={[sx * (W / 2 - mm(22)), sy * (D / 2 - mm(22)), -TB / 2 - E]} rotation={[Math.PI, 0, 0]}><circleGeometry args={[mm(9), 24]} /><meshStandardMaterial color="#1a1a1c" roughness={0.9} /></mesh>)}
-      </group>
+      </group>}
       {/* ports: left MagSafe 3, two Thunderbolt 4, headphone; right HDMI, Thunderbolt 4, SDXC (back to front) */}
-      {port(mm(15.5), mm(4.2), mm(78), -1, 'magsafe')}{port(mm(8.6), mm(3.2), mm(52), -1, 'tb1')}{port(mm(8.6), mm(3.2), mm(36), -1, 'tb2')}{port(mm(4), 0, mm(4), -1, 'hp', true)}
-      {port(mm(14.5), mm(4.8), mm(70), 1, 'hdmi')}{port(mm(8.6), mm(3.2), mm(30), 1, 'tb3')}{port(mm(24), mm(2.2), mm(-40), 1, 'sd')}
+      {body && <>
+        {port(mm(15.5), mm(4.2), mm(78), -1, 'magsafe')}{port(mm(8.6), mm(3.2), mm(52), -1, 'tb1')}{port(mm(8.6), mm(3.2), mm(36), -1, 'tb2')}{port(mm(4), 0, mm(4), -1, 'hp', true)}
+        {port(mm(14.5), mm(4.8), mm(70), 1, 'hdmi')}{port(mm(8.6), mm(3.2), mm(30), 1, 'tb3')}{port(mm(24), mm(2.2), mm(-40), 1, 'sd')}
+      </>}
       {/* lid: turns about the hinge at the back edge; 0 is closed, 90 upright */}
       <group ref={lid} position={[0, TB, -D / 2 + TL / 2]}>
         <mesh geometry={g.lid} castShadow userData={{ sketchHull: true }}>{metal}</mesh>

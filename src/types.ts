@@ -10,8 +10,8 @@ export interface DeviceOptions { fold: number; screen: 'inner' | 'outer'; finish
   foldDissolve?: boolean
   /** Duo: how each screen's media fits (fill crops to cover, the default; fit letterboxes). */
   fitInner?: 'fill' | 'fit'; fitOuter?: 'fill' | 'fit'
-  /** MacBook Pro: lid angle in degrees (0 closed, 90 upright). iMac G4: display tilt in degrees (top back) and stand height 0 to 1. */
-  lid?: number; tilt?: number; rise?: number
+  /** MacBook Pro: lid angle in degrees (0 closed, 90 upright). lidOnly hides the base, keyboard and ports. iMac G4: display tilt in degrees (top back) and stand height 0 to 1. */
+  lid?: number; lidOnly?: boolean; tilt?: number; rise?: number
   /** Watch: band colour key; worn: the band wraps a wrist of this half-width and half-depth (model units), centred this far behind the case. Set from the hand pose, not stored. */
   band?: string; worn?: { ry: number; rz: number; zc: number } | null
   /** Apple TV: show the Siri Remote (default on); held: the remote stands upright in the hand instead of lying beside the box. */
