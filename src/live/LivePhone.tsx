@@ -11,7 +11,7 @@ import { IPHONE_18_PRO, IPHONE_18_PRO_MAX, type IPhoneSpec } from '../devices/ip
 import MacBookPro, { MBP, MBP_FINISHES, mbpScreenAnchor } from '../devices/MacBookPro'
 import { Env } from '../Env'
 import type { DeviceOptions, LogoArt } from '../types'
-import { loadLocalLogo } from '../localLogo'
+import { loadLocalLogo, builtinLogo } from '../localLogo'
 import { type SbCfg, parseSb, writeSb } from '../statusbar/config'
 import { StatusPanel } from '../statusbar/Panel'
 import { Island, StatusBar, HomeBar, useClock, islandSketch } from '../statusbar/StatusBar'
@@ -263,7 +263,7 @@ export default function LivePhone() {
   const src = page?.url ?? DEMO_SRC
   const spec = device === 'max' ? IPHONE_18_PRO_MAX : IPHONE_18_PRO
   const mbp = device === 'mbp'
-  useEffect(() => { let live = true; loadLocalLogo().then(l => { if (live) setLogo(l) }); return () => { live = false } }, [])
+  useEffect(() => { let live = true; (async () => { const l = (await loadLocalLogo()) ?? (await builtinLogo()); if (live) setLogo(l) })(); return () => { live = false } }, [])
   useEffect(() => { writeSb(sb) }, [sb])
   useEffect(() => { stay.on = stayOn }, [stayOn])
   useEffect(() => {
