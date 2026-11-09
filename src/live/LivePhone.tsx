@@ -54,9 +54,9 @@ function phoneCss(s: IPhoneSpec) {
 // 1728×1117 then fills the iframe with no fractional pixel left over.
 const MBP_CSS_W = 1728
 const MBP_CSS_H = 1117
-// drei maps (400 / distanceFactor) CSS px to one world unit. Two extra pixels tuck the edge under
-// the black bezel so a hairline of the page backdrop cannot show.
-const MBP_DISTANCE = 400 * mm(MBP.disp.w) * (MBP_CSS_W + 2) / MBP_CSS_W / MBP_CSS_W
+// drei maps (400 / distanceFactor) CSS px to one world unit. Exact, so the page ends at the glass
+// and the black bezel, not a sliver of the page, is what shows at the rim.
+const MBP_DISTANCE = 400 * mm(MBP.disp.w) / MBP_CSS_W
 
 /** Light or dark status bar for 'auto': reads the app's top background when it is same-origin, otherwise dark text. */
 function useTone(frame: React.RefObject<HTMLIFrameElement | null>, mode: SbCfg['mode'], width: number, y = 20): 'dark' | 'light' {
@@ -304,7 +304,11 @@ export default function LivePhone() {
   function loadFile(f: File) {
     if (!/\.html?$/i.test(f.name) && f.type !== 'text/html') return
     f.text().then(text => {
-      const url = URL.createObjectURL(new Blob([text], { type: 'text/html' }))
+      // The browser canvas is white. Paint it black so a page that does not quite reach the glass leaves a black edge, not a white one.
+      const tag = '<style>html{background:#000}</style>'
+      const head = text.match(/<head[^>]*>/i)
+      const painted = head && head.index != null ? text.slice(0, head.index + head[0].length) + tag + text.slice(head.index + head[0].length) : tag + text
+      const url = URL.createObjectURL(new Blob([painted], { type: 'text/html' }))
       setPage({ url, name: f.name })
     }).catch(() => {})
   }
