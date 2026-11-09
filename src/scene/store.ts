@@ -108,7 +108,7 @@ type Guard = (run: () => void) => boolean
 let guard: Guard | null = null
 export const setSceneGuard = (g: Guard | null) => { guard = g }
 const MOVING_DEV = new Set(['model', 'xf', 'hands', 'gesture', 'handRot', 'hidden', 'look'])
-const MOVING_OPTS = ['fold', 'lid', 'tilt', 'rise', 'sdStand', 'sdPortrait', 'screen'] as const
+const MOVING_OPTS = ['fold', 'lid', 'lidOnly', 'tilt', 'rise', 'sdStand', 'sdPortrait', 'screen'] as const
 const moves = (k: string, nv: unknown, old: unknown) => {
   if (Object.is(nv, old)) return false
   if (k === 'opts') { const a = old as Record<string, unknown>, b = nv as Record<string, unknown>; return MOVING_OPTS.some(m => !Object.is(a?.[m], b?.[m])) }
