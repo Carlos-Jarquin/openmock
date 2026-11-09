@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import type { DeviceProps } from '../types'
-import { fitTexture } from './shared'
+import { fitTexture, DEFAULT_LOGO_TINT } from './shared'
 import { slab, rrect } from './IPhonePro'
 // Apple Watch Ultra 4 (49 mm): unofficial procedural model, not affiliated with Apple. From the dimensional drawing:
 // case 43.32 x 49.14 mm, 12.00 mm thick at the case and 14.44 mm over the back crystal, flat cover glass 35.79 x 43.07,
@@ -91,8 +91,13 @@ function WatchUltra({ texture, mediaAspect, opts }: DeviceProps) {
       <mesh geometry={g.screen} position={[0, 0, Z + E]} name="screen">
         {texture ? <meshBasicMaterial key="tex" map={texture} toneMapped={false} /> : <meshBasicMaterial key="idle" color="#050506" />}</mesh>
       <mesh geometry={g.glass} position={[0, 0, Z + E * 2]} renderOrder={2} userData={{ sketchHide: true }}><meshPhysicalMaterial color="#ffffff" roughness={0.02} transparent opacity={0.05} depthWrite={false} clearcoat={1} /></mesh>
-      {/* back crystal, black ceramic, over the case's back */}
+      {/* back crystal, black ceramic, over the case's back, with the mark polished into that ceramic */}
       <mesh geometry={g.back} position={[0, 0, -Z]}><meshPhysicalMaterial color="#141416" roughness={0.25} clearcoat={1} /></mesh>
+      {opts.logo && <mesh position={[0, 0, -Z - mm(WATCH.back) - E]} rotation={[0, Math.PI, 0]}>
+        <planeGeometry args={[opts.logoSize * 0.55, opts.logoSize * 0.55 / opts.logo.aspect]} />
+        <meshPhysicalMaterial color={opts.logoTint !== DEFAULT_LOGO_TINT ? opts.logoTint : '#141416'} metalness={0.35} roughness={0.06} clearcoat={1} clearcoatRoughness={0.04} envMapIntensity={1.3}
+          alphaMap={opts.logo.mask} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
+      </mesh>}
       {/* right side: crown guard, Digital Crown (ridged) with its orange face ring, and the side button */}
       <mesh geometry={g.guard} position={[sx - mm(0.6), mm((WATCH.guard.y0 + WATCH.guard.y1) / 2), 0]} rotation={[0, Math.PI / 2, 0]}><primitive object={metal} attach="material" /></mesh>
       <group position={[sx + mm(WATCH.guard.out) - mm(0.3), cy, 0]}>

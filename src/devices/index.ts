@@ -20,7 +20,7 @@ export const DEVICES: DeviceDef[] = [
   { id: 'mbp16', label: 'MacBook Pro 16"', screenAspect: MBP_ASPECT, finishes: MBP_FINISHES, defaultFinish: 'spacegrey', nativePx: MBP.px, logoSpot: true, Component: MacBookPro },
   { id: 'imacg4', label: 'iMac G4 20"', screenAspect: IMAC_ASPECT, finishes: IMAC_FINISHES, defaultFinish: 'white', nativePx: IMAC.px, logoSpot: true, Component: IMacG4 },
   { id: 'studio', label: 'Studio Display', screenAspect: o => (o.sdStand === 'vesa' && o.sdPortrait ? 1 / SD_ASPECT : SD_ASPECT), finishes: SD_FINISHES, defaultFinish: 'silver', nativePx: SD.px, logoSpot: true, Component: StudioDisplay },
-  { id: 'watchu', label: 'Apple Watch Ultra 4', screenAspect: WATCH_ASPECT, finishes: WATCH_FINISHES, defaultFinish: 'natural', nativePx: WATCH.px, Component: WatchUltra },
+  { id: 'watchu', label: 'Apple Watch Ultra 4', screenAspect: WATCH_ASPECT, finishes: WATCH_FINISHES, defaultFinish: 'natural', nativePx: WATCH.px, logoSpot: true, Component: WatchUltra },
   { id: 'atv4k', label: 'Apple TV 4K', screenAspect: 16 / 9, finishes: ATV_FINISHES, defaultFinish: 'black', logoSpot: true, noScreen: true, Component: AppleTV },
   { id: 'phone', label: 'Phone', screenAspect: PHONE_ASPECT, Component: Phone },
   { id: 'browser', label: 'Browser', screenAspect: BROWSER_ASPECT, Component: BrowserFrame },
