@@ -114,11 +114,11 @@ function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps
               polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
           </mesh>
           {g.legends.touchFill && <mesh geometry={g.legends.touchFill} renderOrder={2}>
-            <meshStandardMaterial side={THREE.DoubleSide} color="#19191c" roughness={0.45} depthWrite={false}
+            <meshStandardMaterial side={THREE.DoubleSide} color="#1b1b1e" roughness={0.5} depthWrite={false}
               polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
           </mesh>}
           {g.legends.touchRing && <mesh geometry={g.legends.touchRing} renderOrder={2}>
-            <meshStandardMaterial side={THREE.DoubleSide} color="#2a2a2e" roughness={0.5} depthWrite={false}
+            <meshStandardMaterial side={THREE.DoubleSide} color="#222226" roughness={0.55} depthWrite={false}
               polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
           </mesh>}
         </group>
