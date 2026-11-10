@@ -201,6 +201,7 @@ function pick(src: THREE.Material, mesh: THREE.Mesh, m: Mats): THREE.Material | 
   const tone = mesh.userData.sketchTone as string | undefined
   if (src.blending === THREE.AdditiveBlending) return null // glass sheens and reflections
   const mb = src as THREE.MeshBasicMaterial
+  if (mesh.name === 'mbp-legends' && mb.map) return src // key legends stay printed in sketch
   if (mesh.name === 'screen' || tone === 'screen') {
     if (mb.map) return src // keep the user's screen content as is
     // custom screen shaders (iPhone Duo): keep the shader so the content and the fold dissolve still show; it takes

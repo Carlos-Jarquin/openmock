@@ -6,6 +6,50 @@ import { fitTexture, DEFAULT_LOGO_TINT } from './shared'
 import { brushedRoughness } from './materials'
 import { slab, rrect } from './IPhonePro'
 import { mechLiveFor, LID0 } from './mech'
+import legendUrl from './mbp-keyboard-legends.png'
+// The hand-drawn legends, cropped to the key block. The sheet's top is the function row.
+const legendMap = new THREE.TextureLoader().load(legendUrl)
+legendMap.colorSpace = THREE.SRGBColorSpace
+legendMap.generateMipmaps = true
+legendMap.minFilter = THREE.LinearMipmapLinearFilter
+legendMap.magFilter = THREE.LinearFilter
+legendMap.anisotropy = 16
+// On the live view the lid is upright and the deck is almost edge-on, so a key row is only a
+// few pixels tall. A hardware mipmap then picks a level where a 0.5 mm outline is a fraction of
+// a texel and, because the PNG is straight alpha, averages the ink with transparent black. The
+// sample below walks the sharp mip along the long screen axis and puts the ink colour back.
+const legendMat = new THREE.MeshBasicMaterial({
+  map: legendMap, transparent: true, depthWrite: false, toneMapped: false,
+  polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+})
+legendMat.customProgramCacheKey = () => 'mbp-legends-gather'
+legendMat.onBeforeCompile = (shader) => {
+  shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', /* glsl */`
+#ifdef USE_MAP
+	vec2 legendDx = dFdx(vMapUv);
+	vec2 legendDy = dFdy(vMapUv);
+	vec2 legendSize = vec2(textureSize(map, 0));
+	float legendRhoX = length(legendDx * legendSize);
+	float legendRhoY = length(legendDy * legendSize);
+	float legendRhoMin = max(min(legendRhoX, legendRhoY), 1.0);
+	float legendRhoMax = max(max(legendRhoX, legendRhoY), 1.0);
+	float legendLod = log2(legendRhoMin);
+	vec2 legendMajor = legendRhoX > legendRhoY ? legendDx : legendDy;
+	float legendN = clamp(ceil(legendRhoMax / legendRhoMin), 1.0, 12.0);
+	vec4 sampledDiffuseColor = vec4(0.0);
+	for (int i = 0; i < 12; i++) {
+		float w = step(float(i) + 0.5, legendN);
+		float t = (float(i) + 0.5) / legendN - 0.5;
+		sampledDiffuseColor += texture2DLodEXT(map, vMapUv + legendMajor * t, legendLod) * w;
+	}
+	sampledDiffuseColor /= legendN;
+	float legendCoverage = sampledDiffuseColor.a;
+	if (legendCoverage > 0.001) sampledDiffuseColor.rgb /= legendCoverage;
+	sampledDiffuseColor.a = smoothstep(0.03, 0.28, legendCoverage);
+	diffuseColor *= sampledDiffuseColor;
+#endif
+`)
+}
 // MacBook Pro 16" (2021): unofficial procedural model, not affiliated with Apple. Sizes from the dimensional drawing:
 // 355.7 x 248.1 x 16.8 mm closed, 16.2" display of 3456 x 2234 px at 254 ppi (345.6 x 223.4 mm) with a camera notch.
 // 1 unit = 100 mm. The base lies on the floor plane, keyboard up (+y), front edge toward +z; the lid turns about the
@@ -23,7 +67,7 @@ export const MBP_FINISHES: Record<string, { label: string; body: string }> = {
   silver: { label: 'Silver', body: '#d9dadc' },
 }
 // Rows from the bottom (space row) up, key widths in key units (each row is 15 units wide).
-const ROWS: number[][] = [
+export const MBP_KEY_ROWS: number[][] = [
   [1, 1, 1, 1.25, 5.5, 1.25, 1, 1, 1, 1],
   [2.35, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2.65],
   [1.8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2.2],
@@ -33,14 +77,22 @@ const ROWS: number[][] = [
 ]
 /** Key centres in the base frame (model units), for the typing hands: row, column. */
 export function mbpKey(row: number, col: number) {
-  const p = mm(MBP.kb.pitch), widths = ROWS[row]; let x = -7.5 * p
+  const p = mm(MBP.kb.pitch), widths = MBP_KEY_ROWS[row]; let x = -7.5 * p
   for (let i = 0; i < col; i++) x += widths[i] * p
   return { x: x + widths[col] * p / 2, y: -mm(MBP.d) / 2 + mm(MBP.kb.bottom) + (row + 0.5) * p }
 }
 const geoCache = new Map<string, THREE.BufferGeometry>()
 const once = (k: string, f: () => THREE.BufferGeometry) => { let g = geoCache.get(k); if (!g) geoCache.set(k, g = f()); return g }
 
-function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
+/** Centre of the display in the lid group (model units), the hinge at the origin. */
+export const MBP_SCREEN_Y = mm(MBP.d - MBP.tl / 2) - mm(MBP.disp.top) - mm(MBP.disp.h) / 2
+/** Where the screen's centre sits in the device, for a lid angle in degrees, so a view can keep the page centred. */
+export function mbpScreenAnchor(lidDeg: number): [number, number, number] {
+  const a = (90 - lidDeg) * Math.PI / 180
+  return [0, mm(MBP.tb) + MBP_SCREEN_Y * Math.cos(a), -mm(MBP.d) / 2 + mm(MBP.tl) / 2 + MBP_SCREEN_Y * Math.sin(a)]
+}
+
+function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps) {
   const fin = MBP_FINISHES[opts.finish] ?? MBP_FINISHES.spacegrey
   const W = mm(MBP.w), D = mm(MBP.d), TB = mm(MBP.tb), TL = mm(MBP.tl), DL = D - TL / 2
   const p = mm(MBP.kb.pitch), kgap = mm(MBP.kb.gap)
@@ -49,7 +101,7 @@ function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
     const lid = once('lid', () => { const s = slab(rrect(W, DL, all(mm(MBP.r))), TL, mm(MBP.edge) * 0.8); s.translate(0, DL / 2, -TL / 2); return s })
     // black glass inside the lid's lip: inset by the lid's bevel width, its corner concentric with the lid's (r minus the lip)
     const lip = mm(MBP.edge) * 0.8, front = once('front', () => new THREE.ShapeGeometry(rrect(W - 2 * lip, DL - 2 * lip, all(mm(MBP.r) - lip), 0, DL / 2), 48))
-    const dw = mm(MBP.disp.w), dh = mm(MBP.disp.h), dy = DL - mm(MBP.disp.top) - dh / 2
+    const dw = mm(MBP.disp.w), dh = mm(MBP.disp.h), dy = MBP_SCREEN_Y
     const screen = once('screen', () => { const s = new THREE.ShapeGeometry(rrect(dw, dh, [0, 0, mm(MBP.disp.r), mm(MBP.disp.r)], 0, dy), 24)
       const pos = s.attributes.position, uv = s.attributes.uv
       for (let i = 0; i < pos.count; i++) uv.setXY(i, pos.getX(i) / dw + 0.5, (pos.getY(i) - dy) / dh + 0.5)
@@ -59,7 +111,7 @@ function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
     // keys: one slab per key, merged per row into a single geometry
     const keys = once('keys', () => {
       const parts: THREE.BufferGeometry[] = []
-      ROWS.forEach((ws, r) => { let x = -7.5 * p
+      MBP_KEY_ROWS.forEach((ws, r) => { let x = -7.5 * p
         ws.forEach((w, c) => {
           const kw = w * p - kgap, cx = x + w * p / 2, cy = -D / 2 + mm(MBP.kb.bottom) + (r + 0.5) * p
           const arrows = r === 0 && c >= 7
@@ -98,6 +150,9 @@ function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
         <mesh geometry={g.base} castShadow receiveShadow userData={{ sketchHull: true }}>{metal}</mesh>
         <mesh geometry={g.well} position={[0, 0, TB / 2 + E]}><meshStandardMaterial color="#141416" roughness={0.8} /></mesh>
         <mesh geometry={g.keys} position={[0, 0, TB / 2 + mm(0.4)]} userData={{ sketchTone: 'dark' }}><meshStandardMaterial color="#1c1c1f" roughness={0.55} /></mesh>
+        <mesh name="mbp-legends" position={[0, -D / 2 + mm(MBP.kb.bottom) + 3 * p, TB / 2 + mm(1.22)]} renderOrder={2} material={legendMat}>
+          <planeGeometry args={[15 * p, 6 * p]} />
+        </mesh>
         <mesh geometry={g.grille} position={[0, 0, TB / 2 + E]}><meshBasicMaterial color="#202124" /></mesh>
         <mesh geometry={g.pad} position={[0, 0, TB / 2 + E]}><meshPhysicalMaterial color={fin.body} metalness={0.2} roughness={0.32} clearcoat={0.6} clearcoatRoughness={0.25} /></mesh>
         {/* front thumb scoop and four feet */}
@@ -115,6 +170,7 @@ function MacBookPro({ texture, mediaAspect, opts, uid }: DeviceProps) {
           {texture ? <meshBasicMaterial key="tex" map={texture} toneMapped={false} /> : <meshBasicMaterial key="idle" color="#07080b" />}</mesh>
         <mesh geometry={g.notch} position={[0, 0, E * 3]}><meshBasicMaterial color="#020203" /></mesh>
         <mesh position={[0, g.dy + g.dh / 2 - mm(3.2), E * 4]}><circleGeometry args={[mm(1.1), 20]} /><meshBasicMaterial color="#14161c" /></mesh>
+        {liveScreen && <group position={[0, g.dy, E * 5]}>{liveScreen}</group>}
         {opts.logo && (
           <mesh position={[0, DL / 2, -TL - E]} rotation={[0, Math.PI, 0]}>
             <planeGeometry args={[opts.logoSize * 2.2, opts.logoSize * 2.2 / opts.logo.aspect]} />

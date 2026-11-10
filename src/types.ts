@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import type * as THREE from 'three'
 export type DeviceId = 'ip18' | 'ip18max' | 'duo' | 'ipmini' | 'ippro13' | 'ippro11' | 'mbp16' | 'imacg4' | 'watchu' | 'atv4k' | 'studio' | 'phone' | 'browser'
 export type Finish = string
@@ -22,5 +22,7 @@ export interface DeviceProps { texture: THREE.Texture | null; mediaAspect: numbe
   /** Duo only: the outer screen's own media (the inner screen uses texture). */
   textureOuter?: THREE.Texture | null; mediaAspectOuter?: number
   /** the device's id in the scene, for per-device live state (Duo fold) */
-  uid?: string }
+  uid?: string
+  /** /live MacBook: the interactive page, mounted on the lid so it turns with the screen */
+  liveScreen?: ReactNode }
 export interface DeviceDef { id: DeviceId; label: string; screenAspect: number | ((o: DeviceOptions) => number); foldable?: boolean; finishes?: Record<string, { label: string }>; defaultFinish?: string; nativePx?: { w: number; h: number }; logoSpot?: boolean; /** no display of its own (Apple TV): media settings do not apply */ noScreen?: boolean; Component: ComponentType<DeviceProps> }
