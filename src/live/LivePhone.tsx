@@ -195,10 +195,13 @@ function MacScreen({ src, interactive, portal }: { src: string; interactive: boo
         <div ref={shell} style={{ width: MBP_CSS_W, height: MBP_CSS_H, overflow: 'hidden', position: 'relative', background: '#000',
           borderRadius: `${radius}px ${radius}px 0 0`, clipPath: `inset(0 round ${radius}px ${radius}px 0 0)`,
           backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
-          <iframe src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#000', pointerEvents: interactive ? 'auto' : 'none' }} />
+          {/* Extend 1 px past the clipped shell so the iframe's antialiased edge never shows as a sliver
+              against the black glass. A 1.5 px black inner stroke covers any remaining fringe. */}
+          <iframe src={src} title="Live app" style={{ position: 'absolute', inset: -1, border: 0, display: 'block', background: '#000', pointerEvents: interactive ? 'auto' : 'none' }} />
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', borderRadius: `${radius}px ${radius}px 0 0`, boxShadow: 'inset 0 0 0 1.5px #000' }} />
           {/* camera housing, so the page does not draw through the notch */}
           <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: notchW, height: notchH, background: '#050506',
-            borderBottomLeftRadius: notchH / 2, borderBottomRightRadius: notchH / 2, pointerEvents: 'auto' }} />
+            borderBottomLeftRadius: notchH / 2, borderBottomRightRadius: notchH / 2, pointerEvents: 'auto', zIndex: 1 }} />
         </div>
       </Html>
     </group>
