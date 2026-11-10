@@ -15,7 +15,7 @@ const mm = (v: number) => v / 100
 const all = (r: number) => [r, r, r, r]
 const E = 0.0004
 export const MBP = { w: 355.7, d: 248.1, tb: 9.8, tl: 7.0, r: 11, edge: 1.4,
-  px: { w: 3456, h: 2234 }, disp: { w: 345.6, h: 223.4, top: 5.5, r: 9 }, notch: { w: 31, h: 6.4 },
+  px: { w: 3456, h: 2234 }, disp: { w: 345.6, h: 223.4, top: 5.5, r: 4.5 }, notch: { w: 31, h: 6.4 },
   pad: { w: 160.5, h: 99.5, front: 7, r: 6 }, kb: { pitch: 18.4, gap: 2.6, bottom: 127, rows: 6 } }
 export const MBP_ASPECT = MBP.px.w / MBP.px.h
 export const MBP_FINISHES: Record<string, { label: string; body: string }> = {
