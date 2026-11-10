@@ -10,7 +10,7 @@ import legendUrl from './mbp-keyboard-legends.png'
 // The hand-drawn legends, cropped to the key block. The sheet's top is the function row.
 const legendMap = new THREE.TextureLoader().load(legendUrl)
 legendMap.colorSpace = THREE.SRGBColorSpace
-legendMap.anisotropy = 8
+legendMap.anisotropy = 16
 // MacBook Pro 16" (2021): unofficial procedural model, not affiliated with Apple. Sizes from the dimensional drawing:
 // 355.7 x 248.1 x 16.8 mm closed, 16.2" display of 3456 x 2234 px at 254 ppi (345.6 x 223.4 mm) with a camera notch.
 // 1 unit = 100 mm. The base lies on the floor plane, keyboard up (+y), front edge toward +z; the lid turns about the
