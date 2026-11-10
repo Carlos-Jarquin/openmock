@@ -144,15 +144,13 @@ function PhoneScreen({ s, src, interactive, sb, portal }: { s: IPhoneSpec; src: 
   return (
     <group ref={group} position={[0, 0, z]} scale={scale}>
       <Html transform portal={portal} zIndexRange={[10, 0]} pointerEvents={interactive ? 'auto' : 'none'}>
-        <div ref={shell} style={{ width: css.w + 16, height: css.h + 16, padding: 8, boxSizing: 'border-box', background: '#000', borderRadius: radius + 8,
-          position: 'relative', backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
-          <div style={{ position: 'relative', width: css.w, height: css.h, borderRadius: radius, overflow: 'hidden', background: '#000' }}>
+        <div ref={shell} style={{ width: css.w, height: css.h, borderRadius: radius, overflow: 'hidden', clipPath: `inset(0 round ${radius}px)`,
+          position: 'relative', background: '#000', backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
           <iframe ref={frame} src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#000', pointerEvents: interactive ? 'auto' : 'none' }} />
           <Island sb={sb} w={css.w} look={SKETCH ? ISLAND_LOOK : undefined} />
           {sb.mode !== 'off' && <StatusBar tone={tone} sb={sb} w={css.w} time={clock} />}
           {sb.homeBar && <HomeBar tone={homeTone} w={css.w} h={css.h} />}
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 40%)' }} />
-          </div>
         </div>
       </Html>
     </group>
@@ -193,16 +191,14 @@ function MacScreen({ src, interactive, portal }: { src: string; interactive: boo
   })
   return (
     <group ref={group}>
-      <mesh position={[0, -mm(1.2), -0.002]}><planeGeometry args={[mm(MBP.disp.w) + mm(6), mm(MBP.disp.h) + mm(4)]} /><meshBasicMaterial color="#000" /></mesh>
       <Html transform portal={portal} distanceFactor={MBP_DISTANCE} zIndexRange={[10, 0]} pointerEvents={interactive ? 'auto' : 'none'}>
-        <div ref={shell} style={{ width: MBP_CSS_W + 20, height: MBP_CSS_H + 14, padding: '10px 10px 4px', boxSizing: 'border-box', background: '#000',
-          borderRadius: `${radius + 10}px ${radius + 10}px 0 0`, position: 'relative', backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
-          <div style={{ position: 'relative', width: MBP_CSS_W, height: MBP_CSS_H, borderRadius: `${radius}px ${radius}px 0 0`, overflow: 'hidden', background: '#000' }}>
+        <div ref={shell} style={{ width: MBP_CSS_W, height: MBP_CSS_H, overflow: 'hidden', position: 'relative', background: '#000',
+          borderRadius: `${radius}px ${radius}px 0 0`, clipPath: `inset(0 round ${radius}px ${radius}px 0 0)`,
+          backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
           <iframe src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#000', pointerEvents: interactive ? 'auto' : 'none' }} />
           {/* camera housing, so the page does not draw through the notch */}
           <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: notchW, height: notchH, background: '#050506',
             borderBottomLeftRadius: notchH / 2, borderBottomRightRadius: notchH / 2, pointerEvents: 'auto' }} />
-          </div>
         </div>
       </Html>
     </group>
