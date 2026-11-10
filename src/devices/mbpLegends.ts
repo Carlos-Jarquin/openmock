@@ -9,13 +9,15 @@ const PPM = 16 // canvas pixels per millimetre
 const INK = '#e6e6eb'
 const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", Inter, "Helvetica Neue", system-ui, sans-serif'
 
-const LETTER = 7.8 // em; cap about 5.5 mm, just over a third of the 15.8 mm key face
-const PAIR = 4.85
-const WORD = 2.35
-const ICON = 7.2
-const ARROW = 4.05
-const SYMBOL = 3.2
-const GLOBE = 4.35
+// Measured against the 16" key photo: a letter's cap is about 30% of the 15.8 mm face,
+// the shifted glyph sits just above the base character, and modifier words sit in the corner.
+const LETTER = 6.4 // em; cap about 4.5 mm
+const PAIR = 3.7
+const WORD = 1.95
+const ICON = 5.4
+const ARROW = 3.35
+const SYMBOL = 2.7
+const GLOBE = 3.6
 
 type Icon = 'sunMin' | 'sunMax' | 'mission' | 'search' | 'mic' | 'moon' | 'rew' | 'play' | 'ff' | 'mute' | 'volDown' | 'volUp'
 type Sym = 'ctrl' | 'opt' | 'cmd' | 'globe'
@@ -83,7 +85,7 @@ function icon(ctx: CanvasRenderingContext2D, name: Icon, cx: number, cy: number)
   ctx.save()
   ctx.translate(cx, cy)
   ctx.scale(ICON * PPM / 24, ICON * PPM / 24)
-  ctx.lineWidth = 1.7
+  ctx.lineWidth = 1.45
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
   ctx.strokeStyle = INK
@@ -226,25 +228,25 @@ export function mbpLegends(): MbpLegends {
     if (mark.t === 'blank') return
     if (mark.t === 'ch') {
       ctx.font = font(400, LETTER); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-      ctx.fillText(mark.s, cx, cy)
+      ctx.fillText(mark.s, cx, cy - 0.2 * PPM)
     } else if (mark.t === 'pair') {
       ctx.font = font(400, PAIR); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
       // Glyphs that sit on the baseline, or hang high in the em, get a nudge so the pair stays balanced.
-      const nudge = (g: string) => (g === '_' || g === ',' || g === '.' || g === '`' ? -PAIR * 0.2 : g === '^' || g === '*' || g === '"' || g === "'" || g === '~' ? PAIR * 0.08 : 0)
-      ctx.fillText(mark.a, cx, cy - 2.55 * PPM + nudge(mark.a) * PPM)
-      ctx.fillText(mark.b, cx, cy + 2.65 * PPM + nudge(mark.b) * PPM)
+      const nudge = (g: string) => (g === '_' || g === ',' || g === '.' || g === '`' ? -PAIR * 0.22 : g === '^' || g === '*' || g === '"' || g === "'" || g === '~' ? PAIR * 0.1 : 0)
+      ctx.fillText(mark.a, cx, cy - 1.85 * PPM + nudge(mark.a) * PPM)
+      ctx.fillText(mark.b, cx, cy + 1.95 * PPM + nudge(mark.b) * PPM)
     } else if (mark.t === 'word') {
       ctx.font = font(500, WORD); ctx.textAlign = mark.side === 'l' ? 'left' : 'right'; ctx.textBaseline = 'alphabetic'
-      const pad = 1.75 * PPM
-      ctx.fillText(mark.s, mark.side === 'l' ? left + pad : left + fw - pad, top + fh - 1.4 * PPM)
+      const pad = 1.45 * PPM
+      ctx.fillText(mark.s, mark.side === 'l' ? left + pad : left + fw - pad, top + fh - 1.15 * PPM)
       if (mark.dot) {
         ctx.beginPath(); ctx.arc(left + 2.35 * PPM, top + 3.3 * PPM, 0.62 * PPM, 0, Math.PI * 2); ctx.fill()
       }
     } else if (mark.t === 'stack') {
       const sym = mark.sym === 'globe' ? GLOBE : SYMBOL
-      symbol(ctx, mark.sym, cx, cy - (mark.sym === 'globe' ? 1.7 : 1.35) * PPM, sym * PPM)
+      symbol(ctx, mark.sym, cx, cy - (mark.sym === 'globe' ? 1.35 : 1.05) * PPM, sym * PPM)
       ctx.font = font(500, WORD); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = INK
-      ctx.fillText(mark.word, cx, cy + 1.95 * PPM)
+      ctx.fillText(mark.word, cx, cy + 1.55 * PPM)
     } else if (mark.t === 'icon') icon(ctx, mark.n, cx, cy)
     else if (mark.t === 'arrow') arrow(ctx, cx, cy, mark.d)
     else {

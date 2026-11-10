@@ -121,6 +121,53 @@ function glassClear(group: THREE.Object3D, camera: THREE.Camera, scene: THREE.Ob
   return !_ray.intersectObject(scene, true).some(h => h.distance < dist - 0.03)
 }
 
+// The menu bar in the uploaded page, at the height it has on a 1512-wide screen, drawn by us so the
+// padding can be set and the bar reaches the glass. 5px at each end, and 5px between the date and the settings icon.
+const BAR_H = 48
+const BAR_PAD = 5
+const DATE_GAP = 5
+const BAR_FONT = '13px -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", system-ui, sans-serif'
+function menuDate(d: Date) {
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const h = d.getHours()
+  return `${days[d.getDay()]} ${months[d.getMonth()]} ${d.getDate()} ${h % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
+}
+function BarIcon({ d, w = 15 }: { d: string; w?: number }) {
+  return <svg width={w} height={w} viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>
+}
+function SystemBar({ menus, chevron }: { menus: boolean; chevron: boolean }) {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => { const i = setInterval(() => setNow(new Date()), 30_000); return () => clearInterval(i) }, [])
+  const cluster: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, flex: 'none' }
+  return (
+    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: BAR_H, zIndex: 6, display: 'flex', alignItems: 'center',
+      padding: `0 ${BAR_PAD}px`, background: '#000', color: '#fff', font: BAR_FONT, pointerEvents: 'none' }}>
+      {menus && (
+        <div style={{ ...cluster, gap: 14 }}>
+          <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden><path fill="#fff" d="M7.2 1.2c.3 1 .1 1.8-.4 2.4-.6.6-1.4.8-2.3.6.1 1.2.7 2.1 1.6 2.6-1 .6-1.6 1.6-1.5 2.8 1.3.1 2.3-.4 3-.1.6.3 1.6.6 2.8 0 .2-1.1-.3-2.1-1.2-2.8.9-.6 1.5-1.5 1.6-2.7-1 .2-1.8 0-2.4-.6-.5-.6-.7-1.4-.4-2.2h-.8z" /></svg>
+          {['Chrome', 'File', 'Edit', 'View', 'History', 'Bookmarks', 'Profiles', 'Tab', 'Window', 'Help'].map(t => <span key={t}>{t}</span>)}
+        </div>
+      )}
+      <span style={{ flex: 1 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: DATE_GAP, flex: 'none' }}>
+        <div style={cluster}>
+          <BarIcon d="M2 6.5v3M4.2 5v6M6.4 3.5v9M8.6 5.5v5M3 11.5h6" />
+          <BarIcon d="M8 3.2a4.2 4.2 0 1 1 0 9.6 4.2 4.2 0 0 1 0-9.6zM8 6.2v2.2l1.6 1" />
+          <BarIcon d="M4 9.5c1.2-2 2.6-3 4-3s2.8 1 4 3c-1.4.8-2.6 1.2-4 1.2S5.4 10.3 4 9.5z" />
+          <BarIcon d="M2.5 6.5h9.2c.5 0 .8.4.8.9v2.2c0 .5-.3.9-.8.9H2.5c-.5 0-.8-.4-.8-.9V7.4c0-.5.3-.9.8-.9zM12.2 8H13.4" />
+          <BarIcon d="M2.2 7.2c2.2-2 4.4-2.2 5.8-2.2 1.5 0 3.6.3 5.8 2.2M4 9.2c1.4-1.2 2.6-1.4 4-1.4s2.6.2 4 1.4M7.2 11.2h1.6" />
+          <BarIcon d="M7 3.2a3.6 3.6 0 1 1 0 7.2 3.6 3.6 0 0 1 0-7.2zM10.2 10.2 13 13" />
+          {chevron
+            ? <span style={{ width: 22, height: 18, borderRadius: 5, background: '#3a3a3c', display: 'grid', placeItems: 'center' }}><BarIcon w={12} d="M3.5 6.2 8 10.2 12.5 6.2" /></span>
+            : <BarIcon d="M2.2 5.2h7.2M6.2 5.2a1.6 1.6 0 1 0 0 .1M6.6 10.2H13M9.4 10.2a1.6 1.6 0 1 0 0 .1" />}
+        </div>
+        <span>{menuDate(now)}</span>
+      </div>
+    </div>
+  )
+}
+
 function PhoneScreen({ s, src, interactive, sb, portal }: { s: IPhoneSpec; src: string; interactive: boolean; sb: SbCfg; portal: React.RefObject<HTMLElement> }) {
   const css = phoneCss(s)
   const pxPerMm = css.w / s.active.w
@@ -144,13 +191,16 @@ function PhoneScreen({ s, src, interactive, sb, portal }: { s: IPhoneSpec; src: 
   return (
     <group ref={group} position={[0, 0, z]} scale={scale}>
       <Html transform portal={portal} zIndexRange={[10, 0]} pointerEvents={interactive ? 'auto' : 'none'}>
-        <div ref={shell} style={{ width: css.w, height: css.h, borderRadius: radius, overflow: 'hidden', position: 'relative', background: '#000',
-          backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+        <div ref={shell} style={{ width: css.w + 16, height: css.h + 16, padding: 8, boxSizing: 'border-box', background: '#000', borderRadius: radius + 8,
+          position: 'relative', backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+          <div style={{ position: 'relative', width: css.w, height: css.h, borderRadius: radius, overflow: 'hidden', background: '#000' }}>
           <iframe ref={frame} src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#000', pointerEvents: interactive ? 'auto' : 'none' }} />
+          <SystemBar menus={false} chevron />
           <Island sb={sb} w={css.w} look={SKETCH ? ISLAND_LOOK : undefined} />
           {sb.mode !== 'off' && <StatusBar tone={tone} sb={sb} w={css.w} time={clock} />}
           {sb.homeBar && <HomeBar tone={homeTone} w={css.w} h={css.h} />}
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', background: 'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 40%)' }} />
+          </div>
         </div>
       </Html>
     </group>
@@ -191,13 +241,17 @@ function MacScreen({ src, interactive, portal }: { src: string; interactive: boo
   })
   return (
     <group ref={group}>
+      <mesh position={[0, -mm(1.2), -0.002]}><planeGeometry args={[mm(MBP.disp.w) + mm(6), mm(MBP.disp.h) + mm(4)]} /><meshBasicMaterial color="#000" /></mesh>
       <Html transform portal={portal} distanceFactor={MBP_DISTANCE} zIndexRange={[10, 0]} pointerEvents={interactive ? 'auto' : 'none'}>
-        <div ref={shell} style={{ width: MBP_CSS_W, height: MBP_CSS_H, borderRadius: `${radius}px ${radius}px 0 0`, overflow: 'hidden', position: 'relative', background: '#000',
-          backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+        <div ref={shell} style={{ width: MBP_CSS_W + 20, height: MBP_CSS_H + 14, padding: '10px 10px 4px', boxSizing: 'border-box', background: '#000',
+          borderRadius: `${radius + 10}px ${radius + 10}px 0 0`, position: 'relative', backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
+          <div style={{ position: 'relative', width: MBP_CSS_W, height: MBP_CSS_H, borderRadius: `${radius}px ${radius}px 0 0`, overflow: 'hidden', background: '#000' }}>
           <iframe src={src} title="Live app" style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#000', pointerEvents: interactive ? 'auto' : 'none' }} />
+          <SystemBar menus chevron={false} />
           {/* camera housing, so the page does not draw through the notch */}
           <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: notchW, height: notchH, background: '#050506',
             borderBottomLeftRadius: notchH / 2, borderBottomRightRadius: notchH / 2, pointerEvents: 'auto' }} />
+          </div>
         </div>
       </Html>
     </group>
