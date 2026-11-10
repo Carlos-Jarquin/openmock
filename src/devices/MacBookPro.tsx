@@ -10,7 +10,46 @@ import legendUrl from './mbp-keyboard-legends.png'
 // The hand-drawn legends, cropped to the key block. The sheet's top is the function row.
 const legendMap = new THREE.TextureLoader().load(legendUrl)
 legendMap.colorSpace = THREE.SRGBColorSpace
+legendMap.generateMipmaps = true
+legendMap.minFilter = THREE.LinearMipmapLinearFilter
+legendMap.magFilter = THREE.LinearFilter
 legendMap.anisotropy = 16
+// On the live view the lid is upright and the deck is almost edge-on, so a key row is only a
+// few pixels tall. A hardware mipmap then picks a level where a 0.5 mm outline is a fraction of
+// a texel and, because the PNG is straight alpha, averages the ink with transparent black. The
+// sample below walks the sharp mip along the long screen axis and puts the ink colour back.
+const legendMat = new THREE.MeshBasicMaterial({
+  map: legendMap, transparent: true, depthWrite: false, toneMapped: false,
+  polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+})
+legendMat.customProgramCacheKey = () => 'mbp-legends-gather'
+legendMat.onBeforeCompile = (shader) => {
+  shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', /* glsl */`
+#ifdef USE_MAP
+	vec2 legendDx = dFdx(vMapUv);
+	vec2 legendDy = dFdy(vMapUv);
+	vec2 legendSize = vec2(textureSize(map, 0));
+	float legendRhoX = length(legendDx * legendSize);
+	float legendRhoY = length(legendDy * legendSize);
+	float legendRhoMin = max(min(legendRhoX, legendRhoY), 1.0);
+	float legendRhoMax = max(max(legendRhoX, legendRhoY), 1.0);
+	float legendLod = log2(legendRhoMin);
+	vec2 legendMajor = legendRhoX > legendRhoY ? legendDx : legendDy;
+	float legendN = clamp(ceil(legendRhoMax / legendRhoMin), 1.0, 12.0);
+	vec4 sampledDiffuseColor = vec4(0.0);
+	for (int i = 0; i < 12; i++) {
+		float w = step(float(i) + 0.5, legendN);
+		float t = (float(i) + 0.5) / legendN - 0.5;
+		sampledDiffuseColor += texture2DLodEXT(map, vMapUv + legendMajor * t, legendLod) * w;
+	}
+	sampledDiffuseColor /= legendN;
+	float legendCoverage = sampledDiffuseColor.a;
+	if (legendCoverage > 0.001) sampledDiffuseColor.rgb /= legendCoverage;
+	sampledDiffuseColor.a = smoothstep(0.03, 0.28, legendCoverage);
+	diffuseColor *= sampledDiffuseColor;
+#endif
+`)
+}
 // MacBook Pro 16" (2021): unofficial procedural model, not affiliated with Apple. Sizes from the dimensional drawing:
 // 355.7 x 248.1 x 16.8 mm closed, 16.2" display of 3456 x 2234 px at 254 ppi (345.6 x 223.4 mm) with a camera notch.
 // 1 unit = 100 mm. The base lies on the floor plane, keyboard up (+y), front edge toward +z; the lid turns about the
@@ -111,9 +150,8 @@ function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps
         <mesh geometry={g.base} castShadow receiveShadow userData={{ sketchHull: true }}>{metal}</mesh>
         <mesh geometry={g.well} position={[0, 0, TB / 2 + E]}><meshStandardMaterial color="#141416" roughness={0.8} /></mesh>
         <mesh geometry={g.keys} position={[0, 0, TB / 2 + mm(0.4)]} userData={{ sketchTone: 'dark' }}><meshStandardMaterial color="#1c1c1f" roughness={0.55} /></mesh>
-        <mesh name="mbp-legends" position={[0, -D / 2 + mm(MBP.kb.bottom) + 3 * p, TB / 2 + mm(1.08)]} renderOrder={2}>
+        <mesh name="mbp-legends" position={[0, -D / 2 + mm(MBP.kb.bottom) + 3 * p, TB / 2 + mm(1.22)]} renderOrder={2} material={legendMat}>
           <planeGeometry args={[15 * p, 6 * p]} />
-          <meshBasicMaterial map={legendMap} transparent depthWrite={false} toneMapped={false} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} />
         </mesh>
         <mesh geometry={g.grille} position={[0, 0, TB / 2 + E]}><meshBasicMaterial color="#202124" /></mesh>
         <mesh geometry={g.pad} position={[0, 0, TB / 2 + E]}><meshPhysicalMaterial color={fin.body} metalness={0.2} roughness={0.32} clearcoat={0.6} clearcoatRoughness={0.25} /></mesh>
