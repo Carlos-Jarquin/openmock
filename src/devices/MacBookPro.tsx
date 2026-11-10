@@ -110,15 +110,15 @@ function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps
         <mesh geometry={g.keys} position={[0, 0, TB / 2 + mm(0.4)]} userData={{ sketchTone: 'dark' }}><meshStandardMaterial color="#1c1c1f" roughness={0.55} /></mesh>
         <group name="mbp-legends" position={[0, -D / 2 + mm(MBP.kb.bottom) + 3 * p, TB / 2 + mm(1.22)]}>
           <mesh geometry={g.legends.ink} renderOrder={2}>
-            <meshBasicMaterial color={MBP_LEGEND_INK} toneMapped={false} depthWrite={false}
+            <meshBasicMaterial side={THREE.DoubleSide} color={MBP_LEGEND_INK} toneMapped={false} depthWrite={false}
               polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
           </mesh>
           {g.legends.touchFill && <mesh geometry={g.legends.touchFill} renderOrder={2}>
-            <meshBasicMaterial color="#101012" toneMapped={false} depthWrite={false}
+            <meshBasicMaterial side={THREE.DoubleSide} color="#101012" toneMapped={false} depthWrite={false}
               polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
           </mesh>}
           {g.legends.touchRing && <mesh geometry={g.legends.touchRing} renderOrder={2}>
-            <meshBasicMaterial color="#6A6A70" toneMapped={false} depthWrite={false}
+            <meshBasicMaterial side={THREE.DoubleSide} color="#6A6A70" toneMapped={false} depthWrite={false}
               polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
           </mesh>}
         </group>

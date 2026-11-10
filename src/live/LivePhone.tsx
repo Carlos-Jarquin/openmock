@@ -197,7 +197,7 @@ function MacScreen({ src, interactive, portal }: { src: string; interactive: boo
           backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden' }}>
           {/* Extend 1 px past the clipped shell so the iframe's antialiased edge never shows as a sliver
               against the black glass. A 1.5 px black inner stroke covers any remaining fringe. */}
-          <iframe src={src} title="Live app" style={{ position: 'absolute', inset: -1, border: 0, display: 'block', background: '#000', pointerEvents: interactive ? 'auto' : 'none' }} />
+          <iframe src={src} title="Live app" style={{ position: 'absolute', top: -1, left: -1, width: 'calc(100% + 2px)', height: 'calc(100% + 2px)', border: 0, display: 'block', background: '#000', pointerEvents: interactive ? 'auto' : 'none' }} />
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', borderRadius: `${radius}px ${radius}px 0 0`, boxShadow: 'inset 0 0 0 1.5px #000' }} />
           {/* camera housing, so the page does not draw through the notch */}
           <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: notchW, height: notchH, background: '#050506',
