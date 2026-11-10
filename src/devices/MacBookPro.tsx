@@ -6,7 +6,6 @@ import { fitTexture, DEFAULT_LOGO_TINT } from './shared'
 import { brushedRoughness } from './materials'
 import { slab, rrect } from './IPhonePro'
 import { mechLiveFor, LID0 } from './mech'
-import { mbpLegends } from './mbpLegends'
 // MacBook Pro 16" (2021): unofficial procedural model, not affiliated with Apple. Sizes from the dimensional drawing:
 // 355.7 x 248.1 x 16.8 mm closed, 16.2" display of 3456 x 2234 px at 254 ppi (345.6 x 223.4 mm) with a camera notch.
 // 1 unit = 100 mm. The base lies on the floor plane, keyboard up (+y), front edge toward +z; the lid turns about the
@@ -89,7 +88,6 @@ function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps
     return { base, lid, front, screen, notch, keys, well, pad, grille, dy, dh }
   }, [W, D, TB, TL, DL, p, kgap])
   useMemo(() => fitTexture(texture, mediaAspect, MBP_ASPECT), [texture, mediaAspect])
-  const legends = useMemo(() => mbpLegends(), [])
   const bR = brushedRoughness()
   const alu = useMemo(() => new THREE.MeshPhysicalMaterial({ color: fin.body, metalness: 0.35, roughness: 0.55, roughnessMap: bR, envMapIntensity: 0.32, specularIntensity: 0.35 }), [fin.body, bR])
   useEffect(() => () => alu.dispose(), [alu])
@@ -108,11 +106,6 @@ function MacBookPro({ texture, mediaAspect, opts, uid, liveScreen }: DeviceProps
         <mesh geometry={g.base} castShadow receiveShadow userData={{ sketchHull: true }}>{metal}</mesh>
         <mesh geometry={g.well} position={[0, 0, TB / 2 + E]}><meshStandardMaterial color="#141416" roughness={0.8} /></mesh>
         <mesh geometry={g.keys} position={[0, 0, TB / 2 + mm(0.4)]} userData={{ sketchTone: 'dark' }}><meshStandardMaterial color="#1c1c1f" roughness={0.55} /></mesh>
-        {/* legends sit a hair above the key tops; one sheet for the studio and the live page */}
-        <mesh name="mbp-legends" position={[0, legends.cy, TB / 2 + mm(1.08)]} renderOrder={2}>
-          <planeGeometry args={[legends.w, legends.h]} />
-          <meshBasicMaterial map={legends.map} transparent depthWrite={false} toneMapped={false} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} />
-        </mesh>
         <mesh geometry={g.grille} position={[0, 0, TB / 2 + E]}><meshBasicMaterial color="#202124" /></mesh>
         <mesh geometry={g.pad} position={[0, 0, TB / 2 + E]}><meshPhysicalMaterial color={fin.body} metalness={0.2} roughness={0.32} clearcoat={0.6} clearcoatRoughness={0.25} /></mesh>
         {/* front thumb scoop and four feet */}

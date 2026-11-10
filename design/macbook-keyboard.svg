@@ -1,0 +1,408 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MacBook Pro 16" US keyboard, 1 unit = 1 mm. This matches the key sizes in the model.
+  Draw the legend for each key inside the group whose id ends in -art (for example key-esc-art).
+  Leave the key groups where they are, and leave the data-row and data-col attributes.
+  The grey words are only a guide. Delete them, or leave them; they are not part of the artwork.
+  The front of the laptop is the bottom of this sheet. Send the edited file back.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="312mm" height="168.4mm" viewBox="0 0 312 168.4">
+  <style>
+    .deck { fill: #7b7d82; }
+    .cap { fill: #1c1c1f; }
+    .guide { fill: #8e8e96; font-family: -apple-system, "SF Pro Text", "SF Pro", system-ui, sans-serif; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+    .note { fill: #3a3a3c; font-family: -apple-system, "SF Pro Text", system-ui, sans-serif; font-size: 3.4px; }
+  </style>
+  <rect class="deck" x="6" y="28" width="300" height="128.4" rx="8"/>
+  <text class="note" x="18" y="12">MacBook Pro 16" keyboard. 1 unit = 1 mm. Draw inside each key-…-art group. Front of the laptop is at the bottom.</text>
+  <g id="key-fn" data-row="0" data-col="0" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="19.3" y="133.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-fn-art"></g>
+    <text class="guide" x="27.2" y="141.2" font-size="3.6">fn</text>
+  </g>
+  <g id="key-control" data-row="0" data-col="1" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="37.7" y="133.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-control-art"></g>
+    <text class="guide" x="45.6" y="141.2" font-size="3.6">control</text>
+  </g>
+  <g id="key-option" data-row="0" data-col="2" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="56.1" y="133.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-option-art"></g>
+    <text class="guide" x="64" y="141.2" font-size="3.6">option</text>
+  </g>
+  <g id="key-command" data-row="0" data-col="3" data-w="20.4" data-h="15.8">
+    <rect class="cap" x="74.5" y="133.3" width="20.4" height="15.8" rx="1.6"/>
+    <g id="key-command-art"></g>
+    <text class="guide" x="84.7" y="141.2" font-size="3.6">command</text>
+  </g>
+  <g id="key-space" data-row="0" data-col="4" data-w="98.6" data-h="15.8">
+    <rect class="cap" x="97.5" y="133.3" width="98.6" height="15.8" rx="1.6"/>
+    <g id="key-space-art"></g>
+    
+  </g>
+  <g id="key-command-right" data-row="0" data-col="5" data-w="20.4" data-h="15.8">
+    <rect class="cap" x="198.7" y="133.3" width="20.4" height="15.8" rx="1.6"/>
+    <g id="key-command-right-art"></g>
+    <text class="guide" x="208.9" y="141.2" font-size="3.6">command</text>
+  </g>
+  <g id="key-option-right" data-row="0" data-col="6" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="221.7" y="133.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-option-right-art"></g>
+    <text class="guide" x="229.6" y="141.2" font-size="3.6">option</text>
+  </g>
+  <g id="key-arrow-left" data-row="0" data-col="7" data-w="15.8" data-h="6.6">
+    <rect class="cap" x="240.1" y="142.5" width="15.8" height="6.6" rx="1"/>
+    <g id="key-arrow-left-art"></g>
+    <text class="guide" x="248" y="145.8" font-size="3.2">←</text>
+  </g>
+  <g id="key-arrow-up" data-row="0" data-col="8" data-w="15.8" data-h="6.6">
+    <rect class="cap" x="258.5" y="133.3" width="15.8" height="6.6" rx="1"/>
+    <g id="key-arrow-up-art"></g>
+    <text class="guide" x="266.4" y="136.6" font-size="3.2">↑</text>
+  </g>
+  <g id="key-arrow-down" data-row="0" data-col="8" data-w="15.8" data-h="6.6">
+    <rect class="cap" x="258.5" y="142.5" width="15.8" height="6.6" rx="1"/>
+    <g id="key-arrow-down-art"></g>
+    <text class="guide" x="266.4" y="145.8" font-size="3.2">↓</text>
+  </g>
+  <g id="key-arrow-right" data-row="0" data-col="9" data-w="15.8" data-h="6.6">
+    <rect class="cap" x="276.9" y="142.5" width="15.8" height="6.6" rx="1"/>
+    <g id="key-arrow-right-art"></g>
+    <text class="guide" x="284.8" y="145.8" font-size="3.2">→</text>
+  </g>
+  <g id="key-shift-left" data-row="1" data-col="0" data-w="40.64" data-h="15.8">
+    <rect class="cap" x="19.3" y="114.9" width="40.64" height="15.8" rx="1.6"/>
+    <g id="key-shift-left-art"></g>
+    <text class="guide" x="39.62" y="122.8" font-size="3.6">shift</text>
+  </g>
+  <g id="key-z" data-row="1" data-col="1" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="62.54" y="114.9" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-z-art"></g>
+    <text class="guide" x="70.44" y="122.8" font-size="3.6">Z</text>
+  </g>
+  <g id="key-x" data-row="1" data-col="2" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="80.94" y="114.9" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-x-art"></g>
+    <text class="guide" x="88.84" y="122.8" font-size="3.6">X</text>
+  </g>
+  <g id="key-c" data-row="1" data-col="3" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="99.34" y="114.9" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-c-art"></g>
+    <text class="guide" x="107.24" y="122.8" font-size="3.6">C</text>
+  </g>
+  <g id="key-v" data-row="1" data-col="4" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="117.74" y="114.9" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-v-art"></g>
+    <text class="guide" x="125.64" y="122.8" font-size="3.6">V</text>
+  </g>
+  <g id="key-b" data-row="1" data-col="5" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="136.14" y="114.9" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-b-art"></g>
+    <text class="guide" x="144.04" y="122.8" font-size="3.6">B</text>
+  </g>
+  <g id="key-n" data-row="1" data-col="6" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="154.54" y="114.9" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-n-art"></g>
+    <text class="guide" x="162.44" y="122.8" font-size="3.6">N</text>
+  </g>
+  <g id="key-m" data-row="1" data-col="7" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="172.94" y="114.9" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-m-art"></g>
+    <text class="guide" x="180.84" y="122.8" font-size="3.6">M</text>
+  </g>
+  <g id="key-comma" data-row="1" data-col="8" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="191.34" y="114.9" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-comma-art"></g>
+    <text class="guide" x="199.24" y="122.8" font-size="3.6">&lt; ,</text>
+  </g>
+  <g id="key-period" data-row="1" data-col="9" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="209.74" y="114.9" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-period-art"></g>
+    <text class="guide" x="217.64" y="122.8" font-size="3.6">> .</text>
+  </g>
+  <g id="key-slash" data-row="1" data-col="10" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="228.14" y="114.9" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-slash-art"></g>
+    <text class="guide" x="236.04" y="122.8" font-size="3.6">? /</text>
+  </g>
+  <g id="key-shift-right" data-row="1" data-col="11" data-w="46.16" data-h="15.8">
+    <rect class="cap" x="246.54" y="114.9" width="46.16" height="15.8" rx="1.6"/>
+    <g id="key-shift-right-art"></g>
+    <text class="guide" x="269.62" y="122.8" font-size="3.6">shift</text>
+  </g>
+  <g id="key-caps-lock" data-row="2" data-col="0" data-w="30.52" data-h="15.8">
+    <rect class="cap" x="19.3" y="96.5" width="30.52" height="15.8" rx="1.6"/>
+    <g id="key-caps-lock-art"></g>
+    <text class="guide" x="34.56" y="104.4" font-size="3.6">caps lock</text>
+  </g>
+  <g id="key-a" data-row="2" data-col="1" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="52.42" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-a-art"></g>
+    <text class="guide" x="60.32" y="104.4" font-size="3.6">A</text>
+  </g>
+  <g id="key-s" data-row="2" data-col="2" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="70.82" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-s-art"></g>
+    <text class="guide" x="78.72" y="104.4" font-size="3.6">S</text>
+  </g>
+  <g id="key-d" data-row="2" data-col="3" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="89.22" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-d-art"></g>
+    <text class="guide" x="97.12" y="104.4" font-size="3.6">D</text>
+  </g>
+  <g id="key-f" data-row="2" data-col="4" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="107.62" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f-art"></g>
+    <text class="guide" x="115.52" y="104.4" font-size="3.6">F</text>
+  </g>
+  <g id="key-g" data-row="2" data-col="5" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="126.02" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-g-art"></g>
+    <text class="guide" x="133.92" y="104.4" font-size="3.6">G</text>
+  </g>
+  <g id="key-h" data-row="2" data-col="6" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="144.42" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-h-art"></g>
+    <text class="guide" x="152.32" y="104.4" font-size="3.6">H</text>
+  </g>
+  <g id="key-j" data-row="2" data-col="7" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="162.82" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-j-art"></g>
+    <text class="guide" x="170.72" y="104.4" font-size="3.6">J</text>
+  </g>
+  <g id="key-k" data-row="2" data-col="8" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="181.22" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-k-art"></g>
+    <text class="guide" x="189.12" y="104.4" font-size="3.6">K</text>
+  </g>
+  <g id="key-l" data-row="2" data-col="9" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="199.62" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-l-art"></g>
+    <text class="guide" x="207.52" y="104.4" font-size="3.6">L</text>
+  </g>
+  <g id="key-semicolon" data-row="2" data-col="10" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="218.02" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-semicolon-art"></g>
+    <text class="guide" x="225.92" y="104.4" font-size="3.6">: ;</text>
+  </g>
+  <g id="key-quote" data-row="2" data-col="11" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="236.42" y="96.5" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-quote-art"></g>
+    <text class="guide" x="244.32" y="104.4" font-size="3.6">" '</text>
+  </g>
+  <g id="key-return" data-row="2" data-col="12" data-w="37.88" data-h="15.8">
+    <rect class="cap" x="254.82" y="96.5" width="37.88" height="15.8" rx="1.6"/>
+    <g id="key-return-art"></g>
+    <text class="guide" x="273.76" y="104.4" font-size="3.6">return</text>
+  </g>
+  <g id="key-tab" data-row="3" data-col="0" data-w="25" data-h="15.8">
+    <rect class="cap" x="19.3" y="78.1" width="25" height="15.8" rx="1.6"/>
+    <g id="key-tab-art"></g>
+    <text class="guide" x="31.8" y="86" font-size="3.6">tab</text>
+  </g>
+  <g id="key-q" data-row="3" data-col="1" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="46.9" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-q-art"></g>
+    <text class="guide" x="54.8" y="86" font-size="3.6">Q</text>
+  </g>
+  <g id="key-w" data-row="3" data-col="2" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="65.3" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-w-art"></g>
+    <text class="guide" x="73.2" y="86" font-size="3.6">W</text>
+  </g>
+  <g id="key-e" data-row="3" data-col="3" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="83.7" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-e-art"></g>
+    <text class="guide" x="91.6" y="86" font-size="3.6">E</text>
+  </g>
+  <g id="key-r" data-row="3" data-col="4" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="102.1" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-r-art"></g>
+    <text class="guide" x="110" y="86" font-size="3.6">R</text>
+  </g>
+  <g id="key-t" data-row="3" data-col="5" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="120.5" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-t-art"></g>
+    <text class="guide" x="128.4" y="86" font-size="3.6">T</text>
+  </g>
+  <g id="key-y" data-row="3" data-col="6" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="138.9" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-y-art"></g>
+    <text class="guide" x="146.8" y="86" font-size="3.6">Y</text>
+  </g>
+  <g id="key-u" data-row="3" data-col="7" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="157.3" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-u-art"></g>
+    <text class="guide" x="165.2" y="86" font-size="3.6">U</text>
+  </g>
+  <g id="key-i" data-row="3" data-col="8" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="175.7" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-i-art"></g>
+    <text class="guide" x="183.6" y="86" font-size="3.6">I</text>
+  </g>
+  <g id="key-o" data-row="3" data-col="9" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="194.1" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-o-art"></g>
+    <text class="guide" x="202" y="86" font-size="3.6">O</text>
+  </g>
+  <g id="key-p" data-row="3" data-col="10" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="212.5" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-p-art"></g>
+    <text class="guide" x="220.4" y="86" font-size="3.6">P</text>
+  </g>
+  <g id="key-bracket-left" data-row="3" data-col="11" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="230.9" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-bracket-left-art"></g>
+    <text class="guide" x="238.8" y="86" font-size="3.6">{ [</text>
+  </g>
+  <g id="key-bracket-right" data-row="3" data-col="12" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="249.3" y="78.1" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-bracket-right-art"></g>
+    <text class="guide" x="257.2" y="86" font-size="3.6">} ]</text>
+  </g>
+  <g id="key-backslash" data-row="3" data-col="13" data-w="25" data-h="15.8">
+    <rect class="cap" x="267.7" y="78.1" width="25" height="15.8" rx="1.6"/>
+    <g id="key-backslash-art"></g>
+    <text class="guide" x="280.2" y="86" font-size="3.6">| \</text>
+  </g>
+  <g id="key-grave" data-row="4" data-col="0" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="19.3" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-grave-art"></g>
+    <text class="guide" x="27.2" y="67.6" font-size="3.6">~ `</text>
+  </g>
+  <g id="key-1" data-row="4" data-col="1" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="37.7" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-1-art"></g>
+    <text class="guide" x="45.6" y="67.6" font-size="3.6">! 1</text>
+  </g>
+  <g id="key-2" data-row="4" data-col="2" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="56.1" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-2-art"></g>
+    <text class="guide" x="64" y="67.6" font-size="3.6">@ 2</text>
+  </g>
+  <g id="key-3" data-row="4" data-col="3" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="74.5" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-3-art"></g>
+    <text class="guide" x="82.4" y="67.6" font-size="3.6"># 3</text>
+  </g>
+  <g id="key-4" data-row="4" data-col="4" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="92.9" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-4-art"></g>
+    <text class="guide" x="100.8" y="67.6" font-size="3.6">$ 4</text>
+  </g>
+  <g id="key-5" data-row="4" data-col="5" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="111.3" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-5-art"></g>
+    <text class="guide" x="119.2" y="67.6" font-size="3.6">% 5</text>
+  </g>
+  <g id="key-6" data-row="4" data-col="6" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="129.7" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-6-art"></g>
+    <text class="guide" x="137.6" y="67.6" font-size="3.6">^ 6</text>
+  </g>
+  <g id="key-7" data-row="4" data-col="7" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="148.1" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-7-art"></g>
+    <text class="guide" x="156" y="67.6" font-size="3.6">&amp; 7</text>
+  </g>
+  <g id="key-8" data-row="4" data-col="8" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="166.5" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-8-art"></g>
+    <text class="guide" x="174.4" y="67.6" font-size="3.6">* 8</text>
+  </g>
+  <g id="key-9" data-row="4" data-col="9" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="184.9" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-9-art"></g>
+    <text class="guide" x="192.8" y="67.6" font-size="3.6">( 9</text>
+  </g>
+  <g id="key-0" data-row="4" data-col="10" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="203.3" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-0-art"></g>
+    <text class="guide" x="211.2" y="67.6" font-size="3.6">) 0</text>
+  </g>
+  <g id="key-minus" data-row="4" data-col="11" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="221.7" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-minus-art"></g>
+    <text class="guide" x="229.6" y="67.6" font-size="3.6">_ -</text>
+  </g>
+  <g id="key-equal" data-row="4" data-col="12" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="240.1" y="59.7" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-equal-art"></g>
+    <text class="guide" x="248" y="67.6" font-size="3.6">+ =</text>
+  </g>
+  <g id="key-delete" data-row="4" data-col="13" data-w="34.2" data-h="15.8">
+    <rect class="cap" x="258.5" y="59.7" width="34.2" height="15.8" rx="1.6"/>
+    <g id="key-delete-art"></g>
+    <text class="guide" x="275.6" y="67.6" font-size="3.6">delete</text>
+  </g>
+  <g id="key-esc" data-row="5" data-col="0" data-w="25" data-h="15.8">
+    <rect class="cap" x="19.3" y="41.3" width="25" height="15.8" rx="1.6"/>
+    <g id="key-esc-art"></g>
+    <text class="guide" x="31.8" y="49.2" font-size="3.6">esc</text>
+  </g>
+  <g id="key-f1" data-row="5" data-col="1" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="46.9" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f1-art"></g>
+    <text class="guide" x="54.8" y="49.2" font-size="3.6">F1</text>
+  </g>
+  <g id="key-f2" data-row="5" data-col="2" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="65.3" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f2-art"></g>
+    <text class="guide" x="73.2" y="49.2" font-size="3.6">F2</text>
+  </g>
+  <g id="key-f3" data-row="5" data-col="3" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="83.7" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f3-art"></g>
+    <text class="guide" x="91.6" y="49.2" font-size="3.6">F3</text>
+  </g>
+  <g id="key-f4" data-row="5" data-col="4" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="102.1" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f4-art"></g>
+    <text class="guide" x="110" y="49.2" font-size="3.6">F4</text>
+  </g>
+  <g id="key-f5" data-row="5" data-col="5" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="120.5" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f5-art"></g>
+    <text class="guide" x="128.4" y="49.2" font-size="3.6">F5</text>
+  </g>
+  <g id="key-f6" data-row="5" data-col="6" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="138.9" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f6-art"></g>
+    <text class="guide" x="146.8" y="49.2" font-size="3.6">F6</text>
+  </g>
+  <g id="key-f7" data-row="5" data-col="7" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="157.3" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f7-art"></g>
+    <text class="guide" x="165.2" y="49.2" font-size="3.6">F7</text>
+  </g>
+  <g id="key-f8" data-row="5" data-col="8" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="175.7" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f8-art"></g>
+    <text class="guide" x="183.6" y="49.2" font-size="3.6">F8</text>
+  </g>
+  <g id="key-f9" data-row="5" data-col="9" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="194.1" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f9-art"></g>
+    <text class="guide" x="202" y="49.2" font-size="3.6">F9</text>
+  </g>
+  <g id="key-f10" data-row="5" data-col="10" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="212.5" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f10-art"></g>
+    <text class="guide" x="220.4" y="49.2" font-size="3.6">F10</text>
+  </g>
+  <g id="key-f11" data-row="5" data-col="11" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="230.9" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f11-art"></g>
+    <text class="guide" x="238.8" y="49.2" font-size="3.6">F11</text>
+  </g>
+  <g id="key-f12" data-row="5" data-col="12" data-w="15.8" data-h="15.8">
+    <rect class="cap" x="249.3" y="41.3" width="15.8" height="15.8" rx="1.6"/>
+    <g id="key-f12-art"></g>
+    <text class="guide" x="257.2" y="49.2" font-size="3.6">F12</text>
+  </g>
+  <g id="key-touch-id" data-row="5" data-col="13" data-w="25" data-h="15.8">
+    <rect class="cap" x="267.7" y="41.3" width="25" height="15.8" rx="1.6"/>
+    <g id="key-touch-id-art"><circle cx="280.2" cy="49.2" r="6.5" fill="#101012" stroke="#6a6a70" stroke-width="0.7"/></g>
+    <text class="guide" x="280.2" y="49.2" font-size="3.6">Touch ID</text>
+  </g>
+</svg>
