@@ -14,8 +14,9 @@ import type { DeviceOptions, LogoArt } from '../types'
 import { loadLocalLogo, builtinLogo } from '../localLogo'
 import { type SbCfg, parseSb, writeSb } from '../statusbar/config'
 import { StatusPanel } from '../statusbar/Panel'
-import { Island, StatusBar, HomeBar, useClock, islandSketch } from '../statusbar/StatusBar'
+import { Island, StatusBar, HomeBar, useClock, clockText, islandSketch } from '../statusbar/StatusBar'
 import { SketchStyle, SKETCH_PAPER, SKETCH_DEFAULTS } from '../sketch/Sketch'
+import { buildExportDocument, capturePhoneShell, chromeOverlay, downloadHtml, exportFileName, loadPrototypeHtml } from './exportHtml'
 
 RectAreaLightUniformsLib.init()
 
@@ -121,7 +122,7 @@ function glassClear(group: THREE.Object3D, camera: THREE.Camera, scene: THREE.Ob
   return !_ray.intersectObject(scene, true).some(h => h.distance < dist - 0.03)
 }
 
-function PhoneScreen({ s, src, interactive, sb, portal }: { s: IPhoneSpec; src: string; interactive: boolean; sb: SbCfg; portal: React.RefObject<HTMLElement> }) {
+function PhoneScreen({ s, src, interactive, sb, portal, tones }: { s: IPhoneSpec; src: string; interactive: boolean; sb: SbCfg; portal: React.RefObject<HTMLElement>; tones: React.MutableRefObject<{ status: 'dark' | 'light'; home: 'dark' | 'light' }> }) {
   const css = phoneCss(s)
   const pxPerMm = css.w / s.active.w
   const radius = (s.body.cornerR - s.active.inset) * pxPerMm
@@ -134,6 +135,7 @@ function PhoneScreen({ s, src, interactive, sb, portal }: { s: IPhoneSpec; src: 
   const { camera, scene } = useThree()
   const tone = useTone(frame, sb.mode, css.w)
   const homeTone = useTone(frame, sb.mode, css.w, css.h - 10)
+  tones.current = { status: tone, home: homeTone }
   const clock = useClock(sb.time)
   useFrame(() => {
     const g = group.current, el = shell.current
@@ -157,7 +159,7 @@ function PhoneScreen({ s, src, interactive, sb, portal }: { s: IPhoneSpec; src: 
   )
 }
 
-function PhoneRig({ spec, finish, src, faceOn, onFaceOn, sb, logo, portal }: { spec: IPhoneSpec; finish: string; src: string; faceOn: boolean; onFaceOn: (v: boolean) => void; sb: SbCfg; logo: LogoArt | null; portal: React.RefObject<HTMLElement> }) {
+function PhoneRig({ spec, finish, src, faceOn, onFaceOn, sb, logo, portal, tones }: { spec: IPhoneSpec; finish: string; src: string; faceOn: boolean; onFaceOn: (v: boolean) => void; sb: SbCfg; logo: LogoArt | null; portal: React.RefObject<HTMLElement>; tones: React.MutableRefObject<{ status: 'dark' | 'light'; home: 'dark' | 'light' }> }) {
   const ref = useRef<THREE.Group>(null)
   const last = useRef(true)
   useFrame((_, dt) => {
@@ -169,9 +171,9 @@ function PhoneRig({ spec, finish, src, faceOn, onFaceOn, sb, logo, portal }: { s
   })
   const opts: DeviceOptions = useMemo(() => ({ fold: 0, screen: 'inner', finish, logo, logoSize: 0.2, logoTint: '#8a8f99', simTray: false, hideIsland: true }), [logo, finish])
   return (
-    <group ref={ref}>
+    <group ref={ref} name="live-rig">
       <SketchStyle on={SKETCH}><IPhonePro spec={spec} texture={null} mediaAspect={1} opts={opts} /></SketchStyle>
-      <PhoneScreen s={spec} src={src} interactive={faceOn} sb={sb} portal={portal} />
+      <PhoneScreen s={spec} src={src} interactive={faceOn} sb={sb} portal={portal} tones={tones} />
     </group>
   )
 }
@@ -249,6 +251,16 @@ function Cam({ mbp, lid }: { mbp: boolean; lid: number }) {
   return null
 }
 
+
+function CaptureHook({ api }: { api: React.MutableRefObject<((spec: IPhoneSpec) => ReturnType<typeof capturePhoneShell>) | null> }) {
+  const three = useThree()
+  useEffect(() => {
+    api.current = (spec: IPhoneSpec) => capturePhoneShell(three, spec)
+    return () => { api.current = null }
+  })
+  return null
+}
+
 const SB0 = parseSb(params)
 function SbTest() { const t = useClock(SB0.time); return <StatusBar tone={SB0.mode === 'dark' ? 'dark' : 'light'} sb={SB0} w={SB_W} time={t} /> }
 
@@ -266,13 +278,17 @@ export default function LivePhone() {
   const [device, setDevice] = useState<Kind>(KIND0)
   const [finish, setFinish] = useState(START_FINISH)
   const [lid, setLid] = useState(LID0_LIVE)
-  const [page, setPage] = useState<{ url: string; name: string } | null>(null)
+  const [page, setPage] = useState<{ url: string; name: string; html: string } | null>(null)
   const [faceOn, setFaceOn] = useState(!HOLD || stay.on || (START_YAW === 0 && START_PITCH === 0))
   const [stayOn, setStayOn] = useState(stay.on)
   const [sb, setSb] = useState<SbCfg>(SB0)
   const [logo, setLogo] = useState<LogoArt | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [exportNote, setExportNote] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const portal = useLivePortal()
+  const capRef = useRef<((spec: IPhoneSpec) => ReturnType<typeof capturePhoneShell>) | null>(null)
+  const tonesRef = useRef<{ status: 'dark' | 'light'; home: 'dark' | 'light' }>({ status: 'dark', home: 'dark' })
   const firstKind = useRef(true)
   const src = page?.url ?? DEMO_SRC
   const spec = device === 'max' ? IPHONE_18_PRO_MAX : IPHONE_18_PRO
@@ -317,15 +333,49 @@ export default function LivePhone() {
     if (!/\.html?$/i.test(f.name) && f.type !== 'text/html') return
     f.text().then(text => {
       const url = URL.createObjectURL(new Blob([text], { type: 'text/html' }))
-      setPage({ url, name: f.name })
+      setPage({ url, name: f.name, html: text })
     }).catch(() => {})
   }
+  async function exportLiveHtml(download = true) {
+    if (device === 'mbp') throw new Error('Export HTML is available for the iPhone.')
+    const capture = capRef.current
+    if (!capture) throw new Error('The phone is not ready yet.')
+    const proto = await loadPrototypeHtml(page?.html ?? null, src)
+    const shell = capture(spec)
+    const css = phoneCss(spec)
+    const chrome = await chromeOverlay(sb, tonesRef.current.status, tonesRef.current.home, css.w, css.h, sb.time ?? clockText(new Date()), SKETCH ? ISLAND_LOOK : undefined)
+    const html = buildExportDocument({ spec, shell, chrome, css, proto: proto.html, warnings: proto.warnings })
+    if (download) downloadHtml(exportFileName(spec), html)
+    return { html, name: exportFileName(spec), warnings: proto.warnings }
+  }
+  async function onExportHtml() {
+    if (exporting || device === 'mbp') return
+    setExporting(true)
+    setExportNote('')
+    try {
+      const out = await exportLiveHtml(true)
+      setExportNote(out.warnings.length
+        ? `Saved. These relative paths will not load in the file: ${out.warnings.join(', ')}.`
+        : 'Saved. You can drop the file onto a website and the app stays clickable.')
+    } catch (e) {
+      console.warn('[Openmock] Export HTML failed:', e)
+      setExportNote('Could not export the file. Try again once the phone has appeared.')
+    } finally {
+      setExporting(false)
+    }
+  }
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const w = window as unknown as { __omExportHtml?: (download?: boolean) => ReturnType<typeof exportLiveHtml> }
+    w.__omExportHtml = (download = false) => exportLiveHtml(download)
+    return () => { delete w.__omExportHtml }
+  })
   const finishes = finishesOf(device)
   const swatch = (key: string) => (mbp ? macFinishes[key]?.body : phoneFinishes[key]?.frame) ?? '#888'
   return (
     <div data-live={device} style={{ position: 'fixed', inset: 0, background: SKETCH ? SKETCH_PAPER : 'radial-gradient(circle at 50% 40%, #f5f5f7, #d9dae0)', touchAction: 'none', userSelect: 'none' }}
       onPointerDown={e => { drag.active = true; drag.x = e.clientX; drag.y = e.clientY; drag.vYaw = 0; setFaceOn(false) }}>
-      <Canvas gl={{ antialias: true, alpha: true, toneMapping: THREE.NeutralToneMapping }} camera={{ fov: 30, position: [0, 0, mbp ? 9.2 : 4.2] }} data-face-on={faceOn ? '1' : '0'}>
+      <Canvas gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true, toneMapping: THREE.NeutralToneMapping }} camera={{ fov: 30, position: [0, 0, mbp ? 9.2 : 4.2] }} data-face-on={faceOn ? '1' : '0'}>
         {!SKETCH && <Env intensity={mbp ? 0.55 : 1} mode="soft" />}
         {mbp ? (
           <>
@@ -343,9 +393,10 @@ export default function LivePhone() {
           </>
         )}
         <Cam mbp={mbp} lid={lid} />
+        <CaptureHook api={capRef} />
         {mbp
           ? <MacRig finish={finish} src={src} lid={lid} faceOn={faceOn} onFaceOn={setFaceOn} logo={logo} portal={portal} />
-          : <PhoneRig spec={spec} finish={finish} src={src} faceOn={faceOn} onFaceOn={setFaceOn} sb={sb} logo={logo} portal={portal} />}
+          : <PhoneRig spec={spec} finish={finish} src={src} faceOn={faceOn} onFaceOn={setFaceOn} sb={sb} logo={logo} portal={portal} tones={tonesRef} />}
       </Canvas>
       <div id="live-controls" onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()}
         onDragOver={e => { e.preventDefault(); e.stopPropagation() }}
@@ -367,14 +418,18 @@ export default function LivePhone() {
           <span style={{ fontSize: 12 }}>{finishes[finish]?.label}</span>
         </div>
         <div style={{ ...chip, flexDirection: 'column', alignItems: 'flex-start' }}>
-          <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <button id="live-upload" style={textBtn} onClick={() => fileRef.current?.click()}>Upload HTML</button>
+            <button id="live-export" style={textBtn} disabled={mbp || exporting} title={mbp ? 'Export HTML is available for the iPhone.' : undefined}
+              onClick={() => onExportHtml()}>{exporting ? 'Exporting…' : 'Export HTML'}</button>
             {page && <button id="live-clear" style={textBtn} onClick={() => { setPage(null); if (fileRef.current) fileRef.current.value = '' }}>Clear</button>}
             <span id="live-page" style={{ fontSize: 12, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{page ? page.name : 'Demo page'}</span>
           </span>
           <input id="live-html" ref={fileRef} type="file" accept=".html,.htm,text/html" hidden
             onChange={e => { const f = e.target.files?.[0]; if (f) loadFile(f); e.currentTarget.value = '' }} />
           <span style={{ fontSize: 11, color: '#6e6e73', maxWidth: 240 }}>A self-contained file. Images and scripts beside it will not load.</span>
+          {mbp && <span style={{ fontSize: 11, color: '#6e6e73', maxWidth: 240 }}>Export HTML is available for the iPhone.</span>}
+          {exportNote && <span id="live-export-note" style={{ fontSize: 11, color: '#6e6e73', maxWidth: 240 }}>{exportNote}</span>}
           {mbp && (
             <span style={{ display: 'flex', gap: 8, alignItems: 'center', width: '100%' }}>
               <button id="live-front" style={textBtn} onClick={frontPose}>Front</button>
