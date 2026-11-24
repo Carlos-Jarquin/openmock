@@ -77,11 +77,26 @@ export const newDevice = (model: DeviceId = 'ip18'): DeviceState => ({
   look: HAND_LOOK0, name: '', hidden: false, xf: XF0,
 })
 const GLOBAL0: GlobalState = { pose: POSE, light: LIGHT, fx: FX, style: 'photo', sk: SKETCH_DEFAULTS, bgMode: 'gradient', bg1: '#dfe7ff', bg2: '#f7d9e8', angle: 135, transparent: false, scale: 2, trueScale: null }
-/** The device list and each device's settings persist (not screen media or the logo, which do not fit in storage). Device ids
- *  are kept, so per-device keyframes and screen clips still match after a reload. */
+/** The device list, each device's settings and the camera pose persist (not screen media or the logo, which do not fit
+ *  in storage). The pose is what keeps a set angle after a reload, so the next export matches the studio. Device ids
+ *  are kept, so per-device keyframes and screen clips still match. */
 const SKEY = 'om-scene-v1'
 const SAVE_SKIP = ['media', 'mediaOuter'] as const
-function loadDevices(): { devices: DeviceState[]; selected: string; trueScale: boolean | null } | null {
+const finite = (v: unknown, fallback: number) => typeof v === 'number' && Number.isFinite(v) ? v : fallback
+const clampN = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n))
+/** Camera pose from a saved scene. Older scenes have none and keep the framed default. */
+function loadPose(v: unknown): Pose | null {
+  if (!v || typeof v !== 'object') return null
+  const p = v as Partial<Pose>
+  if (typeof p.tiltX !== 'number' && typeof p.tiltY !== 'number' && typeof p.rotZ !== 'number') return null
+  return {
+    tiltX: finite(p.tiltX, 0), tiltY: finite(p.tiltY, 0), rotZ: finite(p.rotZ, 0),
+    zoom: clampN(finite(p.zoom, POSE.zoom), 0.08, 2.5),
+    panX: clampN(finite(p.panX, 0), -6, 6), panY: clampN(finite(p.panY, 0), -6, 6),
+    fov: clampN(finite(p.fov, POSE.fov), 8, 60),
+  }
+}
+function loadDevices(): { devices: DeviceState[]; selected: string; trueScale: boolean | null; pose: Pose | null } | null {
   try {
     const v = JSON.parse(localStorage.getItem(SKEY) || 'null'); if (!v || !Array.isArray(v.devices) || !v.devices.length) return null
     const devices: DeviceState[] = v.devices.filter((d: Partial<DeviceState>) => d && typeof d.uid === 'string' && typeof d.model === 'string').map((d: DeviceState) => {
@@ -93,13 +108,13 @@ function loadDevices(): { devices: DeviceState[]; selected: string; trueScale: b
     // scenes saved before true scale keep their look: several devices were composed at the old per-device sizes, so true
     // scale starts off for them (the toggle turns it on); newer scenes save the setting
     const trueScale = 'trueScale' in v ? (typeof v.trueScale === 'boolean' ? v.trueScale : null) : devices.length > 1 ? false : null
-    return { devices, selected: devices.some(d => d.uid === v.selected) ? v.selected : devices[0].uid, trueScale }
+    return { devices, selected: devices.some(d => d.uid === v.selected) ? v.selected : devices[0].uid, trueScale, pose: loadPose(v.pose) }
   } catch { return null }
 }
 function saveDevices(s: SceneState) {
-  try { localStorage.setItem(SKEY, JSON.stringify({ selected: s.selected, trueScale: s.global.trueScale, devices: s.devices.map(d => { const o: Record<string, unknown> = { ...d }; for (const k of SAVE_SKIP) delete o[k]; o.opts = { ...d.opts, logo: null, trans: null }; return o }) })) } catch { /* storage full: this session only */ }
+  try { localStorage.setItem(SKEY, JSON.stringify({ selected: s.selected, trueScale: s.global.trueScale, pose: s.global.pose, devices: s.devices.map(d => { const o: Record<string, unknown> = { ...d }; for (const k of SAVE_SKIP) delete o[k]; o.opts = { ...d.opts, logo: null, trans: null }; return o }) })) } catch { /* storage full: this session only */ }
 }
-const init = (): SceneState => { const l = loadDevices(); if (l) return { devices: l.devices, selected: l.selected, global: { ...GLOBAL0, trueScale: l.trueScale } }; const d = newDevice(); return { devices: [d], selected: d.uid, global: GLOBAL0 } }
+const init = (): SceneState => { const l = loadDevices(); if (l) return { devices: l.devices, selected: l.selected, global: { ...GLOBAL0, trueScale: l.trueScale, ...(l.pose ? { pose: l.pose } : {}) } }; const d = newDevice(); return { devices: [d], selected: d.uid, global: GLOBAL0 } }
 
 type Setter<T> = (v: SetStateAction<T>) => void
 /** Lock while the AI hand is swapped in: a change that would move the camera, a device or the hand goes to this guard
@@ -123,8 +138,8 @@ const resolve = <T,>(v: SetStateAction<T>, old: T) => typeof v === 'function' ? 
 export function useScene() {
   const [scene, setScene] = useState<SceneState>(init)
   const ref = useRef(scene); ref.current = scene
-  // save the devices a moment after they change (not every frame of a drag)
-  useEffect(() => { const t = setTimeout(() => saveDevices(scene), 300); return () => clearTimeout(t) }, [scene.devices, scene.selected, scene.global.trueScale])
+  // save the devices and the camera angle a moment after they change (not every frame of a drag)
+  useEffect(() => { const t = setTimeout(() => saveDevices(scene), 300); return () => clearTimeout(t) }, [scene.devices, scene.selected, scene.global.trueScale, scene.global.pose])
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const self = useRef<any>(null)
   const api = useMemo(() => {

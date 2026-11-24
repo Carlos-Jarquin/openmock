@@ -55,21 +55,59 @@ function orbitBy<P extends { tiltX: number; tiltY: number; rotZ: number }>(p: P,
   eOrb.setFromQuaternion(qOrb, 'XYZ'); const r = THREE.MathUtils.radToDeg
   return { ...p, tiltX: wrap(r(eOrb.x)), tiltY: wrap(r(eOrb.y)), rotZ: wrap(r(eOrb.z)) }
 }
-/** An angle control without ends: slider (wraps at either end with the arrow keys), a number field (any value, wrapped),
- *  and the label is a scrub handle: drag sideways to keep turning past +/-180 for as long as you like. */
-function AngleRow({ label, v, set }: { label: string; v: number; set: (n: number) => void }) {
-  const w = wrap(v), scrub = useRef<{ x: number; v: number } | null>(null)
+/** One axis in degrees. The slider drags in whole degrees from -180 to 180; the number accepts decimals and stays
+ *  showing the same angle. Up and down nudge by 1, Shift by 10. The label scrubs freely (a full turn wraps). The 0
+ *  button clears that axis. Nothing here eases the angle back: the value you set is the value that stays. */
+function AngleRow({ axis, label, sub, v, set, hold }: { axis: string; label: string; sub: string; v: number; set: (n: number) => void; hold?: () => void }) {
+  const w = wrap(v), shown = String(w)
   const [txt, setTxt] = useState<string | null>(null)
-  return <label className="row om-angle"><span className="om-scrub" title={`${label}: drag sideways to turn without limits`}
-      onPointerDown={e => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); scrub.current = { x: e.clientX, v } }}
-      onPointerMove={e => { const s = scrub.current; if (!s) return; set(wrap(s.v + (e.clientX - s.x) * 0.5)) }}
-      onPointerUp={() => { scrub.current = null }} onPointerCancel={() => { scrub.current = null }}>{label}</span>
-    <input type="range" min={-180} max={180} step={1} value={Math.round(w)} style={{ ['--p' as string]: `${(w + 180) / 360 * 100}%` }} onChange={e => set(wrap(+e.target.value))}
+  const scrub = useRef<{ x: number; v: number } | null>(null)
+  const numRef = useRef<HTMLInputElement>(null)
+  // The last angle this row wrote. An outside change (an orbit drag) clears the draft so the number follows it,
+  // unless the field is being typed in.
+  const sent = useRef<number | null>(null)
+  useEffect(() => {
+    if (sent.current != null && Math.abs(sent.current - w) < 1e-9) { sent.current = null; return }
+    sent.current = null
+    if (document.activeElement === numRef.current) return
+    setTxt(null)
+  }, [w])
+  const apply = (n: number, typing = false) => {
+    if (!typing) setTxt(null)
+    const next = wrap(n); sent.current = next
+    if (next !== w) set(next)
+  }
+  const name = `${label} ${sub}`
+  const claim = () => hold?.()
+  return <div className="row om-angle" data-axis={axis}>
+    <span className="om-scrub" title={`${name}: drag sideways to turn. The angle stays.`}
+      onPointerDown={e => { claim(); e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); scrub.current = { x: e.clientX, v: w } }}
+      onPointerMove={e => { const s = scrub.current; if (!s) return; apply(s.v + (e.clientX - s.x) * 0.5) }}
+      onPointerUp={() => { scrub.current = null }} onPointerCancel={() => { scrub.current = null }}>
+      {label}<small>{sub}</small></span>
+    <input type="range" min={-180} max={180} step="any" value={w} aria-label={`${name} slider`} aria-valuetext={`${shown} degrees`}
+      style={{ ['--p' as string]: `${(w + 180) / 360 * 100}%` }}
+      onPointerDown={claim}
+      onChange={e => apply(Math.round(+e.target.value))}
       onKeyDown={e => { const up = e.key === 'ArrowRight' || e.key === 'ArrowUp', dn = e.key === 'ArrowLeft' || e.key === 'ArrowDown'
-        if ((up && w >= 179.5) || (dn && w <= -179.5)) { e.preventDefault(); set(wrap(w + (up ? 1 : -1))) } }} />
-    <input className="om-angle-n" type="number" step={1} aria-label={`${label} in degrees`} value={txt ?? String(Math.round(w))}
-      onChange={e => { setTxt(e.target.value); const n = parseFloat(e.target.value); if (Number.isFinite(n)) set(wrap(n)) }}
-      onBlur={() => setTxt(null)} onKeyDown={e => { if (e.key === 'Enter') { setTxt(null); (e.target as HTMLInputElement).blur() } }} /><output>°</output></label>
+        if (!up && !dn) return; e.preventDefault(); apply(w + (up ? 1 : -1) * (e.shiftKey ? 10 : 1)) }} />
+    <span className="om-angle-val">
+      <input ref={numRef} className="om-angle-n" type="text" inputMode="decimal" autoComplete="off" spellCheck={false} aria-label={`${name} in degrees`}
+        value={txt ?? shown}
+        onFocus={e => { claim(); e.currentTarget.select() }}
+        onChange={e => { const raw = e.target.value; if (raw !== '' && !/^-?\d*\.?\d*$/.test(raw)) return; setTxt(raw); const n = parseFloat(raw); if (Number.isFinite(n)) apply(n, true) }}
+        onBlur={() => setTxt(null)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { setTxt(null); (e.target as HTMLInputElement).blur(); return }
+          const up = e.key === 'ArrowUp', dn = e.key === 'ArrowDown'; if (!up && !dn) return
+          e.preventDefault()
+          const base = txt != null && Number.isFinite(parseFloat(txt)) ? parseFloat(txt) : w
+          apply(base + (up ? 1 : -1) * (e.shiftKey ? 10 : 1))
+        }} />
+      <span className="om-deg" aria-hidden="true">°</span>
+      <button type="button" className="ghost om-angle-0" aria-label={`Reset ${name} to 0`} title="Reset to 0" onClick={() => apply(0)}>0</button>
+    </span>
+  </div>
 }
 /** Apple hero: back three-quarter view fitted to Apple's iPhone 18 Pro colour shots. */
 /** One-click camera presets (beside Reset camera). Zoom and pan stay at the framed defaults; Flat lay uses a long lens. */
@@ -430,20 +468,27 @@ export default function App() {
   /** back to the 3D hand (unlocks), then optionally the action that asked */
   const restoreHand = useCallback((then?: () => void) => { if (!then) commitSwapRef.current(null); else { histDev2.current.until = 0; histDev2.current.down = false } lockRef.current = null; setSceneGuard(null); setSwap(null); askRef.current = false; setLockAsk(null); then?.() }, [])
   const lockContinue = useCallback(() => { const run = lockAsk; restoreHand(run ?? undefined) }, [lockAsk, restoreHand])
-  const viewAnim = useRef(0)
+  const viewAnim = useRef(0), viewGen = useRef(0)
+  /** Drop a preset ease. A slider, a typed angle or an orbit drag is the angle that stays. */
+  const stopViewAnim = () => { viewGen.current++; cancelAnimationFrame(viewAnim.current) }
   /** Ease to a preset over 0.6 s (shortest way round for the spin); jumps straight there when reduced motion is on. */
   const goView = useCallback((to: Pose) => {
     if (lockRef.current && !lockRef.current(() => goView(to))) return
+    const gen = ++viewGen.current
     cancelAnimationFrame(viewAnim.current)
     const from = { ...poseRef.current }, sd = (a: number, b: number) => ((b - a) % 360 + 540) % 360 - 180, dy = sd(from.tiltY, to.tiltY), dX = sd(from.tiltX, to.tiltX), dZ = sd(from.rotZ, to.rotZ)
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) { setPose(to); return }
     const t0 = performance.now(), D = 600
-    const step = (t: number) => { const k = Math.min(1, (t - t0) / D), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2
+    const step = (t: number) => {
+      if (gen !== viewGen.current) return
+      const k = Math.min(1, (t - t0) / D), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2
       const p = {} as Pose; for (const key of Object.keys(to) as (keyof Pose)[]) p[key] = from[key] + (to[key] - from[key]) * e
       p.tiltY = k < 1 ? wrap(from.tiltY + dy * e) : to.tiltY; p.tiltX = k < 1 ? wrap(from.tiltX + dX * e) : to.tiltX; p.rotZ = k < 1 ? wrap(from.rotZ + dZ * e) : to.rotZ
       setPose(p); if (k < 1) viewAnim.current = requestAnimationFrame(step) }
     viewAnim.current = requestAnimationFrame(step)
   }, [])
+  const setAxis = (k: 'tiltX' | 'tiltY' | 'rotZ') => (n: number) => { stopViewAnim(); setPose(p => p[k] === n ? p : { ...p, [k]: n }) }
+  const resetAngles = () => { stopViewAnim(); setPose(p => p.tiltX === 0 && p.tiltY === 0 && p.rotZ === 0 ? p : { ...p, tiltX: 0, tiltY: 0, rotZ: 0 }) }
   // iPhone Duo fold transition: animates the hinge to the target screen with the iOS blur hand-off; Play loops it.
   const optsRef = useRef<DeviceOptions | null>(null); optsRef.current = opts
   const foldAnim = useRef({ loop: false, timer: 0 })
@@ -520,11 +565,14 @@ export default function App() {
   const lastModel = useRef<DeviceId | null>(null), useRefLast = useRef<Pose | null>(null)
   const standKey = device === 'studio' ? (opts.sdStand ?? 'tilt') + (opts.sdPortrait ? 'p' : '') : ''
   useEffect(() => { const prev = lastModel.current; lastModel.current = device
-    const cur = poseRef.current, same = (a: Pose, b: Pose) => (Object.keys(a) as (keyof Pose)[]).every(k => Math.abs(a[k] - b[k]) < 1e-3)
-    const lastDefault = useRefLast.current; const untouched = prev === null ? same(cur, POSE) : !!lastDefault && same(cur, lastDefault)
-    if (!untouched || performance.now() < hist.current.applying) return
-    // wait a few frames so the new model is mounted and centred before measuring it
-    const t = setTimeout(() => { const p = defaultPose(device); useRefLast.current = p; setPose(p) }, 350); return () => clearTimeout(t) }, [device, standKey, defaultPose, setPose])
+    const same = (a: Pose, b: Pose) => (Object.keys(a) as (keyof Pose)[]).every(k => Math.abs(a[k] - b[k]) < 1e-3)
+    const untouched = () => { const cur = poseRef.current, lastDefault = useRefLast.current
+      return prev === null ? same(cur, POSE) : !!lastDefault && same(cur, lastDefault) }
+    if (!untouched() || performance.now() < hist.current.applying) return
+    // wait a few frames so the new model is mounted and centred before measuring it.
+    // Check again when the timer fires: an angle set in that gap stays.
+    const t = setTimeout(() => { if (!untouched() || performance.now() < hist.current.applying) return
+      const p = defaultPose(device); useRefLast.current = p; setPose(p) }, 350); return () => clearTimeout(t) }, [device, standKey, defaultPose, setPose])
   const speedRef = useRef(foldSpeed); speedRef.current = foldSpeed
   /** Stops the Play loop; finish also ends a running transition at its target (for the Fold slider). */
   const stopFold = useCallback((finish = true) => {
@@ -1022,10 +1070,13 @@ export default function App() {
         </>}
       </>}
     </> },
-    { id: 'camera', side: 'scene', title: 'Camera', icon: 'camera', settings: ['Tilt X', 'Tilt Y', 'Rotate', 'Zoom', 'Field of view', 'Pan X', 'Pan Y', 'Reset camera', 'View presets', 'Apple hero angle'], render: () => <>
-      <AngleRow label="Tilt X" v={pose.tiltX} set={n => setPose(p => ({ ...p, tiltX: n }))} />
-      <AngleRow label="Tilt Y" v={pose.tiltY} set={n => setPose(p => ({ ...p, tiltY: n }))} />
-      <AngleRow label="Rotate" v={pose.rotZ} set={n => setPose(p => ({ ...p, rotZ: n }))} />
+    { id: 'camera', side: 'scene', title: 'Camera', icon: 'camera', settings: ['X tilt pitch', 'Y turn yaw', 'Z roll', 'Reset angles', 'Zoom', 'Field of view', 'Pan X', 'Pan Y', 'Reset camera', 'View presets', 'Apple hero angle'], render: () => <>
+      <h3>Angle</h3>
+      <AngleRow axis="cam-x" label="X" sub="pitch" v={pose.tiltX} set={setAxis('tiltX')} hold={stopViewAnim} />
+      <AngleRow axis="cam-y" label="Y" sub="yaw" v={pose.tiltY} set={setAxis('tiltY')} hold={stopViewAnim} />
+      <AngleRow axis="cam-z" label="Z" sub="roll" v={pose.rotZ} set={setAxis('rotZ')} hold={stopViewAnim} />
+      <button className="ghost" onClick={resetAngles}>Reset angles</button>
+      <p className="hint">Tilt, turn and roll for this view, in degrees. Drag a slider or type a number, including decimals. Up and down nudge by 1, Shift by 10, and 0 clears that axis. The mockup stays on the angle you set. Drag empty space to orbit and these follow.</p>
       {slider('Zoom', pose.zoom, ZMIN, 2.5, 0.01, n => setPose({ ...pose, zoom: n }))}
       {slider('Field of view', pose.fov, 8, 60, 1, n => setPose({ ...pose, fov: n }), '°')}
       {slider('Pan X', pose.panX, -PAN, PAN, 0.01, n => setPose({ ...pose, panX: n }))}
@@ -1080,16 +1131,16 @@ export default function App() {
       <p className="hint">Uses ComfyUI on this Mac to repaint only the hands. The phone stays exactly as rendered.</p>
     </> : <p className="hint">Turn on a hand under Device › Hand first. {handOk ? '' : device === 'duo' ? 'Hands hold the iPhone Duo fully open or closed. Finish the fold to see them.' : 'Hands are available for the iPhones and iPads, and the iPhone Duo open or closed.'}</p> },
     // DEVICE rail
-    ...(multi || moved ? [{ id: 'place', side: 'device' as const, title: 'Position', icon: 'move', settings: ['Across', 'Up and down', 'Depth', 'Turn', 'Tilt', 'Roll', 'Reset position'], render: () => { const xf = D0.xf, set = (k: keyof Xf) => (n: number) => S.dev.xf(o => ({ ...o, [k]: n }))
+    ...(multi || moved ? [{ id: 'place', side: 'device' as const, title: 'Position', icon: 'move', settings: ['Across', 'Up and down', 'Depth', 'X tilt', 'Y turn', 'Z roll', 'Reset angles', 'Reset position'], render: () => { const xf = D0.xf, set = (k: keyof Xf) => (n: number) => S.dev.xf(o => ({ ...o, [k]: n }))
       return <>
         {slider('Across', +xf.x.toFixed(2), -4, 4, 0.01, set('x'))}
         {slider('Up and down', +xf.y.toFixed(2), -4, 4, 0.01, set('y'))}
         {slider('Depth', +xf.z.toFixed(2), -4, 4, 0.01, set('z'))}
-        <AngleRow label="Turn" v={xf.ry} set={set('ry')} />
-        <AngleRow label="Tilt" v={xf.rx} set={set('rx')} />
-        <AngleRow label="Roll" v={xf.rz} set={set('rz')} />
-        <button className="ghost" onClick={() => S.dev.xf(XF0)}>Reset position</button>
-        <p className="hint">Places this device in the scene. Drag it in the view to move it across and up.</p>
+        <AngleRow axis="dev-x" label="X" sub="tilt" v={xf.rx} set={set('rx')} />
+        <AngleRow axis="dev-y" label="Y" sub="turn" v={xf.ry} set={set('ry')} />
+        <AngleRow axis="dev-z" label="Z" sub="roll" v={xf.rz} set={set('rz')} />
+        <div className="om-tiles"><button className="ghost" onClick={() => S.dev.xf(o => ({ ...o, rx: 0, ry: 0, rz: 0 }))}>Reset angles</button><button className="ghost" onClick={() => S.dev.xf(XF0)}>Reset position</button></div>
+        <p className="hint">Places this device in the scene. Its own angle is saved with it and in keyframes. Drag it in the view to move it across and up.</p>
       </> } }] : []),
     { id: 'model', side: 'device', title: 'Model', icon: 'model', settings: DEVICES.map(d => d.label), render: () => <>
       <div className="om-tiles">{DEVICES.map(d => <button key={d.id} className={`om-tile ${d.id === device ? 'on' : ''}`} aria-pressed={d.id === device} onClick={() => { setDevice(d.id); if (d.defaultFinish && !(d.finishes && opts.finish in d.finishes)) setOpts(o => ({ ...o, finish: d.defaultFinish! })) }}>{d.label}</button>)}</div>
@@ -1264,7 +1315,7 @@ export default function App() {
     // after Continue the move and the switch back to the 3D hand are this one step: the entry above holds the AI hand
     h.swap = swapRef.current
     h.future = []; h.base = sc; h.until = now + BURST; setHistN({ u: h.past.length, r: 0 }) }, [S.scene])
-  const histGo = useCallback((dir: -1 | 1) => { const h = hist.current, from = dir < 0 ? h.past : h.future, to = dir < 0 ? h.future : h.past
+  const histGo = useCallback((dir: -1 | 1) => { stopViewAnim(); const h = hist.current, from = dir < 0 ? h.past : h.future, to = dir < 0 ? h.future : h.past
     const e = from.pop(); if (!e) { flash(dir < 0 ? 'Nothing to undo.' : 'Nothing to redo.'); return }
     to.push({ scene: h.base, swap: swapRef.current, tl: e.tl })
     // a Clear canvas step also wipes and brings back the timeline
@@ -1349,6 +1400,7 @@ export default function App() {
     ...(['solid', 'gradient', 'streaks'] as const).map(m => ({ id: `bg-${m}`, group: 'scene' as const, section: 'background', label: `Background › ${m[0].toUpperCase() + m.slice(1)}`, meta: 'APPLY' as const, run: () => { setTransparent(false); setBgMode(m) } })),
     ...VIEW_PRESETS.map(([n, p]) => ({ id: `view-${n}`, group: 'scene' as const, section: 'camera', label: `Camera › View › ${n}`, meta: 'APPLY' as const, run: () => goPreset(p) })),
     { id: 'hero', group: 'scene', section: 'camera', label: 'Camera › Apple hero angle', meta: 'APPLY', run: () => setPose(APPLE_HERO) },
+    { id: 'resetang', group: 'scene', section: 'camera', label: 'Camera › Reset angles', meta: 'APPLY', run: resetAngles },
     { id: 'resetcam', group: 'scene', section: 'camera', label: 'Camera › Reset camera', meta: 'APPLY', run: resetView },
     ...([['soft', 'Soft studio'], ['apple', 'Apple studio'], ['violet', 'Violet rim']] as const).map(([k, l]) => ({ id: `light-${k}`, group: 'scene' as const, section: 'lighting', label: `Lighting › ${l}`, meta: (light.preset === k ? 'CURRENT' : 'APPLY') as Cmd['meta'], run: () => setLight(x => ({ ...x, preset: k })) })),
     { id: 'shadow', group: 'scene', section: 'lighting', label: 'Lighting › Floor shadow', meta: 'TOGGLE', run: () => setLight(x => ({ ...x, shadowOn: !x.shadowOn })) },
@@ -1405,6 +1457,7 @@ export default function App() {
         onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) loadFile(f, device === 'duo' ? `Dropped onto the ${target} screen` : 'Dropped onto screen', target); else flash('That drop had no file. Drag in an image or video file.', true) }}
         onContextMenu={e => e.preventDefault()}
         onPointerDown={e => {
+          stopViewAnim()
           tap.current = null
           if (sceneHit.current) { sceneHit.current = false; return }
           if (e.button !== 0 && e.button !== 2) return
