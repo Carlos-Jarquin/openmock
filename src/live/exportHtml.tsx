@@ -200,9 +200,24 @@ function escAttr(s: string) {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
 }
 
+function axisRow(axis: string, label: string, sub: string, v: number) {
+  const name = `${label} ${sub}`
+  return `<div class="om-axis" data-axis="${axis}">
+    <span>${label}<small>${sub}</small></span>
+    <input type="range" min="-180" max="180" step="any" value="${v}" aria-label="${escAttr(name)} slider">
+    <span class="om-val">
+      <input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" value="${v}" aria-label="${escAttr(name)} in degrees">
+      <span class="om-deg" aria-hidden="true">°</span>
+      <button type="button" aria-label="${escAttr(`Reset ${name} to 0`)}" title="Reset to 0">0</button>
+    </span>
+  </div>`
+}
+
 export function exportFileName(spec: IPhoneSpec) {
   return spec.id === 'ip18max' ? 'openmock-iphone-18-pro-max.html' : 'openmock-iphone-18-pro.html'
 }
+
+export type ExportAngle = { x: number; y: number; z: number }
 
 export function buildExportDocument(opts: {
   spec: IPhoneSpec
@@ -211,8 +226,11 @@ export function buildExportDocument(opts: {
   css: { w: number; h: number }
   proto: string
   warnings: string[]
+  /** Degrees. The shell is captured face-on; the page opens turned to this and holds it. */
+  angle?: ExportAngle
 }): string {
   const { spec, shell, chrome, css, proto, warnings } = opts
+  const angle = opts.angle ?? { x: 0, y: 0, z: 0 }
   const { width: dw, height: dh, screen: s } = shell
   const note = warnings.length
     ? `<!-- Relative paths in the page will not load in this file: ${warnings.join(', ')} -->\n`
@@ -232,6 +250,8 @@ export function buildExportDocument(opts: {
     aspect-ratio: var(--dw) / var(--dh);
     display: block;
     line-height: 0;
+    transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) rotateZ(var(--rz, 0deg));
+    transform-style: preserve-3d;
   }
   .om-screen {
     position: absolute;
@@ -253,14 +273,39 @@ export function buildExportDocument(opts: {
     background: #000;
     transform-origin: 0 0;
   }
+  .om-stage { perspective: 1400px; width: min(480px, 100%); margin: 0 auto; }
   .om-shell, .om-shine, .om-chrome { pointer-events: none; }
   .om-shell { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .om-shine { position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0) 40%); }
   .om-chrome { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .om-angle { position: fixed; top: 12px; left: 12px; z-index: 2; width: 280px; max-width: calc(100vw - 24px);
+    display: flex; flex-direction: column; gap: 6px; box-sizing: border-box;
+    font: 13px -apple-system, system-ui, sans-serif; color: #1d1d1f;
+    background: rgba(255,255,255,0.92); border-radius: 8px; padding: 8px 10px; }
+  .om-angle strong { font-size: 13px; }
+  .om-axis { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+  .om-axis span { display: flex; flex-direction: column; line-height: 1.1; font-size: 12px; }
+  .om-axis small { font-size: 10px; color: #6e6e73; }
+  .om-axis input[type="text"] { font: inherit; font-size: 12px; width: 64px; text-align: right; padding: 2px 4px;
+    border: 1px solid #c7c7cc; border-radius: 5px; background: #fff; font-variant-numeric: tabular-nums; }
+  .om-axis button, .om-angle > button { font: inherit; font-size: 12px; border: 1px solid #c7c7cc; border-radius: 5px;
+    background: #fff; color: #1d1d1f; cursor: pointer; }
+  .om-axis button { width: 22px; height: 22px; padding: 0; }
+  .om-angle > button { align-self: flex-start; padding: 3px 8px; }
+  .om-deg { font-size: 11px; color: #6e6e73; }
+  .om-val { display: inline-flex; align-items: center; gap: 3px; }
 </style>
 </head>
 <body>
-${note}<div class="om-device" style="--dw:${dw};--dh:${dh};--sx:${s.x};--sy:${s.y};--sw:${s.w};--sh:${s.h};--sr:${s.r};--css-w:${css.w}px;--css-h:${css.h}px">
+${note}<div class="om-angle" id="om-angle">
+  <strong>Angle</strong>
+  ${axisRow('x', 'X', 'pitch', angle.x)}
+  ${axisRow('y', 'Y', 'yaw', angle.y)}
+  ${axisRow('z', 'Z', 'roll', angle.z)}
+  <button type="button" id="om-reset-angles">Reset angles</button>
+</div>
+<div class="om-stage">
+<div class="om-device" id="om-device" style="--dw:${dw};--dh:${dh};--sx:${s.x};--sy:${s.y};--sw:${s.w};--sh:${s.h};--sr:${s.r};--css-w:${css.w}px;--css-h:${css.h}px;--rx:${angle.x}deg;--ry:${angle.y}deg;--rz:${angle.z}deg">
   <div class="om-screen">
     <iframe title="App" srcdoc="${escAttr(proto)}"></iframe>
     <div class="om-shine"></div>
@@ -268,19 +313,72 @@ ${note}<div class="om-device" style="--dw:${dw};--dh:${dh};--sx:${s.x};--sy:${s.
   </div>
   <img class="om-shell" alt="${escAttr(spec.name)}" src="${shell.png}">
 </div>
+</div>
 <script>
 (function () {
   var screen = document.querySelector('.om-screen');
   var frame = screen && screen.querySelector('iframe');
-  if (!screen || !frame) return;
   var w = ${css.w}, h = ${css.h};
   function fit() {
+    if (!screen || !frame) return;
     var s = Math.max(screen.clientWidth / w, screen.clientHeight / h);
     frame.style.transform = 'scale(' + s + ')';
   }
-  if (typeof ResizeObserver === 'function') new ResizeObserver(fit).observe(screen);
-  else window.addEventListener('resize', fit);
-  fit();
+  if (screen && frame) {
+    if (typeof ResizeObserver === 'function') new ResizeObserver(fit).observe(screen);
+    else window.addEventListener('resize', fit);
+    fit();
+  }
+  var ang = { x: ${angle.x}, y: ${angle.y}, z: ${angle.z} };
+  var device = document.getElementById('om-device');
+  function wrap(v) { var n = (((v + 180) % 360) + 360) % 360 - 180; return Math.round(n * 1000) / 1000; }
+  function paint(axis) {
+    var row = document.querySelector('.om-axis[data-axis="' + axis + '"]');
+    if (!row || !device) return;
+    device.style.setProperty('--r' + axis, ang[axis] + 'deg');
+    var slider = row.querySelector('input[type="range"]');
+    var num = row.querySelector('input[type="text"]');
+    if (slider) slider.value = String(ang[axis]);
+    if (num && document.activeElement !== num) num.value = String(ang[axis]);
+  }
+  function setAxis(axis, n) { ang[axis] = wrap(n); paint(axis); }
+  ['x', 'y', 'z'].forEach(function (axis) {
+    var row = document.querySelector('.om-axis[data-axis="' + axis + '"]');
+    if (!row) return;
+    var slider = row.querySelector('input[type="range"]');
+    var num = row.querySelector('input[type="text"]');
+    var zero = row.querySelector('button');
+    if (slider) slider.addEventListener('input', function () { setAxis(axis, Math.round(+slider.value)); });
+    slider && slider.addEventListener('keydown', function (e) {
+      var up = e.key === 'ArrowRight' || e.key === 'ArrowUp', dn = e.key === 'ArrowLeft' || e.key === 'ArrowDown';
+      if (!up && !dn) return;
+      e.preventDefault();
+      setAxis(axis, ang[axis] + (up ? 1 : -1) * (e.shiftKey ? 10 : 1));
+    });
+    if (num) {
+      num.addEventListener('focus', function () { num.select(); });
+      num.addEventListener('input', function () {
+        var raw = num.value;
+        if (raw !== '' && !/^-?\\d*\\.?\\d*$/.test(raw)) { num.value = String(ang[axis]); return; }
+        var n = parseFloat(raw);
+        if (isFinite(n)) setAxis(axis, n);
+      });
+      num.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { num.blur(); return; }
+        var up = e.key === 'ArrowUp', dn = e.key === 'ArrowDown';
+        if (!up && !dn) return;
+        e.preventDefault();
+        var base = isFinite(parseFloat(num.value)) ? parseFloat(num.value) : ang[axis];
+        setAxis(axis, base + (up ? 1 : -1) * (e.shiftKey ? 10 : 1));
+        num.value = String(ang[axis]);
+      });
+      num.addEventListener('blur', function () { num.value = String(ang[axis]); });
+    }
+    if (zero) zero.addEventListener('click', function () { setAxis(axis, 0); });
+    paint(axis);
+  });
+  var reset = document.getElementById('om-reset-angles');
+  if (reset) reset.addEventListener('click', function () { setAxis('x', 0); setAxis('y', 0); setAxis('z', 0); });
 })();
 </script>
 </body>

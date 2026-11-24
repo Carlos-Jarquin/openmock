@@ -120,9 +120,12 @@ section.timeline { position: relative; }
 .om-clrpop p { margin: 0 0 10px; }
 .om-clrbtns { display: flex; justify-content: flex-end; gap: 8px; }
 .om-clrundo { position: fixed; left: 50%; right: auto; top: 72px; bottom: auto; transform: translateX(-50%); z-index: 60; }
-.om-angle .om-scrub { cursor: ew-resize; user-select: none; touch-action: none; }
-.om-angle .om-angle-n { width: 52px; font: inherit; font-size: 11px; text-align: right; padding: 2px 4px; border: 1px solid rgba(0,0,0,.12); border-radius: 6px; background: transparent; }
-.om-angle output { min-width: 0; }
+.om-angle .om-scrub { cursor: ew-resize; user-select: none; touch-action: none; display: flex; flex-direction: column; justify-content: center; line-height: 1.1; gap: 1px; }
+.om-angle .om-scrub small { font-size: 8px; font-weight: 400; letter-spacing: .02em; color: #5e6a72; }
+.om-angle-val { display: inline-flex; align-items: center; gap: 3px; }
+.om-angle .om-angle-n { width: 68px; font: inherit; font-size: 11px; text-align: right; padding: 2px 4px; border: 1px solid rgba(0,0,0,.12); border-radius: 6px; background: transparent; font-variant-numeric: tabular-nums; }
+.om-angle .om-deg { font-size: 10px; color: #5e6a72; }
+.om-angle .om-angle-0 { width: 22px; height: 22px; min-height: 22px; padding: 0; border-radius: 6px; }
 .om-lock-back { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgba(20,20,26,.28); }
 .om-lock { width: 320px; padding: 16px; border-radius: 12px; background: #fff; box-shadow: 0 12px 40px rgba(0,0,0,.22); font-size: 13px; line-height: 1.45; color: #1d1d22; }
 .om-lock p { margin: 0 0 14px; }

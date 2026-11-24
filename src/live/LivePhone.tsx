@@ -40,11 +40,31 @@ const START_FINISH = FINISH0 && FINISH0 in finishesOf(KIND0) ? FINISH0 : fallbac
 const lidParam = Number(params.get('lid'))
 const LID0_LIVE = lidParam >= 70 && lidParam <= 130 ? lidParam : 90
 const DEMO_SRC = params.get('src') || '/live-demo/index.html'
-const START_YAW = Number(params.get('yaw') ?? 0) * Math.PI / 180, START_PITCH = Number(params.get('pitch') ?? 0) * Math.PI / 180
 const HOLD = params.has('hold') // keep the starting angle (for tilted screenshots)
 const SKETCH = params.get('style') === 'sketch' // ?style=sketch: flat illustration look
 const ISLAND_LOOK = islandSketch(SKETCH_DEFAULTS.line)
 const stay = { on: params.has('stay') } // stay at angle: no ease back, screen usable while tilted
+/** Any angle into -180..180, to 0.001°. The same wrap the studio uses. */
+const wrap = (v: number) => { const w = (((v + 180) % 360) + 360) % 360 - 180; return Math.round(w * 1000) / 1000 }
+const D2R = Math.PI / 180, R2D = 180 / Math.PI
+const degParam = (k: string): number | null => {
+  if (!params.has(k)) return null
+  const n = Number(params.get(k))
+  return Number.isFinite(n) ? wrap(n) : 0
+}
+/** Opening angle, in degrees. yaw, pitch or roll in the address wins; otherwise the camera pose saved by the studio. */
+function readAngles(): { x: number; y: number; z: number } {
+  const px = degParam('pitch'), yw = degParam('yaw'), rz = degParam('roll')
+  if (px !== null || yw !== null || rz !== null) return { x: px ?? 0, y: yw ?? 0, z: rz ?? 0 }
+  try {
+    const p = JSON.parse(localStorage.getItem('om-scene-v1') || 'null')?.pose
+    if (p && (typeof p.tiltX === 'number' || typeof p.tiltY === 'number' || typeof p.rotZ === 'number'))
+      return { x: wrap(+p.tiltX || 0), y: wrap(+p.tiltY || 0), z: wrap(+p.rotZ || 0) }
+  } catch { /* no saved scene: face-on */ }
+  return { x: 0, y: 0, z: 0 }
+}
+const START = readAngles()
+if (START.x || START.y || START.z) stay.on = true
 const SB_W = params.get('device') === 'max' ? 440 : 402
 
 function phoneCss(s: IPhoneSpec) {
@@ -77,7 +97,8 @@ function useTone(frame: React.RefObject<HTMLIFrameElement | null>, mode: SbCfg['
   return mode === 'light' ? 'light' : mode === 'dark' ? 'dark' : tone
 }
 
-const drag = { active: false, x: 0, y: 0, yaw: START_YAW, pitch: START_PITCH, vYaw: 0 }
+const drag = { active: false, x: 0, y: 0, yaw: START.y * D2R, pitch: START.x * D2R, roll: START.z * D2R, vYaw: 0 }
+if (import.meta.env.DEV) (window as unknown as { __omLive: typeof drag }).__omLive = drag
 
 /** A stable DOM node for the screen. drei otherwise retargets its portal while the canvas connects and the page never appears. */
 function useLivePortal(): React.RefObject<HTMLElement> {
@@ -95,14 +116,24 @@ function useLivePortal(): React.RefObject<HTMLElement> {
 function easeDrag(dt: number) {
   if (drag.active || HOLD || stay.on) return
   drag.yaw += drag.vYaw * dt; drag.vYaw *= Math.exp(-6 * dt)
-  // ease back to the nearest whole turn, face-on
+  // ease back to the nearest whole turn, face-on, on every axis
   const target = Math.round(drag.yaw / (Math.PI * 2)) * Math.PI * 2
   const k = 1 - Math.exp(-5 * dt)
-  drag.yaw += (target - drag.yaw) * k; drag.pitch += (0 - drag.pitch) * k
+  drag.yaw += (target - drag.yaw) * k; drag.pitch += (0 - drag.pitch) * k; drag.roll += (0 - drag.roll) * k
 }
 
 function settled() {
-  return Math.abs(drag.yaw - Math.round(drag.yaw / (Math.PI * 2)) * Math.PI * 2) + Math.abs(drag.pitch)
+  return Math.abs(drag.yaw - Math.round(drag.yaw / (Math.PI * 2)) * Math.PI * 2) + Math.abs(drag.pitch) + Math.abs(drag.roll)
+}
+
+const shownAng = { x: NaN, y: NaN, z: NaN }
+/** Keep the stored radians inside one turn and tell the sliders when the angle changed. */
+function publishAng(onAngles: (a: { x: number; y: number; z: number }) => void) {
+  drag.pitch = wrap(drag.pitch * R2D) * D2R; drag.yaw = wrap(drag.yaw * R2D) * D2R; drag.roll = wrap(drag.roll * R2D) * D2R
+  const x = wrap(drag.pitch * R2D), y = wrap(drag.yaw * R2D), z = wrap(drag.roll * R2D)
+  if (x === shownAng.x && y === shownAng.y && z === shownAng.z) return
+  shownAng.x = x; shownAng.y = y; shownAng.z = z
+  onAngles({ x, y, z })
 }
 
 const _p = new THREE.Vector3(), _n = new THREE.Vector3(), _q = new THREE.Quaternion(), _dir = new THREE.Vector3()
@@ -159,13 +190,14 @@ function PhoneScreen({ s, src, interactive, sb, portal, tones }: { s: IPhoneSpec
   )
 }
 
-function PhoneRig({ spec, finish, src, faceOn, onFaceOn, sb, logo, portal, tones }: { spec: IPhoneSpec; finish: string; src: string; faceOn: boolean; onFaceOn: (v: boolean) => void; sb: SbCfg; logo: LogoArt | null; portal: React.RefObject<HTMLElement>; tones: React.MutableRefObject<{ status: 'dark' | 'light'; home: 'dark' | 'light' }> }) {
+function PhoneRig({ spec, finish, src, faceOn, onFaceOn, onAngles, sb, logo, portal, tones }: { spec: IPhoneSpec; finish: string; src: string; faceOn: boolean; onFaceOn: (v: boolean) => void; onAngles: (a: { x: number; y: number; z: number }) => void; sb: SbCfg; logo: LogoArt | null; portal: React.RefObject<HTMLElement>; tones: React.MutableRefObject<{ status: 'dark' | 'light'; home: 'dark' | 'light' }> }) {
   const ref = useRef<THREE.Group>(null)
   const last = useRef(true)
   useFrame((_, dt) => {
     easeDrag(dt)
-    if (ref.current) ref.current.rotation.set(drag.pitch, drag.yaw, 0)
-    const n = new THREE.Vector3(0, 0, 1).applyEuler(new THREE.Euler(drag.pitch, drag.yaw, 0))
+    publishAng(onAngles)
+    if (ref.current) { ref.current.rotation.set(drag.pitch, drag.yaw, drag.roll); if (import.meta.env.DEV) (window as unknown as { __omLiveGroup: THREE.Group }).__omLiveGroup = ref.current }
+    const n = new THREE.Vector3(0, 0, 1).applyEuler(new THREE.Euler(drag.pitch, drag.yaw, drag.roll))
     const face = stay.on ? !drag.active && n.z > Math.cos(80 * Math.PI / 180) : !drag.active && settled() < 0.02
     if (face !== last.current) { last.current = face; onFaceOn(face) }
   })
@@ -210,13 +242,14 @@ function MacScreen({ src, interactive, portal }: { src: string; interactive: boo
   )
 }
 
-function MacRig({ finish, src, lid, faceOn, onFaceOn, logo, portal }: { finish: string; src: string; lid: number; faceOn: boolean; onFaceOn: (v: boolean) => void; logo: LogoArt | null; portal: React.RefObject<HTMLElement> }) {
+function MacRig({ finish, src, lid, faceOn, onFaceOn, onAngles, logo, portal }: { finish: string; src: string; lid: number; faceOn: boolean; onFaceOn: (v: boolean) => void; onAngles: (a: { x: number; y: number; z: number }) => void; logo: LogoArt | null; portal: React.RefObject<HTMLElement> }) {
   const ref = useRef<THREE.Group>(null)
   const last = useRef(true)
   const anchor = mbpScreenAnchor(lid)
   useFrame((_, dt) => {
     easeDrag(dt)
-    if (ref.current) ref.current.rotation.set(drag.pitch, drag.yaw, 0)
+    publishAng(onAngles)
+    if (ref.current) ref.current.rotation.set(drag.pitch, drag.yaw, drag.roll)
     // The display's normal in the lid, then the spin. The lid's own tilt still faces the camera.
     const a = (90 - lid) * Math.PI / 180
     const n = new THREE.Vector3(0, -Math.sin(a), Math.cos(a))
@@ -268,6 +301,55 @@ const chip: React.CSSProperties = { display: 'flex', gap: 6, alignItems: 'center
   background: 'rgba(255,255,255,0.8)', padding: '6px 10px', borderRadius: 8, backdropFilter: 'blur(8px)' }
 const textBtn: React.CSSProperties = { font: 'inherit', fontSize: 12, border: '1px solid #c7c7cc', borderRadius: 5, background: '#fff', color: '#1d1d1f', cursor: 'pointer', padding: '2px 8px' }
 
+/** One axis, in the live page's own chip style. The slider drags in whole degrees; the field takes decimals. */
+function AxisRow({ axis, label, sub, v, set }: { axis: string; label: string; sub: string; v: number; set: (n: number) => void }) {
+  const shown = String(v)
+  const [txt, setTxt] = useState<string | null>(null)
+  const numRef = useRef<HTMLInputElement>(null)
+  const sent = useRef<number | null>(null)
+  useEffect(() => {
+    if (sent.current != null && Math.abs(sent.current - v) < 1e-9) { sent.current = null; return }
+    sent.current = null
+    if (document.activeElement === numRef.current) return
+    setTxt(null)
+  }, [v])
+  const apply = (n: number, typing = false) => {
+    if (!typing) setTxt(null)
+    const next = wrap(n); sent.current = next
+    if (next !== v) set(next)
+  }
+  const name = `${label} ${sub}`
+  return (
+    <div data-axis={axis} style={{ display: 'grid', gridTemplateColumns: '46px minmax(0, 1fr) auto', gap: 6, alignItems: 'center', width: '100%' }}>
+      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1, fontSize: 12 }}>
+        {label}<small style={{ fontSize: 10, color: '#6e6e73' }}>{sub}</small>
+      </span>
+      <input type="range" min={-180} max={180} step="any" value={v} aria-label={`${name} slider`} aria-valuetext={`${shown} degrees`}
+        onChange={e => apply(Math.round(+e.target.value))}
+        onKeyDown={e => { const up = e.key === 'ArrowRight' || e.key === 'ArrowUp', dn = e.key === 'ArrowLeft' || e.key === 'ArrowDown'
+          if (!up && !dn) return; e.preventDefault(); apply(v + (up ? 1 : -1) * (e.shiftKey ? 10 : 1)) }} />
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+        <input ref={numRef} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} aria-label={`${name} in degrees`}
+          value={txt ?? shown}
+          style={{ font: 'inherit', fontSize: 12, width: 64, textAlign: 'right', padding: '2px 4px', border: '1px solid #c7c7cc', borderRadius: 5, background: '#fff', fontVariantNumeric: 'tabular-nums' }}
+          onFocus={e => e.currentTarget.select()}
+          onChange={e => { const raw = e.target.value; if (raw !== '' && !/^-?\d*\.?\d*$/.test(raw)) return; setTxt(raw); const n = parseFloat(raw); if (Number.isFinite(n)) apply(n, true) }}
+          onBlur={() => setTxt(null)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { setTxt(null); (e.target as HTMLInputElement).blur(); return }
+            const up = e.key === 'ArrowUp', dn = e.key === 'ArrowDown'; if (!up && !dn) return
+            e.preventDefault()
+            const base = txt != null && Number.isFinite(parseFloat(txt)) ? parseFloat(txt) : v
+            apply(base + (up ? 1 : -1) * (e.shiftKey ? 10 : 1))
+          }} />
+        <span aria-hidden="true" style={{ fontSize: 11, color: '#6e6e73' }}>°</span>
+        <button type="button" aria-label={`Reset ${name} to 0`} title="Reset to 0" onClick={() => apply(0)}
+          style={{ ...textBtn, width: 22, height: 22, padding: 0 }}>0</button>
+      </span>
+    </div>
+  )
+}
+
 export default function LivePhone() {
   // ?sbtest: flat 1:1 status bar with the compact island, for pixel checks against device screenshots
   if (params.has('sbtest')) return (
@@ -279,8 +361,9 @@ export default function LivePhone() {
   const [finish, setFinish] = useState(START_FINISH)
   const [lid, setLid] = useState(LID0_LIVE)
   const [page, setPage] = useState<{ url: string; name: string; html: string } | null>(null)
-  const [faceOn, setFaceOn] = useState(!HOLD || stay.on || (START_YAW === 0 && START_PITCH === 0))
+  const [faceOn, setFaceOn] = useState(!HOLD || stay.on || (START.x === 0 && START.y === 0 && START.z === 0))
   const [stayOn, setStayOn] = useState(stay.on)
+  const [ang, setAng] = useState(START)
   const [sb, setSb] = useState<SbCfg>(SB0)
   const [logo, setLogo] = useState<LogoArt | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -298,7 +381,8 @@ export default function LivePhone() {
   useEffect(() => { stay.on = stayOn }, [stayOn])
   useEffect(() => {
     if (firstKind.current) { firstKind.current = false; return }
-    drag.yaw = 0; drag.pitch = 0; drag.vYaw = 0
+    drag.yaw = 0; drag.pitch = 0; drag.roll = 0; drag.vYaw = 0
+    setAng({ x: 0, y: 0, z: 0 })
   }, [device])
   useEffect(() => () => { if (page?.url.startsWith('blob:')) URL.revokeObjectURL(page.url) }, [page])
   useEffect(() => {
@@ -306,9 +390,11 @@ export default function LivePhone() {
     if (device === 'pro') u.searchParams.delete('device'); else u.searchParams.set('device', device)
     if (finish === fallbackFinish(device)) u.searchParams.delete('finish'); else u.searchParams.set('finish', finish)
     if (mbp) u.searchParams.set('lid', String(Math.round(lid))); else u.searchParams.delete('lid')
+    u.searchParams.set('pitch', String(ang.x)); u.searchParams.set('yaw', String(ang.y)); u.searchParams.set('roll', String(ang.z))
+    if (stayOn) u.searchParams.set('stay', ''); else u.searchParams.delete('stay')
     const next = u.pathname + u.search + u.hash
     if (next !== location.pathname + location.search + location.hash) history.replaceState(null, '', next)
-  }, [device, finish, lid, mbp])
+  }, [device, finish, lid, mbp, ang, stayOn])
   useEffect(() => {
     const up = () => { drag.active = false }
     const move = (e: PointerEvent) => {
@@ -316,15 +402,25 @@ export default function LivePhone() {
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y
       drag.x = e.clientX; drag.y = e.clientY
       drag.yaw += dx * 0.01; drag.vYaw = dx * 0.6
-      drag.pitch = THREE.MathUtils.clamp(drag.pitch + dy * 0.006, -0.6, 0.6)
+      drag.pitch += dy * 0.006
     }
     addEventListener('pointerup', up); addEventListener('pointermove', move)
     return () => { removeEventListener('pointerup', up); removeEventListener('pointermove', move) }
   }, [])
   function frontPose() {
     setLid(90)
-    drag.yaw = 0; drag.pitch = 0; drag.vYaw = 0
+    drag.yaw = 0; drag.pitch = 0; drag.roll = 0; drag.vYaw = 0
+    setAng({ x: 0, y: 0, z: 0 })
   }
+  const holdAngle = () => { stay.on = true; drag.vYaw = 0; setStayOn(true) }
+  const setAxis = (k: 'x' | 'y' | 'z', n: number) => {
+    const w = wrap(n); holdAngle()
+    if (k === 'x') drag.pitch = w * D2R
+    else if (k === 'y') drag.yaw = w * D2R
+    else drag.roll = w * D2R
+    setAng(a => a[k] === w ? a : { ...a, [k]: w })
+  }
+  const resetAngles = () => { drag.pitch = 0; drag.yaw = 0; drag.roll = 0; drag.vYaw = 0; holdAngle(); setAng({ x: 0, y: 0, z: 0 }) }
   function pickDevice(k: Kind) {
     setDevice(k)
     setFinish(f => (f in finishesOf(k) ? f : fallbackFinish(k)))
@@ -344,7 +440,7 @@ export default function LivePhone() {
     const shell = capture(spec)
     const css = phoneCss(spec)
     const chrome = await chromeOverlay(sb, tonesRef.current.status, tonesRef.current.home, css.w, css.h, sb.time ?? clockText(new Date()), SKETCH ? ISLAND_LOOK : undefined)
-    const html = buildExportDocument({ spec, shell, chrome, css, proto: proto.html, warnings: proto.warnings })
+    const html = buildExportDocument({ spec, shell, chrome, css, proto: proto.html, warnings: proto.warnings, angle: { x: wrap(drag.pitch * R2D), y: wrap(drag.yaw * R2D), z: wrap(drag.roll * R2D) } })
     if (download) downloadHtml(exportFileName(spec), html)
     return { html, name: exportFileName(spec), warnings: proto.warnings }
   }
@@ -395,13 +491,13 @@ export default function LivePhone() {
         <Cam mbp={mbp} lid={lid} />
         <CaptureHook api={capRef} />
         {mbp
-          ? <MacRig finish={finish} src={src} lid={lid} faceOn={faceOn} onFaceOn={setFaceOn} logo={logo} portal={portal} />
-          : <PhoneRig spec={spec} finish={finish} src={src} faceOn={faceOn} onFaceOn={setFaceOn} sb={sb} logo={logo} portal={portal} tones={tonesRef} />}
+          ? <MacRig finish={finish} src={src} lid={lid} faceOn={faceOn} onFaceOn={setFaceOn} onAngles={setAng} logo={logo} portal={portal} />
+          : <PhoneRig spec={spec} finish={finish} src={src} faceOn={faceOn} onFaceOn={setFaceOn} onAngles={setAng} sb={sb} logo={logo} portal={portal} tones={tonesRef} />}
       </Canvas>
       <div id="live-controls" onPointerDown={e => e.stopPropagation()} onWheel={e => e.stopPropagation()}
         onDragOver={e => { e.preventDefault(); e.stopPropagation() }}
         onDrop={e => { e.preventDefault(); e.stopPropagation(); const f = e.dataTransfer.files[0]; if (f) loadFile(f) }}
-        style={{ position: 'absolute', top: 16, left: 16, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start', maxWidth: 280,
+        style={{ position: 'absolute', top: 16, left: 16, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start', width: 340, maxWidth: 'calc(100vw - 32px)',
           font: '13px -apple-system, system-ui, sans-serif', color: '#1d1d1f', zIndex: 5 }}>
         <div style={chip} role="group" aria-label="Device">
           {([['pro', 'iPhone'], ['max', 'Pro Max'], ['mbp', 'MacBook']] as [Kind, string][]).map(([k, label]) => (
@@ -441,6 +537,13 @@ export default function LivePhone() {
             </span>
           )}
         </div>
+        <div id="live-angle" style={{ ...chip, flexDirection: 'column', alignItems: 'stretch', width: '100%', boxSizing: 'border-box' }}>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>Angle</span>
+          <AxisRow axis="x" label="X" sub="pitch" v={ang.x} set={n => setAxis('x', n)} />
+          <AxisRow axis="y" label="Y" sub="yaw" v={ang.y} set={n => setAxis('y', n)} />
+          <AxisRow axis="z" label="Z" sub="roll" v={ang.z} set={n => setAxis('z', n)} />
+          <button id="live-reset-angles" type="button" onClick={resetAngles} style={{ ...textBtn, alignSelf: 'flex-start' }}>Reset angles</button>
+        </div>
       </div>
       <p style={{ position: 'absolute', bottom: 16, width: '100%', textAlign: 'center', margin: 0, color: '#6e6e73', pointerEvents: 'none' }}>
         {mbp
@@ -449,7 +552,7 @@ export default function LivePhone() {
       </p>
       <label onPointerDown={e => e.stopPropagation()} style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: 6, alignItems: 'center', zIndex: 5,
         font: '13px -apple-system, system-ui, sans-serif', color: '#1d1d1f', background: 'rgba(255,255,255,0.8)', padding: '6px 10px', borderRadius: 8 }}>
-        <input id="stay-toggle" type="checkbox" checked={stayOn} onChange={e => setStayOn(e.target.checked)} /> Stay at angle
+        <input id="stay-toggle" type="checkbox" checked={stayOn} onChange={e => { stay.on = e.target.checked; drag.vYaw = 0; setStayOn(e.target.checked) }} /> Stay at angle
       </label>
       {!mbp && <StatusPanel sb={sb} onChange={setSb} />}
       <span id="face-state" data-face-on={faceOn ? '1' : '0'} hidden />
